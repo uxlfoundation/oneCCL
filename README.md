@@ -37,7 +37,7 @@ See [System Requirements](https://www.intel.com/content/www/us/en/developer/arti
 General installation scenario:
 
 ```
-cd oneccl
+cd oneCCL
 mkdir build
 cd build
 cmake ..
