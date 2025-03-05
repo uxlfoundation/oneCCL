@@ -23,39 +23,25 @@ oneCCL is governed by the [UXL Foundation](http://www.uxlfoundation.org) and is 
     - [Explicit setup](#explicit-setup)
   - [Using oneCCL package from CMake](#using-oneccl-package-from-cmake)
     - [oneCCLConfig files generation](#onecclconfig-files-generation)
+- [Governance](#governance)
 - [Additional Resources](#additional-resources)
   - [Blog Posts](#blog-posts)
   - [Workshop Materials](#workshop-materials)
+- [Contribute](#contribute)
+- [License](#license)
+- [Security Policy](#security-policy)
 
 ## Prerequisites 
 
 See [System Requirements](https://www.intel.com/content/www/us/en/developer/articles/system-requirements/oneapi-collective-communication-library-system-requirements.html) to learn about hardware and software requirements before getting started with oneCCL.
 
-
 ## Installation
 
-General installation scenario:
-
-```
-cd oneCCL
-mkdir build
-cd build
-cmake ..
-make -j install
-```
-
-If you need a clean build, create a new build directory and invoke `cmake` within it.
-
-You can also do the following during installation:
-- [Specify installation directory](INSTALL.md#specify-installation-directory)
-- [Specify the compiler](INSTALL.md#specify-the-compiler)
-- [Specify `SYCL` cross-platform abstraction level](INSTALL.md#specify-sycl-cross-platform-abstraction-level)
-- [Specify the build type](INSTALL.md#specify-the-build-type)
-- [Enable `make` verbose output](INSTALL.md#enable-make-verbose-output)
+See [install instructions](INSTALL.md) to familiarize yourself with the general installation scenario and the customizations you can make during the build process.
 
 ## Usage
 
-### Launching Example Application
+### Launch an Example Application
 
 Use the command:
 ```bash
@@ -63,23 +49,23 @@ $ source <install_dir>/env/setvars.sh
 $ mpirun -n 2 <install_dir>/examples/benchmark/benchmark
 ```
 
-#### Using external mpi
+#### Use External mpi
 
-The ccl-bundled-mpi flag in vars.sh can take values "yes" or "no" to control if bundled Intel MPI should be used or not. Current default is "yes", which means that oneCCL temporarily overrides the mpi implementation in use.
+In the vars.sh file, the `ccl-bundled-mpi` flag can have values "yes" or "no" to control whether bundled Intel MPI should be used or not. Current default value is "yes", which means that oneCCL temporarily overrides the mpi implementation in use.
 
-In order to suppress the behavior and use user-supplied or system-default mpi use the following command *instead* of sourcing `setvars.sh`:
+In order to suppress the behavior and use user-supplied or system-default mpi, use the following command *instead* of sourcing `setvars.sh`:
 
 ```bash
 $ source <install_dir>/env/vars.sh --ccl-bundled-mpi=no
 ```
 
-The mpi implementation will not be overridden. Please note that, in this case, user needs to assure the system finds all required mpi-related binaries.
+The mpi implementation will not be overridden. In this case, you need to ensure that the system finds all required mpi-related binaries.
 
-### Setting workers affinity
+### Set Workers Affinity
 
 There are two ways to set worker threads (workers) affinity: [automatically](#setting-affinity-automatically) and [explicitly](#setting-affinity-explicitly).
 
-#### Automatic setup
+#### Automatic Setup
 
 1. Set the `CCL_WORKER_COUNT` environment variable with the desired number of workers per process.
 2. Set the `CCL_WORKER_AFFINITY` environment variable with the value `auto`.
@@ -91,13 +77,13 @@ export CCL_WORKER_AFFINITY=auto
 ```
 With the variables above, oneCCL will create four workers per process and the pinning will depend from process launcher.
 
-If an application has been launched using `mpirun` that is provided by oneCCL distribution package then workers will be automatically pinned to the last four cores available for the launched process. The exact IDs of CPU cores can be controlled by `mpirun` parameters.
+If an application is launched using `mpirun` that is provided by oneCCL distribution package, then workers will be automatically pinned to the last four cores available for the launched process. The exact IDs of CPU cores can be controlled by the `mpirun` parameters.
 
 Otherwise, workers will be automatically pinned to the last four cores available on the node.
 
 ---
 
-#### Explicit setup
+#### Explicit Setup
 
 1. Set the `CCL_WORKER_COUNT` environment variable with the desired number of workers per process.
 2. Set the `CCL_WORKER_AFFINITY` environment variable with the IDs of cores to pin local workers.
@@ -109,11 +95,11 @@ export CCL_WORKER_AFFINITY=3,4,5,6
 ```
 With the variables above, oneCCL will create four workers per process and pin them to the cores with the IDs of 3, 4, 5, and 6 respectively.
 
-### Using oneCCL package from CMake
+### Use oneCCL package from CMake
 
 `oneCCLConfig.cmake` and `oneCCLConfigVersion.cmake` are included into oneCCL distribution.
 
-With these files, you can integrate oneCCL into a user project with the [find_package](https://cmake.org/cmake/help/latest/command/find_package.html) command. Successful invocation of `find_package(oneCCL <options>)` creates imported target `oneCCL` that can be passed to the [target_link_libraries](https://cmake.org/cmake/help/latest/command/target_link_libraries.html) command.
+With these files, you can integrate oneCCL into a project with the [find_package](https://cmake.org/cmake/help/latest/command/find_package.html) command. Successful invocation of `find_package(oneCCL <options>)` creates imported target `oneCCL` that can be passed to the [target_link_libraries](https://cmake.org/cmake/help/latest/command/target_link_libraries.html) command.
 
 For example:
 
@@ -127,7 +113,7 @@ find_package(oneCCL REQUIRED)
 # Connect oneCCL to foo
 target_link_libraries(foo oneCCL)
 ```
-#### oneCCLConfig files generation
+#### oneCCLConfig Files Generation
 
 To generate oneCCLConfig files for oneCCL package, use the provided [`cmake/scripts/config_generation.cmake`](/cmake/scripts/config_generation.cmake) file:
 
@@ -137,14 +123,13 @@ cmake [-DOUTPUT_DIR=<output_dir>] -P cmake/script/config_generation.cmake
 
 ### OS File Descriptors 
 
-oneCCL uses [Level Zero IPC handles](https://spec.oneapi.io/level-zero/latest/core/PROG.html#memory-1) so that a process can access a memory allocation done by a different process. 
-However, these IPC handles consume OS File Descriptors (FDs). As a result, to avoid running out of OS FDs, we recommend to increase the default limit of FDs in the system for applications running with oneCCL and GPU buffers. 
+oneCCL uses [Level Zero IPC handles](https://spec.oneapi.io/level-zero/latest/core/PROG.html#memory-1) so that a process can access a memory allocation done by a different process. However, these IPC handles consume OS File Descriptors (FDs). To avoid running out of OS FDs, we recommend to increase the default limit of FDs in the system for applications running with oneCCL and GPU buffers.
 
-The number of FDs required is application-dependent, but the recommended limit is ``1048575``. This value can be modified with the ulimit command.  
+The number of FDs required is application-dependent, but the recommended limit is ``1048575``. This value can be modified with the `ulimit` command.  
 
 ## Governance
 
-The oneCCL project is governed by the UXL Foundation and you can get involved in this project in multiple ways. It is possible to join the [Special Interest Groups (SIG)](https://github.com/uxlfoundation/foundation) meetings where the group discuss and demonstrates work using the foundation projects. Members can also join the Open Source and Specification Working Group meetings.
+The oneCCL project is governed by the UXL Foundation and you can get involved in this project in multiple ways. It is possible to join the [Special Interest Groups (SIG)](https://github.com/uxlfoundation/foundation) meetings where the group discusses and demonstrates work using the foundation projects. Members can also join the Open Source and Specification Working Group meetings.
 
 You can also join the mailing lists for the [UXL Foundation](https://lists.uxlfoundation.org/g/main/subgroups) to be informed of when meetings are happening and receive the latest information and discussions.
 
