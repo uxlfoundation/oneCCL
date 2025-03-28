@@ -26,7 +26,8 @@ oneCCL is governed by the [UXL Foundation](http://www.uxlfoundation.org) and is 
 - [Additional Resources](#additional-resources)
   - [Blog Posts](#blog-posts)
   - [Workshop Materials](#workshop-materials)
-
+- [Notice of Deprecation](#notice-of-deprecation)
+  
 ## Prerequisites 
 
 See [System Requirements](https://www.intel.com/content/www/us/en/developer/articles/system-requirements/oneapi-collective-communication-library-system-requirements.html) to learn about hardware and software requirements before getting started with oneCCL.
@@ -157,6 +158,19 @@ You can also join the mailing lists for the [UXL Foundation](https://lists.uxlfo
 ### Workshop Materials
 
 - oneAPI, oneCCL and OFI: Path to Heterogeneous Architecure Programming with Scalable Collective Communications: [recording](https://www.youtube.com/watch?v=ksiZ90EtP98&feature=youtu.be) and [slides](https://www.openfabrics.org/wp-content/uploads/2020-workshop-presentations/502.-OFA-Virtual-Workshop-2020-oneCCL-v5.pdf)
+
+## Notice of Deprecation 
+
+### Notice of Deprecation Of Existing C++ API
+In oneCCL version 2021.17 included with the 2025.3 oneAPI release, oneCCL will add support for a new C API that closely follows the NCCL API standard. The existing C++ API will remain available, and will remain the default API for this release. Details explaining how an application may link against and use the new API will be shared in this release.
+
+Please visit this [RFC](https://github.com/uxlfoundation/oneCCL/tree/rfcs/rfcs/20240806-c-api) to view the proposed API and provide any feedback. 
+
+In oneCCL version 2022.0 included with 2026.0 oneAPI release, oneCCL will use the new NCCL like C API by default. This is a breaking change. The legacy C++ API will remain available and details explaining how an application may link against the legacy API are forthcoming.
+
+Please note that application use of both APIs at the same time is not supported.
+
+Support for the legacy C++ API shall remain in the release until future notice. The schedule for legacy API removal will be announced here.
 
 ## Contribute <!-- omit in toc -->
 
