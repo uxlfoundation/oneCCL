@@ -161,14 +161,14 @@ You can also join the mailing lists for the [UXL Foundation](https://lists.uxlfo
 
 ## Notice of Deprecation 
 
-### Notice of Deprecation Of Existing C++ API
-In oneCCL version 2021.17 included with the 2025.3 oneAPI release, oneCCL will add support for a new C API that closely follows the NCCL API standard. The existing C++ API will remain available, and will remain the default API for this release. Details explaining how an application may link against and use the new API will be shared in this release.
+### Deprecation Of C++ API
+In oneCCL version 2021.17 included with the 2025.3 oneAPI release, oneCCL will add support for a new C API that closely follows the NCCL* API standard. The existing C++ API will remain available, and will remain the default API for this release. Details explaining how an application may link against and use the new API will be shared in this release.
 
 Please visit this [RFC](https://github.com/uxlfoundation/oneCCL/tree/rfcs/rfcs/20240806-c-api) to view the proposed API and provide any feedback. 
 
-In oneCCL version 2022.0 included with 2026.0 oneAPI release, oneCCL will use the new NCCL like C API by default. This is a breaking change. The legacy C++ API will remain available and details explaining how an application may link against the legacy API are forthcoming.
+In oneCCL version 2022.0 included with 2026.0 oneAPI release, oneCCL will use the new NCCL* like C API by default. This is a breaking change. The legacy C++ API will remain available and details explaining how an application may link against and use the legacy API will be included in this release.
 
-Please note that application use of both APIs at the same time is not supported.
+Applications cannot use both the C and C++ APIs simultaneously.
 
 Support for the legacy C++ API shall remain in the release until future notice. The schedule for legacy API removal will be announced here.
 
@@ -184,3 +184,19 @@ information.
 ## Security Policy <!-- omit in toc -->
 
 See [SECURITY](SECURITY.md) for more information.
+
+## Notices and Disclaimers
+
+Intel technologies may require enabled hardware, software or service activation.
+
+No product or component can be absolutely secure.
+
+Your costs and results may vary.
+
+© Intel Corporation. Intel, the Intel logo, and other Intel marks are trademarks of Intel Corporation or its subsidiaries. Other names and brands may be claimed as the property of others.
+
+No license (express or implied, by estoppel or otherwise) to any intellectual property rights is granted by this document.
+
+The products described may contain design defects or errors known as errata which may cause the product to deviate from published specifications. Current characterized errata are available on request.
+
+Intel disclaims all express and implied warranties, including without limitation, the implied warranties of merchantability, fitness for a particular purpose, and non-infringement, as well as any warranty arising from course of performance, course of dealing, or usage in trade.
