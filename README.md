@@ -166,7 +166,7 @@ You can also join the mailing lists for the [UXL Foundation](https://lists.uxlfo
 
 See the [oneCCL C API RFC document](https://github.com/uxlfoundation/oneCCL/tree/rfcs/rfcs/20240806-c-api) to view the proposed API and provide any feedback. 
 
-In oneCCL version 2022.0 included with 2026.0 oneAPI release, oneCCL will use the new NCCL like C API by default. This is a breaking change. The legacy C++ API will remain available and details explaining how an application may link against and use the legacy API will be included in this release.
+- In oneCCL version 2022.0 included with the 2026.0 oneAPI release, oneCCL will use the new NCCL like C API by default. This is a breaking change. The legacy C++ API will remain available, and details explaining how an application may link against and use the legacy API will be included in the 2022.0 release.
 
 Applications cannot use both the C and C++ APIs simultaneously.
 
