@@ -164,7 +164,7 @@ You can also join the mailing lists for the [UXL Foundation](https://lists.uxlfo
 ### Deprecation Of C++ API
 - In oneCCL version 2021.17 included with the 2025.3 oneAPI release, oneCCL will add support for a new C API that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. The existing C++ API will remain available and will remain the default API for the 2021.17 release. Details explaining how an application may link against and use the new API will be shared in this release.
 
-Please visit this [RFC](https://github.com/uxlfoundation/oneCCL/tree/rfcs/rfcs/20240806-c-api) to view the proposed API and provide any feedback. 
+See the [oneCCL C API RFC document](https://github.com/uxlfoundation/oneCCL/tree/rfcs/rfcs/20240806-c-api) to view the proposed API and provide any feedback. 
 
 In oneCCL version 2022.0 included with 2026.0 oneAPI release, oneCCL will use the new NCCL like C API by default. This is a breaking change. The legacy C++ API will remain available and details explaining how an application may link against and use the legacy API will be included in this release.
 
