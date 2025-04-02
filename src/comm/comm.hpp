@@ -180,6 +180,18 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
 
 class alignas(CACHELINE_SIZE) ccl_tmp_bufs {
 public:
+    ccl_tmp_bufs() {
+        for (int i = 0; i < buf_count; i++)
+            tmp_bufs[i] = NULL;
+    }
+
+    ~ccl_tmp_bufs() {
+        if (tmp_bufs[0]) {
+            ZE_CALL(zeMemFree, (context, tmp_bufs[0]));
+            tmp_bufs[0] = NULL;
+        }
+    }
+
     // to avoid data race towards the end of a collective and starting of
     // next collective we use different buffers on consecutive collectives.
     static constexpr int buf_count = 2;
@@ -188,6 +200,13 @@ public:
 
     void set_tmp_buf(void* ptr, int idx) {
         tmp_bufs[idx] = ptr;
+        if (idx == 0) {
+            ze_device_handle_t dev{};
+            ze_memory_allocation_properties_t mem_alloc_props{};
+            if (!ccl::ze::get_buffer_context_and_device(ptr, &context, &dev, &mem_alloc_props)) {
+                CCL_THROW("unable to get context from ptr\n");
+            }
+        }
     }
 
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
@@ -212,6 +231,7 @@ public:
     }
 
 private:
+    ze_context_handle_t context;
     void* tmp_bufs[buf_count];
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count];
 

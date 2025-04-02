@@ -45,6 +45,63 @@ atl_ofi_comm::atl_ofi_comm(int comm_size,
     CCL_THROW_IF_NOT(init_transport(true) == ATL_STATUS_SUCCESS, "init transport failed");
 }
 
+atl_status_t atl_ofi_comm::barrier(size_t ep_idx, atl_req_t& req) {
+    ssize_t ret = ATL_STATUS_SUCCESS;
+
+    req.is_completed = false;
+    atl_ofi_req_t* ofi_req = ((atl_ofi_req_t*)req.internal);
+
+    if (size == 1) {
+        ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
+        return ATL_STATUS_SUCCESS;
+    }
+
+    int tag_comm_id = (comm_id != atl_comm_id_storage::invalid_comm_id)
+                          ? comm_id
+                          : atl_comm_id_storage::max_comm_id;
+    int tagc = tag_counter++;
+    int src, dst;
+    const int len = 1;
+    char sendbuf[len], recvbuf[len];
+    int mask = 0x1;
+    while (mask < size) {
+        dst = (rank + mask) % size;
+        src = (rank - mask + size) % size;
+        atl_req send_req, recv_req;
+        uint64_t op_tag = tag_creator->create(rank, tag_comm_id, tagc, 1);
+        do {
+            ret = send(ep_idx, sendbuf, len, dst, op_tag, send_req);
+            CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "send failed");
+            if (ret == ATL_STATUS_AGAIN) {
+                ccl_yield(ccl::global_data::env().yield_type);
+            }
+        } while (ret == ATL_STATUS_AGAIN);
+        op_tag = tag_creator->create(src, tag_comm_id, tagc, 1);
+        do {
+            ret = recv(ep_idx, recvbuf, len, src, op_tag, recv_req);
+            CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "recv failed");
+            if (ret == ATL_STATUS_AGAIN) {
+                ccl_yield(ccl::global_data::env().yield_type);
+            }
+        } while (ret == ATL_STATUS_AGAIN);
+        while (!send_req.is_completed || !recv_req.is_completed) {
+            poll(ep_idx);
+            if (!send_req.is_completed) {
+                CCL_THROW_IF_NOT(check(ep_idx, send_req) != ATL_STATUS_FAILURE,
+                                 "check send failed");
+            }
+            if (!recv_req.is_completed) {
+                CCL_THROW_IF_NOT(check(ep_idx, recv_req) != ATL_STATUS_FAILURE,
+                                 "check recv failed");
+            }
+        }
+        mask <<= 1;
+    }
+
+    ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
+    return ATL_STATUS_SUCCESS;
+}
+
 atl_status_t atl_ofi_comm::allgatherv(size_t ep_idx,
                                       const void* send_buf,
                                       size_t send_len,

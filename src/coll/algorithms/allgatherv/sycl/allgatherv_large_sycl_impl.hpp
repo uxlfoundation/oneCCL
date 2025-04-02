@@ -214,6 +214,39 @@ ccl::event allgatherv_large_impl_ipc(const void* send_buf,
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
 
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+        sycl::event kernel_event;
+
+        sycl::event barrier_event1 = invoke_barrier(node_comm, q, dep_events, is_cpu_barrier);
+
+        int rank = comm->rank();
+        for (int i = 0; i < N; i++) {
+            // scatter the ranks and limit the amount to copy
+            int peer = (rank + i) % N;
+            // limit amount of write due to crash in KMD (read timeout error)
+            const size_t max_chunk = 512 * 1024 * 1024;
+            size_t left = send_count * dsize;
+            size_t offset = 0;
+            while (left > 0) {
+                size_t chunk = left > max_chunk ? max_chunk : left;
+                kernel_event = q.submit([=](sycl::handler& h) {
+                    h.depends_on(barrier_event1);
+                    h.memcpy(((char*)sycl_ptrs.node_ptrs_wr[peer] + rank * send_count * dsize) + offset,
+                             (char*)send_buf + offset,
+                             chunk);
+                });
+                left -= chunk;
+                offset += chunk;
+                // skip the barrier for the very last iterations
+                if (i < N - 1 || left > 0)
+                    kernel_event = invoke_barrier(node_comm, q, { kernel_event }, is_cpu_barrier);
+            }
+        }
+
+        kernel_event = invoke_barrier(node_comm, q, { kernel_event }, is_cpu_barrier);
+        return ccl::event::create_from_native(kernel_event);
+    }
+
     std::array<void*, MAX_GPUS> local_peer_even_ptrs, local_local_ptrs, local_peer_pair_ptrs;
     for (int i = 0; i < even_comm->size(); i++) {
         // offsets for read_write kernel

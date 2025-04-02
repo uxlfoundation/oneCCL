@@ -27,6 +27,7 @@ struct impl_dispatch {
 struct sycl_ptrs_type {
     void *mdfi_ptr_rd{ nullptr }, *mdfi_ptr_wr{ nullptr };
     std::array<void *, MAX_GPUS> xelink_ptrs_rd, xelink_ptrs_wr;
+    std::array<void *, MAX_NODE_RANKS> node_ptrs_rd, node_ptrs_wr;
 };
 
 template <typename T,

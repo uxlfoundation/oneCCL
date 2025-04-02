@@ -492,19 +492,11 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
             CCL_ASSERT(i == nchunks - 1);
             LOG_DEBUG("using CPU-side algorithm for the remainder count=", remainder_count);
 
-            if (ccl::global_data::env().atl_transport == ccl_atl_ofi) {
-                // fallback
-                LOG_DEBUG("allreduce count size = ",
-                          count * ccl_dtype.size(),
-                          " has only a single remainder to compute = ",
-                          remainder_count * ccl_dtype.size(),
-                          ", OFI transport cannot handle the case ",
-                          "-- falling back");
-                done = false;
-                return ev;
-            }
-
             sycl_allreduce_tune_attr scaleout_tune_attr = { allreduce_scaleout_algo::direct };
+            // OFI transport use ring because no direct
+            if (ccl::global_data::env().atl_transport == ccl_atl_ofi)
+                scaleout_tune_attr.algo = allreduce_scaleout_algo::ring;
+
             ev = allreduce_scaleout_sycl(q,
                                          (char*)send_buf + displ,
                                          (char*)recv_buf + displ,

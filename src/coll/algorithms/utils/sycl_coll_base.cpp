@@ -198,27 +198,58 @@ static void create_copy_engine_queues(sycl::queue q) {
 }
 
 static void comm_barrier(const std::shared_ptr<ccl_comm> comm) {
-    if (ccl::global_data::env().atl_transport == ccl_atl_ofi) {
-        ccl::impl_dispatch disp;
-        comm->barrier(disp(ccl::default_stream), ccl::default_barrier_attr).wait();
+    // based on atl invocation from allreduce_scaleout_sycl
+    // call ccl::wrapper for MPI/OFI.
+    int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+    atl_req_t req;
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    ATL_CALL_THROW_IF_ERROR(atl_comm->barrier(ep_idx, req));
+
+    ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, req));
+    if (!req.is_completed) {
+        // We do not want to call check() in a loop (because we would call MPI_Test repeatedly). Call MPI_Wait() instead.
+        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, req));
     }
     else {
-        // based on atl invocation from allreduce_scaleout_sycl
-        // call ccl::wrapper for MPI/OFI.
-        int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
-        atl_req_t req;
-        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-        ATL_CALL_THROW_IF_ERROR(atl_comm->barrier(ep_idx, req));
-
-        ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, req));
-        if (!req.is_completed) {
-            // We do not want to call check() in a loop (because we would call MPI_Test repeatedly). Call MPI_Wait() instead.
-            ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, req));
-        }
-        else {
-            // The operation was probably blocking, since it finished really quickly
-        }
+        // The operation was probably blocking, since it finished really quickly
     }
+}
+
+static inline size_t roundup_2MB(size_t s) {
+    return (s + 2097152 - 1) / 2097152 * 2097152;
+}
+
+static size_t calculate_ll_buf_size(sycl::queue q) {
+    // from Roger's LL path
+    // ringSize is RingTransmit's  static variable
+    // the ringSize is  regardless of protocol, and
+    // ringSize is per peer rank, and it is rounded up to 2MB
+    size_t mem_used_1 =
+        ccl::global_data::get().get_local_proc_count() * RingTransmit<int, Rt64_128_PCIE>::ringSize;
+    mem_used_1 = roundup_2MB(mem_used_1);
+    LOG_DEBUG("Allocate LL ring buffer of ringSize: ",
+              RingTransmit<int, Rt64_128_PCIE>::ringSize,
+              ", mem_used_1: ",
+              mem_used_1);
+
+    // from Richard's allreduce path, alltoall uses less
+    ze_device_handle_t ze_dev =
+        sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
+    ssize_t dev_id{ ccl::utils::invalid_device_id };
+    if (!ccl::ze::get_device_global_id(ze_dev, &dev_id)) {
+        CCL_THROW("unable to get global id for device\n");
+    }
+    size_t mem_used_2 = ccl::global_data::get().get_local_proc_count() *
+                        ccl::global_data::get().ze_data->devices[dev_id].total_threads *
+                        sizeof(int) * 4; // sizeof message_t
+    mem_used_2 *= 2; // two slots for gather and scatter
+    mem_used_2 = roundup_2MB(mem_used_2);
+    LOG_DEBUG("Allocate LL ring buffer of total_threads: ",
+              ccl::global_data::get().ze_data->devices[dev_id].total_threads,
+              ", mem_used_2: ",
+              mem_used_2);
+
+    return std::max(mem_used_1, mem_used_2);
 }
 
 void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
@@ -279,14 +310,8 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             // WA : use smaller tmp buffer for client GPUs
             if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
                 ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
-                // ringSize is RingTransmit's  static variable
-                // the ringSize is  regardless of protocol, and
-                // ringSize is per peer rank, and it is rounded up to 2MB
                 ccl::global_data::env().sycl_tmp_buf_size =
-                    3 * ((ccl::global_data::get().get_local_proc_count() *
-                              RingTransmit<int, Rt64_128_PCIE>::ringSize +
-                          2097152 - 1) /
-                         2097152 * 2097152);
+                    tmp_bufs_count * calculate_ll_buf_size(q);
                 LOG_DEBUG("Allocate LL ring buffer of size: ",
                           ccl::global_data::env().sycl_tmp_buf_size);
             }
@@ -501,10 +526,9 @@ void coll_initExt(ccl_comm *comm,
             if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
                 ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
                 ccl::global_data::env().sycl_tmp_buf_size =
-                    3 * ((ccl::global_data::get().get_local_proc_count() *
-                              RingTransmit<int, Rt64_128_PCIE>::ringSize +
-                          2097152 - 1) /
-                         2097152 * 2097152);
+                    tmp_bufs_count * calculate_ll_buf_size(q);
+                LOG_DEBUG("MT: Allocate LL ring buffer of size: ",
+                          ccl::global_data::env().sycl_tmp_buf_size);
             }
             const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
             const size_t tmp_buf_size_per_rank_orig =

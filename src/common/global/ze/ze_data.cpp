@@ -28,8 +28,11 @@ device_info::device_info(ze_device_handle_t dev, uint32_t parent_idx)
     ze_device_properties_t dev_props = ccl::ze::default_device_props;
     zeDeviceGetProperties(device, &dev_props);
     uuid = dev_props.uuid;
+    numSlices = dev_props.numSlices;
+    numSubslicesPerSlice = dev_props.numSubslicesPerSlice;
     total_threads = dev_props.numThreadsPerEU * dev_props.numEUsPerSubslice *
                     dev_props.numSubslicesPerSlice * dev_props.numSlices;
+    family = get_device_family(dev);
 
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     ze_pci_ext_properties_t pci_prop = ccl::ze::default_pci_property;

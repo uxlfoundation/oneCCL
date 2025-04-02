@@ -31,4 +31,4 @@ sphinxcontrib-qthelp==1.0.3
 sphinxcontrib-serializinghtml==1.1.5
 urllib3>=2.2.2
 zipp==3.19.1
-setuptools==78.1.1
+setuptools==75.1.0

@@ -70,27 +70,45 @@ ccl::event allgatherv_large(const void* send_buf,
                 dep.wait();
             }
         }
-        std::vector<void*> ptrs{ (void*)send_buf, recv_buf }; // index 0 and 1
-        auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
 
-        sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void*)send_buf, sched);
-        sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, recv_buf, sched);
-        // use full vector (>= 8 bytes) if remote buffers and data size are 4 byte aligned
-        use_full_vector = use_full_vector &&
-                          all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), send_count * dsize, 4) &&
-                          all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), send_count * dsize, 4);
+        if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+            // only need output buffer
+            std::vector<void*> ptrs{ recv_buf }; // index 0
+            auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
 
-        if (pair_comm->size() > 1) {
-            assert(pair_comm->size() == MAX_TILES);
-            int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-            sycl_ptrs.mdfi_ptr_rd =
-                get_ipc_ptrs<void, MAX_TILES>(pair_comm, 0, (void*)send_buf, sched)[peer_pair_rank];
-            sycl_ptrs.mdfi_ptr_wr = get_ipc_ptrs<void, MAX_TILES>(pair_comm, 1, recv_buf, sched)[peer_pair_rank];
-            use_full_vector = use_full_vector && all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, send_count * dsize, 4) &&
-                              all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, send_count * dsize, 4);
+            std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+            sycl_ptrs.node_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, recv_buf, sched);
+
+            delete exchange_entry;
+            delete sched;
         }
-        delete exchange_entry;
-        delete sched;
+        else {
+            std::vector<void*> ptrs{ (void*)send_buf, recv_buf }; // index 0 and 1
+            auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+
+            sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void*)send_buf, sched);
+            sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, recv_buf, sched);
+            // use full vector (>= 8 bytes) if remote buffers and data size are 4 byte aligned
+            use_full_vector =
+                use_full_vector &&
+                all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), send_count * dsize, 4) &&
+                all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), send_count * dsize, 4);
+
+            if (pair_comm->size() > 1) {
+                assert(pair_comm->size() == MAX_TILES);
+                int peer_pair_rank = pair_comm->rank() ? 0 : 1;
+                sycl_ptrs.mdfi_ptr_rd =
+                    get_ipc_ptrs<void, MAX_TILES>(pair_comm, 0, (void*)send_buf, sched)[peer_pair_rank];
+                sycl_ptrs.mdfi_ptr_wr =
+                    get_ipc_ptrs<void, MAX_TILES>(pair_comm, 1, recv_buf, sched)[peer_pair_rank];
+                use_full_vector = use_full_vector &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, send_count * dsize, 4) &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, send_count * dsize, 4);
+            }
+
+            delete exchange_entry;
+            delete sched;
+        }
 
         //        coll_init(comm, global_stream);
     }

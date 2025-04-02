@@ -45,6 +45,7 @@ struct ReduceScatter : public Transmit<T, Proto, SubGroupSize> {
             : Transmit<T, Proto, SubGroupSize>(nranks,
                                                input,
                                                output,
+                                               NULL,
                                                scatterBuf,
                                                gatherBuf,
                                                peerBuf0,

@@ -175,6 +175,9 @@ sycl::event arc_ll256_allreduce(const void *src,
     /* To avoid pattern not changed when "iters" is 1 */
     pattern_t pattern_prefix = ++pattern_counter << 16;
 
+    size_t persist_buf_size = ccl::global_data::env().sycl_tmp_buf_size / 3;
+    const int GATHER_BUF_OFFSET = persist_buf_size / 2;
+
     sycl_e = q.submit([&](auto &h) {
         //using namespace sycl::ext::intel::experimental::esimd;
 

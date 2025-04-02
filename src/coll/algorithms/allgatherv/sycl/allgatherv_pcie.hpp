@@ -35,6 +35,7 @@ struct AllGather : public Transmit<T, Proto, SubGroupSize> {
     AllGather(int nranks,
               T* input,
               T* output,
+              const size_t* offsets,
               size_t nelems,
               int rank,
               uint32_t seqNo,
@@ -46,6 +47,7 @@ struct AllGather : public Transmit<T, Proto, SubGroupSize> {
             : Transmit<T, Proto, SubGroupSize>(nranks,
                                                input,
                                                output,
+                                               offsets,
                                                scatterBuf,
                                                gatherBuf,
                                                peerBuf0,
@@ -83,6 +85,7 @@ struct AllGather : public Transmit<T, Proto, SubGroupSize> {
     static sycl::event launch(int nranks,
                               T* input,
                               T* output,
+                              const size_t* offsets,
                               T* ipcbuf0,
                               T* ipcbuf1,
                               T* const peerbuf0[],
@@ -94,7 +97,8 @@ struct AllGather : public Transmit<T, Proto, SubGroupSize> {
                               bool p2p,
                               bool& done) {
         sycl::event e;
-        AllGather offload(nranks, input, output, nelems, rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
+        AllGather offload(
+            nranks, input, output, offsets, nelems, rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
         if (offload.workSize == 0) {
             done = false;
             return e;

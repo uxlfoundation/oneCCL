@@ -245,6 +245,7 @@ public:
     size_t sycl_allgatherv_medium_threshold;
     size_t sycl_allgatherv_scaleout_threshold;
     size_t sycl_allgatherv_ll_threshold;
+    size_t sycl_allgatherv_chunking_threshold;
 
     bool sycl_enable_arc_alltoall_ll;
 

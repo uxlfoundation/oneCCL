@@ -118,9 +118,7 @@ public:
         return ATL_STATUS_UNSUPPORTED;
     }
 
-    atl_status_t barrier(size_t ep_idx, atl_req_t& req) override {
-        return ATL_STATUS_UNSUPPORTED;
-    }
+    atl_status_t barrier(size_t ep_idx, atl_req_t& req) override;
 
     atl_status_t bcast(size_t ep_idx, void* buf, size_t len, int root, atl_req_t& req) override {
         return ATL_STATUS_UNSUPPORTED;

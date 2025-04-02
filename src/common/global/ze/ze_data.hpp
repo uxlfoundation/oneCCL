@@ -33,6 +33,9 @@ struct device_info {
     ze_device_uuid_t uuid;
     int physical_idx;
     uint32_t total_threads;
+    int numSlices;
+    int numSubslicesPerSlice;
+    device_family family;
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     ze_pci_address_ext_t pci;
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
