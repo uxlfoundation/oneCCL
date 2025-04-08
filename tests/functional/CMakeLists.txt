@@ -13,11 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-cmake_minimum_required (VERSION 2.8)
-
-if (POLICY CMP0048)
-    cmake_policy(SET CMP0048 OLD)
-endif (POLICY CMP0048)
+cmake_minimum_required (VERSION 3.20)
 
 file(GLOB sources "*_test.c" "*_test.cpp")
 
@@ -62,7 +58,7 @@ endif()
 set(CCL_INSTALL_TESTS "$ENV{PWD}")
 enable_testing()
 
-set(GTEST_DIR ${PROJECT_SOURCE_DIR}/../googletest-release-1.8.1/googletest)
+set(GTEST_DIR ${PROJECT_SOURCE_DIR}/../googletest-release-1.8.1/)
 add_subdirectory(${GTEST_DIR} gtest_build)
 set(EXAMPLES_DIR ${PROJECT_SOURCE_DIR}/../../examples)
 
