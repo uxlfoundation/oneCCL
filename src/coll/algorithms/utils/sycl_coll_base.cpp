@@ -506,8 +506,10 @@ size_t get_tmp_buf_size_per_rank() {
 
 std::vector<sycl::event> get_sycl_events(const ccl::vector_class<ccl::event> &deps) {
     std::vector<sycl::event> ret;
-    for (auto &dep : deps) {
-        ret.push_back(dep.get_native());
+    if (!group_impl::is_group_active) {
+        for (auto &dep : deps) {
+            ret.push_back(dep.get_native());
+        }
     }
     return ret;
 }

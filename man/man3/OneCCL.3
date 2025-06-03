@@ -1,4 +1,4 @@
-.TH "OneCCLvars" 3 "Version 2021.15.0" "Intel® oneAPI Collective Communications Library" \" -*- nroff -*-
+.TH "OneCCLvars" 3 "Tue Mar 18 2025" "Version 2021.15.2" "Intel® oneAPI Collective Communications Library" \" -*- nroff -*-
 .ad l
 .nh
 .SH NAME
@@ -53,10 +53,6 @@ OneCCLvars \- OneCCL Environment Variables
 .RI "\fBCCL_ENABLE_AUTO_CACHE\fP"
 .br
 .RI "Set this environment variable to enable cache model automatically for synchronous collectives with direct algorithms\&. "
-.ti -1c
-.RI "\fBCCL_ENABLE_OMP_ALLREDUCE\fP"
-.br
-.RI "Set this environment variable to use openmp threads for synchronous collectives with direct algorithms on host buffers\&. "
 .ti -1c
 .RI "\fBCCL_ALLGATHER\fP"
 .br
@@ -606,32 +602,6 @@ Arguments
 .PP
 .PP
 By-default: '1' 
-.SS "CCL_ENABLE_OMP_ALLREDUCE"
-
-.PP
-Set this environment variable to use openmp threads for synchronous collectives with direct algorithms on host buffers\&. Syntax 
-.br
-CCL_ENABLE_OMP_ALLREDUCE='<value>'
-.br
-
-.br
-Arguments
-.br
-'<value>' Description
-.br
-.IP "\(bu" 2
-0 Does not use openmp threads for allreduce\&.
-.br
-
-.IP "\(bu" 2
-1 Use openmp threads for allreduce (default)\&.
-.br
-
-.br
-
-.PP
-.PP
-By-default: '1' 
 .SS "CCL_KVS_CONNECTION_TIMEOUT"
 
 .PP
@@ -1081,7 +1051,7 @@ By-default: '536870912'
 .SH "Author"
 .PP 
 Generated automatically by Doxygen for Intel® oneAPI Collective Communications Library from the source code\&.
-.TH "ExpOneCCLvars" 3 "Version 2021.15.0" "Intel® oneAPI Collective Communications Library" \" -*- nroff -*-
+.TH "ExpOneCCLvars" 3 "Tue Mar 18 2025" "Version 2021.15.2" "Intel® oneAPI Collective Communications Library" \" -*- nroff -*-
 .ad l
 .nh
 .SH NAME
@@ -1164,9 +1134,9 @@ ExpOneCCLvars \- Experimental OneCCL Environment Variables
 .br
 .RI "Specify the maximum threshold for the Allreduce Sycl scale-out algorithm\&. "
 .ti -1c
-.RI "\fBCCL_SYCL_ALLREDUCE_SCALEOUT_DIRECT_THRESHOLD\fP"
+.RI "\fBCCL_SYCL_ALLREDUCE_SCALEOUT\fP"
 .br
-.RI "Specify the maximum threshold for the Allreduce Sycl scale-out direct algorithm\&. "
+.RI "Specify allreduce SYCL scale-out algorithm\&. "
 .ti -1c
 .RI "\fBCCL_SYCL_REDUCE_SCATTER_TMP_BUF\fP"
 .br
@@ -1183,6 +1153,10 @@ ExpOneCCLvars \- Experimental OneCCL Environment Variables
 .RI "\fBCCL_SYCL_REDUCE_SCATTER_SCALEOUT_THRESHOLD\fP"
 .br
 .RI "Specify the threshold for the Sycl scaleout algorithm in reduce-scatter\&. "
+.ti -1c
+.RI "\fBCCL_SYCL_REDUCE_SCATTER_SCALEOUT\fP"
+.br
+.RI "Specify reduce-scatter SYCL scale-out algorithm\&. "
 .in -1c
 .SH "Detailed Description"
 .PP 
@@ -1245,10 +1219,20 @@ By-default: '0 (disabled)'
 
 .PP
 Specify the threshold for the medium size algorithm in allreduce\&. Set the threshold in bytes to specify the medium size algorithm in the allreduce collective\&. Default value is 16777216\&. '<value>'' : '>=0" 
-.SS "CCL_SYCL_ALLREDUCE_SCALEOUT_DIRECT_THRESHOLD"
+.SS "CCL_SYCL_ALLREDUCE_SCALEOUT"
 
 .PP
-Specify the maximum threshold for the Allreduce Sycl scale-out direct algorithm\&. Set the threshold in bytes to specify the Sycl scaleout direct algorithm (call MPI_allreduce directly) in the allreduce collective\&. Default value is 1048576\&. '<value>'' : '>=0" 
+Specify allreduce SYCL scale-out algorithm\&. Set the algorithm string from a list of available algorithms to set a specific algorithm for scale-out phase\&. ALLREDUCE algorithms
+.IP "\(bu" 2
+auto Automatic selection\&. Default vaue\&.
+.IP "\(bu" 2
+direct Based on MPI_Iallreduce
+.IP "\(bu" 2
+rabenseifner Rabenseifner’s algorithm
+.IP "\(bu" 2
+ring Reduce_scatter + allgather ring 
+.PP
+
 .SS "CCL_SYCL_ALLREDUCE_SCALEOUT_THRESHOLD"
 
 .PP
@@ -1269,6 +1253,18 @@ By-default: '0 (disabled)'
 
 .PP
 Specify the threshold for the medium size algorithm in reduce_scatter\&. Set the threshold in bytes to specify the medium size algorithm in the reduce_scatter collective\&. Default value is 67108864\&. '<value>'' : '>=0" 
+.SS "CCL_SYCL_REDUCE_SCATTER_SCALEOUT"
+
+.PP
+Specify reduce-scatter SYCL scale-out algorithm\&. Set the algorithm string from a list of available algorithms to set a specific algorithm for scale-out phase\&. REDUCE_SCATTER algorithms
+.IP "\(bu" 2
+auto Automatic selection\&. Default vaue\&.
+.IP "\(bu" 2
+direct Based on MPI_Ireduce_scatter
+.IP "\(bu" 2
+ring Ring algorithm 
+.PP
+
 .SS "CCL_SYCL_REDUCE_SCATTER_SCALEOUT_THRESHOLD"
 
 .PP

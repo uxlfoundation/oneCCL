@@ -55,8 +55,10 @@ global_data::global_data() {
 }
 
 global_data::~global_data() {
-    recycle_storage->recycle_events();
-    recycle_storage->recycle_requests();
+    if (recycle_storage) {
+        recycle_storage->recycle_events();
+        recycle_storage->recycle_requests();
+    }
     reset();
 }
 
@@ -169,6 +171,7 @@ void global_data::getenv_local_coord(const char* local_proc_idx_env_name,
         local_proc_idx = CCL_ENV_INT_NOT_SPECIFIED;
         local_proc_count = CCL_ENV_INT_NOT_SPECIFIED;
         ccl::global_data::env().enable_init_hostname_sharing = 1;
+        ccl::global_data::env().enable_hostname_sharing = 1;
         return;
     }
 

@@ -677,17 +677,11 @@ atl_status_t atl_mpi_ctx::check_impi_env(const atl_attr_t& attr) {
 
     if (!getenv("ONEAPI_ROOT") && !getenv("I_MPI_ROOT")) {
         atl_mpi_lib_type_t type = ATL_MPI_LIB_IMPI;
-        LOG_ERROR("CCL/MPI uses ",
-                  mpi_lib_infos[type].version_prefix_1,
-                  " but neither I_MPI_ROOT nor ONEAPI_ROOT is set. ",
-                  "Please source ",
-                  mpi_lib_infos[type].kind_value,
-                  " version of ",
-                  mpi_lib_infos[type].version_prefix_1,
-                  " (",
-                  mpi_lib_infos[type].min_version_value,
-                  " or higher version).");
-        return ATL_STATUS_FAILURE;
+        LOG_INFO("oneCCL MPI network transport layer is using ",
+                 mpi_lib_infos[type].version_prefix_1,
+                 " but $I_MPI_ROOT is not set.",
+                 " Transport variables will be initialized automatically.",
+                 " To override them run `source $I_MPI_ROOT/env/vars.sh`");
     }
 
     return ATL_STATUS_SUCCESS;

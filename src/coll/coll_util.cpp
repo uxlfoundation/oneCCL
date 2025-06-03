@@ -781,16 +781,16 @@ bool is_reduce_scatter_inplace(const void* send_buf,
 
 // this is needed to enable the direct algo fallback for pt2pt when used inside the Group API
 void enable_direct_fallback_for_pt2pt() {
-    CCL_THROW_IF_NOT(ccl::global_data::env().fallback_recv,
-                     "CCL_RECV global fallback table is null");
-    CCL_THROW_IF_NOT(ccl::global_data::env().fallback_send,
-                     "CCL_SEND global fallback table is null");
-    ccl::global_data::env().store_fallback_recv =
-        std::make_shared<ccl_selection_table_t<ccl_coll_recv_algo>>(
-            *(ccl::global_data::env().fallback_recv));
-    ccl::global_data::env().store_fallback_send =
-        std::make_shared<ccl_selection_table_t<ccl_coll_send_algo>>(
-            *(ccl::global_data::env().fallback_send));
+    if (!ccl::global_data::env().fallback_recv) {
+        ccl::global_data::env().fallback_recv =
+            std::make_shared<ccl_selection_table_t<ccl_coll_recv_algo>>();
+    }
+
+    if (!ccl::global_data::env().fallback_send) {
+        ccl::global_data::env().fallback_send =
+            std::make_shared<ccl_selection_table_t<ccl_coll_send_algo>>();
+    }
+
     ccl_algorithm_selector_base<ccl_coll_recv_algo>::insert(
         *(ccl::global_data::env().fallback_recv),
         0,
@@ -801,6 +801,14 @@ void enable_direct_fallback_for_pt2pt() {
         0,
         CCL_SELECTION_MAX_COLL_SIZE,
         ccl_coll_send_direct);
+
+    ccl::global_data::env().store_fallback_recv =
+        std::make_shared<ccl_selection_table_t<ccl_coll_recv_algo>>(
+            *(ccl::global_data::env().fallback_recv));
+
+    ccl::global_data::env().store_fallback_send =
+        std::make_shared<ccl_selection_table_t<ccl_coll_send_algo>>(
+            *(ccl::global_data::env().fallback_send));
 }
 
 // this is needed to preserve general fallback table for pt2pt when used outside the Group API

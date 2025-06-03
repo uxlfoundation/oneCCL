@@ -217,12 +217,12 @@ constexpr const char* CCL_ATL_CACHE = "CCL_ATL_CACHE";
  * \n
  * Arguments\n
  * "<value>"	Description\n
- * 	- 0	Does not allow enabling cache model automatically.\n
- * 	- 1	Allows enabling cache model automatically (default).\n
+ * 	- 0	Does not allow enabling cache model automatically. (default)\n
+ * 	- 1	Allows enabling cache model automatically.\n
  * \n
  *
  *
- * By-default: "1"
+ * By-default: "0"
  */
 constexpr const char* CCL_ENABLE_AUTO_CACHE = "CCL_ENABLE_AUTO_CACHE";
 /**  @} */

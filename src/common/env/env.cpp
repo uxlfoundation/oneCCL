@@ -108,7 +108,7 @@ env_data::env_data()
           enable_atl_cache(1),
           enable_sync_coll(0),
           enable_extra_ep(0),
-          enable_auto_cache(1),
+          enable_auto_cache(0),
 #if defined(CCL_ENABLE_MPI) && defined(CCL_ENABLE_OMP)
           enable_omp_allreduce(1),
           omp_allreduce_num_threads("1:1-511;2:512-1023;4:1024-4095;8:4096-8191;16:8192-32767;32:32768-max"),
@@ -628,13 +628,19 @@ void env_data::parse() {
         if (ccl_root.empty()) {
             // CCL_ROOT and ONEAPI_ROOT are missing
             Dl_info info;
+
             if (dladdr((void*)ccl::get_library_version, &info)) {
                 char libccl_path[PATH_MAX];
-                std::strncpy(libccl_path, info.dli_fname, PATH_MAX - 1);
-                libccl_path[PATH_MAX - 1] = '\0';
 
-                char* libccl_dir = dirname(libccl_path);
-                ccl_root = dirname(libccl_dir);
+                if (realpath(info.dli_fname, libccl_path) != nullptr) {
+                    // We have to use `realpath`, so the dirname will work correctly
+                    libccl_path[PATH_MAX - 1] = '\0';
+
+                    char* libccl_dir = dirname(libccl_path);
+                    char* ccl_root_cstr = dirname(libccl_dir);
+
+                    ccl_root = std::string(ccl_root_cstr);
+                }
             }
         }
 

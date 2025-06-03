@@ -153,31 +153,6 @@ Arguments<br />
 By-default: &quot;1&quot; 
         
 
-## CCL_ENABLE_OMP_ALLREDUCE
-
-
-Set this environment variable to use openmp threads for synchronous collectives with direct algorithms on host buffers. 
-        
-
-
-Syntax <br />
-CCL_ENABLE_OMP_ALLREDUCE=&quot;&lt;value&gt;&quot;<br />
-<br />
-Arguments<br />
-&quot;&lt;value&gt;&quot; Description<br />
-
- - 0 Does not use openmp threads for allreduce.<br />
-
-
- - 1 Use openmp threads for allreduce (default).<br />
-<br />
-
-
-
-
-By-default: &quot;1&quot; 
-        
-
 ## CCL_ALLGATHER
 
 
@@ -1246,14 +1221,24 @@ Specify the maximum threshold for the Allreduce Sycl scale-out algorithm.
 Set the threshold in bytes to specify the Sycl scaleout algorithm in the allreduce collective. Default value is 1048576. &quot;&lt;value&gt;&quot;&quot; : &quot;&gt;=0&quot; 
         
 
-## CCL_SYCL_ALLREDUCE_SCALEOUT_DIRECT_THRESHOLD
+## CCL_SYCL_ALLREDUCE_SCALEOUT
 
 
-Specify the maximum threshold for the Allreduce Sycl scale-out direct algorithm. 
+Specify allreduce SYCL scale-out algorithm. 
         
 
 
-Set the threshold in bytes to specify the Sycl scaleout direct algorithm (call MPI_allreduce directly) in the allreduce collective. Default value is 1048576. &quot;&lt;value&gt;&quot;&quot; : &quot;&gt;=0&quot; 
+Set the algorithm string from a list of available algorithms to set a specific algorithm for scale-out phase. ALLREDUCE algorithms
+ - auto Automatic selection. Default vaue.
+
+ - direct Based on MPI_Iallreduce
+
+ - rabenseifner Rabenseifner&#8217;s algorithm
+
+ - ring Reduce_scatter + allgather ring 
+
+
+
         
 
 ## CCL_SYCL_REDUCE_SCATTER_TMP_BUF
@@ -1296,6 +1281,24 @@ Specify the threshold for the Sycl scaleout algorithm in reduce-scatter.
 
 
 Set the threshold in bytes to specify the Sycl scaleout algorithm in the reduce-scatter collective. Default value is 4294967296. &quot;&lt;value&gt;&quot;&quot; : &quot;&gt;=0&quot; 
+        
+
+## CCL_SYCL_REDUCE_SCATTER_SCALEOUT
+
+
+Specify reduce-scatter SYCL scale-out algorithm. 
+        
+
+
+Set the algorithm string from a list of available algorithms to set a specific algorithm for scale-out phase. REDUCE_SCATTER algorithms
+ - auto Automatic selection. Default vaue.
+
+ - direct Based on MPI_Ireduce_scatter
+
+ - ring Ring algorithm 
+
+
+
         
 
 
