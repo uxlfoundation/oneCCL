@@ -236,19 +236,21 @@ constexpr const char* CCL_ENABLE_AUTO_CACHE = "CCL_ENABLE_AUTO_CACHE";
  * @brief Set this environment variable to use openmp threads for synchronous collectives with direct algorithms on host buffers.
  * @details
  * Syntax \n
- * CCL_ENABLE_OMP_ALLREDUCE="<value>"\n
+ * CCL_ENABLE_OMP_COLL="<value>"\n
  * \n
  * Arguments\n
  * "<value>"	Description\n
- * 	- 0	Does not use openmp threads for allreduce.\n
- * 	- 1	Use openmp threads for allreduce (default).\n
+ * 	- 0	Does not use openmp threads for collectives even the flag for individual collective (for example, CCL_ENABLE_OMP_ALLREDUCE) is set to true.\n
+ * 	- 1	Use openmp threads for collectives (default). The flag for individual collective is also needed to be true to use the openMP threads.\n
  * \n
  *
  *
  * By-default: "1"
  */
-constexpr const char* CCL_ENABLE_OMP_ALLREDUCE = "CCL_ENABLE_OMP_ALLREDUCE";
+constexpr const char* CCL_ENABLE_OMP_COLL = "CCL_ENABLE_OMP_COLL";
 /**  @} */
+constexpr const char* CCL_ENABLE_OMP_ALLREDUCE = "CCL_ENABLE_OMP_ALLREDUCE";
+constexpr const char* CCL_ENABLE_OMP_ALLGATHERV = "CCL_ENABLE_OMP_ALLGATHERV";
 
 constexpr const char* CCL_OMP_ALLREDUCE_NUM_THREADS = "CCL_OMP_ALLREDUCE_NUM_THREADS";
 #endif // CCL_ENABLE_MPI && CCL_ENABLE_OMP
@@ -1224,6 +1226,14 @@ constexpr const char* CCL_OFI_ENABLE_PMIX_SUPPORT = "CCL_OFI_ENABLE_PMIX_SUPPORT
 constexpr const char* CCL_ITT_LEVEL = "CCL_ITT_LEVEL";
 #endif // CCL_ENABLE_ITT
 constexpr const char* CCL_DEBUG_TIMESTAMPS_LEVEL = "CCL_DEBUG_TIMESTAMPS_LEVEL";
+
+/**
+ * @brief Set to enable profiling of the communication operations
+ *
+ *
+ * By-default: "0"
+ */
+constexpr const char* CCL_PROFILING_ENABLE = "CCL_PROFILING_ENABLE";
 
 constexpr const char* CCL_BF16 = "CCL_BF16";
 constexpr const char* CCL_FP16 = "CCL_FP16";

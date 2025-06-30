@@ -643,8 +643,8 @@ private:
                                     NULL,
                                     NULL,
                                     (void **)out_buffers);
-        int align4 = all_aligned((void **)in_buffers, temp_world, send_count * sizeof(data_type), 4) &&
-                     all_aligned((void **)out_buffers, temp_world, send_count * sizeof(data_type), 4);
+        int align4 = all_aligned((void **)in_buffers, temp_world, send_count, sizeof(data_type), 4) &&
+                     all_aligned((void **)out_buffers, temp_world, send_count, sizeof(data_type), 4);
 
         int buffer_index_kernel __attribute__((unused)) = buffer_index;
         int size_per_buffer_kernel __attribute__((unused)) = size_per_buffer / sizeof(data_type);

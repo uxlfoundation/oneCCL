@@ -647,13 +647,13 @@ bool is_queue_in_order(const ccl_stream* s) {
 
 #endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 
-bool is_allgatherv_inplace(const void* send_buf,
-                           const size_t send_count,
-                           const void* recv_buf,
-                           const size_t* recv_counts,
-                           const size_t dtype_size,
-                           const size_t rank,
-                           const size_t comm_size) {
+CCL_API bool is_allgatherv_inplace(const void* send_buf,
+                                   const size_t send_count,
+                                   const void* recv_buf,
+                                   const size_t* recv_counts,
+                                   const size_t dtype_size,
+                                   const size_t rank,
+                                   const size_t comm_size) {
     // From MPI 4.1: The "in place" option for intra-communicators is specified
     // by passing the value MPI_IN_PLACE to the argument sendbuf at all MPI
     // processes. sendcount and sendtype are ignored. Then the input data of

@@ -166,6 +166,8 @@ ccl::event reduce_scatter_large_read_ipc(const void *send_buf,
     work_event = reduce_scatter_large_read_invoke<T, N, vec_size>(
         src_ptrs, recv_buf, recv_count - offset_count, reduction, node_comm, q, { dep_event }, offset_byte);
 
+    work_event = invoke_barrier(node_comm, q, { work_event }, is_cpu_barrier);
+
     // do the average reduction separately after sum
     if (reduction == ccl::reduction::avg) {
         // set dependencies
@@ -196,7 +198,8 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
                                      ccl_comm *comm,
                                      ccl_stream *global_stream,
                                      sycl_ptrs_type &sycl_ptrs,
-                                     const ccl::vector_class<ccl::event> &deps) {
+                                     const ccl::vector_class<ccl::event> &deps,
+                                     bool use_tmp) {
     constexpr int N = NE;
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
@@ -217,18 +220,7 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
     const bool is_multi_gpu = even_comm_size > 1;
     const bool is_single_gpu = even_comm_size == 1;
 
-    // TODO : generalize constraints for different hardware.
-    // kernels with remote access is best performant at 64 bytes alignment (sycl_kernels_line_size/2) on PVC
-    const size_t align_size = ccl::global_data::env().sycl_kernels_line_size / 2;
-    const bool is_aligned = (recv_count * dsize) % align_size == 0;
-    // use tmp buf for types < 4 byte size with odd count or non 4 byte aligned data
-    // use tmp buf when data count bytes is not 64 byte aligned
-    // since tmp buf version performs better in that case
-    bool is_tmp_used = ccl::global_data::env().sycl_reduce_scatter_tmp_buf ||
-                       ((!use_full_vector || !is_aligned) && ccl::global_data::env().sycl_auto_use_tmp_buf);
-    if (is_single_gpu) {
-        is_tmp_used = ccl::global_data::env().sycl_reduce_scatter_tmp_buf;
-    }
+    const bool is_tmp_used = use_tmp;
 
     if (is_single_gpu && !is_tmp_used) {
         constexpr int vec_size = get_num_elements<T, 8, use_full_vector>();
@@ -237,7 +229,9 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
     }
 
     const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
-
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
     std::array<void *, MAX_GPUS> l_mdfi_send_ptrs, l_xelink_work_ptrs, l_send_ptrs;
     std::array<void *, MAX_GPUS> l_cp_src_ptrs, l_cp_dst_ptrs, l_cp_src_ptrs_next, l_cp_dst_ptrs_next;
     std::array<void *, MAX_NODE_RANKS> l_work_ptrs, l_work_ptrs_prev;
@@ -279,7 +273,8 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
         const size_t data_count_prev = chunk_size / dsize;
 
         for (int i = 0; i < even_comm_size; i++) {
-            int global_rank = even_comm->get_node_rank(i);
+            int global_rank = comm->is_multi_thread_instance() ? i * pair_comm->size() + pair_comm->rank()
+                                                               : even_comm->get_node_rank(i);
             // TODO: is there a better way to find the pair_neighbor global rank
             int global_rank_neighbor = (global_rank / pair_comm_size) * pair_comm_size;
             if (global_rank % pair_comm_size == 0) {
@@ -347,6 +342,10 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
             barrier_deps.push_back(work_event);
         }
         work_event = invoke_barrier(node_comm, q_use, barrier_deps, is_cpu_barrier);
+
+        if (comm->is_multi_thread_instance() == true) {
+            pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        }
 
         work_event = q_use.submit([=](sycl::handler &h) {
             const size_t kernel_threads_curr = data_count / vec_size + data_count % vec_size;
@@ -427,6 +426,10 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
         }
     }
 
+    if (!is_multi_gpu) {
+        work_event = invoke_barrier(node_comm, q_use, { work_event }, is_cpu_barrier);
+    }
+
     // do the average reduction separately after sum
     if (reduction == ccl::reduction::avg) {
         // set dependencies
@@ -435,6 +438,10 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
 
         LOG_DEBUG("reduce_scatter_large calculate average on counts: ", recv_count, ", ranks: ", node_comm_size);
         work_event = sycl_average(q, recv_buf, recv_count, node_comm_size, dtype, avg_deps_evs);
+    }
+
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
     }
 
     return ccl::event::create_from_native(work_event);

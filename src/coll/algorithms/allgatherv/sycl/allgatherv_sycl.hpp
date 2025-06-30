@@ -15,6 +15,8 @@
 */
 #pragma once
 
+#include "coll/algorithms/utils/sycl_selection.hpp"
+
 #define SYCL_ALLGATHERV_FUNCTIONS(MSGSIZE) \
     void init_allgatherv_##MSGSIZE(ccl::datatype dtype, \
                                    sycl::queue& queue, \
@@ -47,7 +49,7 @@ ccl::event allgather_sycl_single_node(sycl::queue& q,
                                       ccl_stream* global_stream,
                                       const vector_class<event>& deps,
                                       bool& done,
-                                      bool wait_on_deps = false);
+                                      sycl_coll_scaleup_attr coll_attr = {});
 
 ccl::event allgather_sycl(sycl::queue& q,
                           const void* send_buf,
@@ -82,7 +84,19 @@ ccl::event allgatherv_large(const void* send_buf,
                             ccl_comm* comm,
                             ccl_stream* global_stream,
                             const ccl::vector_class<ccl::event>& deps,
-                            bool wait_on_deps = false);
+                            sycl_coll_scaleup_attr coll_attr = {});
+
+// ring with LL protocols
+ccl::event allgatherv_ll_ring(const void* send_buf,
+                              size_t send_count,
+                              void* recv_buf,
+                              const ccl::vector_class<size_t>& recv_counts,
+                              const ccl::vector_class<size_t>& offsets,
+                              ccl::datatype dtype,
+                              ccl_comm* comm,
+                              ccl_stream* global_stream,
+                              const ccl::vector_class<ccl::event>& deps,
+                              bool& done);
 
 ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
                                     const void* send_buf,
@@ -94,7 +108,7 @@ ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
                                     const ccl::vector_class<ccl::event>& deps,
                                     bool original_deps,
                                     bool& done,
-                                    bool direct,
+                                    sycl_allgatherv_tune_attr tune_attr,
                                     bool is_cpu_buffers = false);
 
 ccl::event allgatherv_scaleout_sycl_direct(sycl::queue& q,

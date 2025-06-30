@@ -18,6 +18,7 @@
 
 #if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 #include "coll/algorithms/allgatherv/sycl/allgatherv_sycl.hpp"
+#include "coll/algorithms/allgatherv/sycl/allgatherv_ring.hpp"
 #endif // defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 
 ccl::event allgatherv_scaleout_sycl_direct(sycl::queue& q,
@@ -163,9 +164,32 @@ ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
                                     const ccl::vector_class<ccl::event>& deps,
                                     bool original_deps,
                                     bool& done,
-                                    bool direct,
+                                    sycl_allgatherv_tune_attr tune_attr,
                                     bool is_cpu_buffers) {
-    bool copy_to_host = ccl::global_data::env().sycl_enable_direct_gpu_rdma ? false : true;
-    return allgatherv_scaleout_sycl_direct(
-        q, send_buf, send_count, recv_buf, recv_counts, dtype, comm, deps, done, copy_to_host, is_cpu_buffers);
+    // TODO: add ITT/Profiling support calls
+    switch (tune_attr.algo) {
+        case allgatherv_scaleout_algo::direct: {
+            bool copy_to_host = ccl::global_data::env().sycl_enable_direct_gpu_rdma ? false : true;
+            ze_device_handle_t ze_dev = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
+            if (should_disable_rdma(ze_dev)) {
+                copy_to_host = true;
+            }
+            return allgatherv_scaleout_sycl_direct(q,
+                                                   send_buf,
+                                                   send_count,
+                                                   recv_buf,
+                                                   recv_counts,
+                                                   dtype,
+                                                   comm,
+                                                   deps,
+                                                   done,
+                                                   copy_to_host,
+                                                   is_cpu_buffers);
+        }
+        case allgatherv_scaleout_algo::ring: {
+            auto ev = allgatherv_scaleout_sycl_ring(
+                q, send_buf, send_count, recv_buf, recv_counts, dtype, comm, deps, original_deps, tune_attr, done);
+            return ccl::event::create_from_native(ev);
+        }
+    }
 }

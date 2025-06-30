@@ -19,7 +19,7 @@ extern "C" {
 /// @brief USM memory allocation type
 typedef enum umf_usm_memory_type_t {
     UMF_MEMORY_TYPE_UNKNOWN = 0, ///< The memory pointed to is of unknown type
-    UMF_MEMORY_TYPE_HOST, ///< The memory pointed to is a host allocation
+    UMF_MEMORY_TYPE_HOST,        ///< The memory pointed to is a host allocation
     UMF_MEMORY_TYPE_DEVICE, ///< The memory pointed to is a device allocation
     UMF_MEMORY_TYPE_SHARED, ///< The memory pointed to is a shared ownership allocation
 } umf_usm_memory_type_t;

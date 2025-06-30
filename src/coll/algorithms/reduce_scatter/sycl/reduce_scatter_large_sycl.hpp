@@ -472,7 +472,10 @@ public:
     ccl::event reduce_scatter(sycl::queue &queue,
                               const void *send_buf,
                               void *out_buffer,
+                              ccl::datatype dtype,
                               size_t recv_size,
+                              ccl::reduction reduction,
+                              const ccl::vector_class<ccl::event> &deps,
                               bool &done) {
         sycl::event e;
         // check local alignment
@@ -485,22 +488,31 @@ public:
 
         if (ccl::global_data::env().sycl_reduce_scatter_tmp_buf) {
             if (is_aligned)
-                return reduce_scatter_copy<4>(queue, send_buf, out_buffer, recv_size, done);
+                e = reduce_scatter_copy<4>(queue, send_buf, out_buffer, recv_size, deps, done);
             else
-                return reduce_scatter_copy<2>(queue, send_buf, out_buffer, recv_size, done);
+                e = reduce_scatter_copy<2>(queue, send_buf, out_buffer, recv_size, deps, done);
         }
         else {
-            return reduce_scatter_nocopy(queue, send_buf, out_buffer, recv_size, done);
+            e = reduce_scatter_nocopy(queue, send_buf, out_buffer, recv_size, deps, done);
         }
+
+        if (reduction == ccl::reduction::avg) {
+            std::vector<sycl::event> evs;
+            evs.push_back(e);
+            e = sycl_average(queue, out_buffer, recv_size, world, dtype, evs);
+        }
+
+        return ccl::event::create_from_native(e);
     }
 
 private:
     template <size_t align>
-    ccl::event reduce_scatter_copy(sycl::queue &queue,
-                                   const void *send_buf,
-                                   void *out_buffer,
-                                   size_t recv_size,
-                                   bool &done) {
+    sycl::event reduce_scatter_copy(sycl::queue &queue,
+                                    const void *send_buf,
+                                    void *out_buffer,
+                                    size_t recv_size,
+                                    const ccl::vector_class<ccl::event> &deps,
+                                    bool &done) {
         using namespace __ESIMD_NS;
         using namespace __ESIMD_ENS;
 
@@ -520,7 +532,7 @@ private:
 
         if (recv_size / (SIMD_COMPUTE * UNROLL_SIZE) < temp_world) {
             done = false;
-            return ccl::event::create_from_native(e);
+            return e;
         }
 
         int in_place = ((char *)send_buf + rank * recv_size * sizeof(data_type) == out_buffer);
@@ -714,14 +726,15 @@ private:
         buffer_index += sync_reset_counter;
         buffer_index %= COPY_BUFFER_COUNT;
 
-        return ccl::event::create_from_native(e);
+        return e;
     }
 
-    ccl::event reduce_scatter_nocopy(sycl::queue &queue,
-                                     const void *send_buf,
-                                     void *out_buffer,
-                                     size_t recv_size,
-                                     bool &done) {
+    sycl::event reduce_scatter_nocopy(sycl::queue &queue,
+                                      const void *send_buf,
+                                      void *out_buffer,
+                                      size_t recv_size,
+                                      const ccl::vector_class<ccl::event> &deps,
+                                      bool &done) {
         using namespace __ESIMD_NS;
         using namespace __ESIMD_ENS;
 
@@ -741,7 +754,7 @@ private:
 
         if (recv_size / (SIMD_COMPUTE * UNROLL_SIZE) < temp_world) {
             done = false;
-            return ccl::event::create_from_native(e);
+            return e;
         }
 
         int even_ranks[max_rank];
@@ -799,7 +812,7 @@ private:
         //ctimer.stop(0);
         //printf("exchange_peer_ipc_mem time: %fus\n", ctimer.get_us(0));
         // check remote alignment
-        int align4 = all_aligned((void **)in_buffers, temp_world, recv_size * sizeof(data_type), 4);
+        int align4 = all_aligned((void **)in_buffers, temp_world, recv_size, sizeof(data_type), 4);
 
         int first_iter = 1;
         uint32_t threads_needed_per_chunk = max_count_per_rank / (SIMD_COMPUTE * UNROLL_SIZE);
@@ -906,7 +919,7 @@ private:
         buffer_index += sync_reset_counter;
         buffer_index %= NOCOPY_BUFFER_COUNT;
 
-        return ccl::event::create_from_native(e);
+        return e;
     }
 
     //sync all the ranks here before consuming the results.
@@ -1117,6 +1130,9 @@ private:
                                                const void *send_buf, \
                                                void *recv_buf, \
                                                size_t recv_count, \
+                                               ccl::reduction reduction, \
+                                               const ccl::vector_class<ccl::event> &deps, \
                                                bool &done) { \
-        return rs_large_##TYPE.reduce_scatter(queue, send_buf, recv_buf, recv_count, done); \
+        return rs_large_##TYPE.reduce_scatter( \
+            queue, send_buf, recv_buf, dtype, recv_count, reduction, deps, done); \
     }

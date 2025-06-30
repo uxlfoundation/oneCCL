@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2023-2024 Intel Corporation
+ * Copyright (C) 2023-2025 Intel Corporation
  *
  * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -28,7 +28,7 @@ extern "C" {
 #define UMF_MINOR_VERSION(_ver) (_ver & 0x0000ffff)
 
 /// @brief Current version of the UMF headers
-#define UMF_VERSION_CURRENT UMF_MAKE_VERSION(0, 10)
+#define UMF_VERSION_CURRENT UMF_MAKE_VERSION(0, 11)
 
 /// @brief Operation results
 typedef enum umf_result_t {
@@ -45,7 +45,10 @@ typedef enum umf_result_t {
     UMF_RESULT_ERROR_NOT_SUPPORTED = 5, ///< Operation not supported
     UMF_RESULT_ERROR_USER_SPECIFIC =
         6, ///< Failure in user provider code (i.e in user provided callback)
-    UMF_RESULT_ERROR_UNKNOWN = 0x7ffffffe ///< Unknown or internal error
+    UMF_RESULT_ERROR_DEPENDENCY_UNAVAILABLE =
+        7, ///< External required dependency is unavailable or missing
+    UMF_RESULT_ERROR_OUT_OF_RESOURCES = 8, ///< Out of internal resources
+    UMF_RESULT_ERROR_UNKNOWN = 0x7ffffffe  ///< Unknown error
 } umf_result_t;
 
 #ifdef __cplusplus

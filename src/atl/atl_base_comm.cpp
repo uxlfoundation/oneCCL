@@ -193,8 +193,30 @@ std::shared_ptr<atl_base_comm> atl_comm_manager::create() {
     return atl_comm;
 }
 
-std::shared_ptr<atl_base_comm> atl_comm_manager::create(std::shared_ptr<ikvs_wrapper> k) {
+std::shared_ptr<atl_base_comm> atl_comm_manager::create(ccl::ccl_comm_attr_impl& attr) {
     std::shared_ptr<atl_base_comm> atl_comm;
+    if (attr.blocking >= 0) {
+        atl_comm.get()->attr.in.enable_sync_coll = (attr.blocking != 0);
+    }
+
+    auto transport_type = ccl::global_data::env().atl_transport;
+
+    switch (transport_type) {
+        case ccl_atl_ofi: atl_comm = std::shared_ptr<atl_base_comm>(new atl_ofi_comm()); break;
+#ifdef CCL_ENABLE_MPI
+        case ccl_atl_mpi: atl_comm = std::shared_ptr<atl_base_comm>(new atl_mpi_comm()); break;
+#endif // CCL_ENABLE_MPI
+        default: LOG_ERROR("unsupported yet"); break;
+    }
+    return atl_comm;
+}
+
+std::shared_ptr<atl_base_comm> atl_comm_manager::create(std::shared_ptr<ikvs_wrapper> k,
+                                                        ccl::ccl_comm_attr_impl& attr) {
+    std::shared_ptr<atl_base_comm> atl_comm;
+    if (attr.blocking >= 0) {
+        atl_comm.get()->attr.in.enable_sync_coll = (attr.blocking != 0);
+    }
 
     auto transport_type = ccl::global_data::env().atl_transport;
 
@@ -210,8 +232,12 @@ std::shared_ptr<atl_base_comm> atl_comm_manager::create(std::shared_ptr<ikvs_wra
 
 std::shared_ptr<atl_base_comm> atl_comm_manager::create(int comm_size,
                                                         const std::vector<int>& ranks,
-                                                        std::shared_ptr<ikvs_wrapper> k) {
+                                                        std::shared_ptr<ikvs_wrapper> k,
+                                                        ccl::ccl_comm_attr_impl& attr) {
     std::shared_ptr<atl_base_comm> atl_comm;
+    if (attr.blocking >= 0) {
+        atl_comm.get()->attr.in.enable_sync_coll = (attr.blocking != 0);
+    }
 
     auto transport_type = ccl::global_data::env().atl_transport;
 

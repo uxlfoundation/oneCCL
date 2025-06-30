@@ -100,10 +100,13 @@ public:
     env_data& operator=(env_data&&) = delete;
 
     void parse();
-    void print(int rank, bool is_mt_enabled = false);
+    void print(int rank, bool is_profile_mode, bool is_mt_enabled = false);
     void set_internal_env();
 
     bool was_printed;
+#if defined(CCL_ENABLE_PROFILING)
+    bool was_profiled;
+#endif
     ccl_spinlock print_guard{};
 
     ccl_log_level log_level;
@@ -136,7 +139,9 @@ public:
     bool enable_extra_ep;
     bool enable_auto_cache;
 #if defined(CCL_ENABLE_MPI) && defined(CCL_ENABLE_OMP)
+    bool enable_omp_coll;
     bool enable_omp_allreduce;
+    bool enable_omp_allgatherv;
     std::string omp_allreduce_num_threads;
 #endif // CCL_ENABLE_MPI && CCL_ENABLE_OMP
 
@@ -230,6 +235,8 @@ public:
     size_t sycl_allreduce_medium_threshold;
     size_t sycl_allreduce_scaleout_threshold;
     std::string sycl_allreduce_scaleout_algo;
+    bool sycl_enable_arc_allreduce;
+    size_t sycl_allreduce_ll_threshold;
 
     bool sycl_reduce_scatter_tmp_buf;
     size_t sycl_reduce_scatter_small_threshold;
@@ -241,6 +248,12 @@ public:
     size_t sycl_allgatherv_small_threshold;
     size_t sycl_allgatherv_medium_threshold;
     size_t sycl_allgatherv_scaleout_threshold;
+    std::string sycl_allgatherv_scaleout_algo;
+    size_t sycl_allgatherv_ll_threshold;
+
+    bool sycl_broadcast_tmp_buf;
+    size_t sycl_broadcast_small_threshold;
+    size_t sycl_broadcast_scaleout_threshold;
 
     bool enable_sycl_kernels;
 
@@ -248,10 +261,12 @@ public:
     bool sycl_kernel_sync;
     bool sycl_single_node_algorithm;
     bool sycl_auto_use_tmp_buf;
+    bool sycl_force_use_tmp_buf_scaleout;
     bool sycl_copy_engine;
     bool sycl_kernel_copy;
     bool sycl_esimd;
     bool sycl_full_vector;
+    bool sycl_force_recording_path;
     size_t sycl_tmp_buf_size;
     size_t sycl_scaleout_host_buf_size;
     size_t sycl_scaleout_device_buf_size;
@@ -261,7 +276,10 @@ public:
     bool sycl_enable_pipeline_gpu_rdma;
     bool sycl_enable_direct_gpu_rdma;
     bool sycl_sub_communicator;
+    bool sycl_force_pcie;
     ccl::utils::alloc_mode sycl_scaleout_buf_alloc_mode;
+    bool sycl_pt2pt_read;
+    bool sycl_pt2pt_enable;
 #endif // CCL_ENABLE_SYCL
 
     bool allreduce_nreduce_buffering;
@@ -375,6 +393,8 @@ public:
     int itt_level;
 #endif // CCL_ENABLE_ITT
     int debug_timestamps_level;
+
+    bool enable_profiling;
 
     ccl_bf16_impl_type bf16_impl_type;
     ccl_fp16_impl_type fp16_impl_type;

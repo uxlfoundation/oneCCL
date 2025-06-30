@@ -226,7 +226,7 @@ private:
                                      const std::vector<std::vector<char>>& prov_ep_names,
                                      atl_ofi_ctx_t& ctx,
                                      size_t length = 0,
-                                     void* shared_memory = nullptr);
+                                     void** shared_memory_ptr = nullptr);
     bool process_address_name(std::vector<std::vector<char>>& prov_ep_names,
                               std::vector<int>& rank2proc_map,
                               const std::vector<char>& addr_name_input,

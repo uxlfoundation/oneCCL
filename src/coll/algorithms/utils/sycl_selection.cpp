@@ -14,7 +14,6 @@
  limitations under the License.
 */
 #include "coll/algorithms/utils/sycl_selection.hpp"
-#include "coll/algorithms/utils/sycl_coll_base.hpp"
 
 bool can_use_sycl_kernels(const ccl_selector_param& param) {
 // TODO: mitigate overhead added by can_use_sycl_kernels
@@ -23,18 +22,18 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
 #else // CCL_ENABLE_SYCL
     return false;
 #endif // CCL_ENABLE_SYCL
-    auto supported_colls = { ccl_coll_allgather,
-                             ccl_coll_allgatherv,
-                             ccl_coll_alltoall,
-                             ccl_coll_allreduce,
-                             ccl_coll_reduce_scatter };
+    auto supported_colls = { ccl_coll_allgather, ccl_coll_allgatherv, ccl_coll_alltoall,
+                             ccl_coll_allreduce, ccl_coll_broadcast,  ccl_coll_reduce_scatter,
+                             ccl_coll_send,      ccl_coll_recv };
     RETURN_FALSE_IF(!checkers::is_coll_supported(supported_colls, param.ctype),
                     "coll is not supported");
 
     // these fields are not expected to be set for sycl kernels
     CCL_THROW_IF_NOT(!param.is_vector_buf, "unexpected is_vector_buf value");
     CCL_THROW_IF_NOT(!param.is_sycl_buf, "unexpected is_sycl_buf value");
-    CCL_THROW_IF_NOT(param.peer_rank == CCL_INVALID_PEER_RANK_IDX, "unexpected peer_rank value");
+    CCL_THROW_IF_NOT((param.ctype == ccl_coll_send || param.ctype == ccl_coll_recv) ||
+                         (param.peer_rank == CCL_INVALID_PEER_RANK_IDX),
+                     "unexpected peer_rank value");
     CCL_THROW_IF_NOT(!param.is_scaleout, "unexpected is_scaleout value");
 
     // TODO: it is incorrect and should be revisited
@@ -74,14 +73,12 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
 
     RETURN_FALSE_IF(ccl::global_data::env().worker_count != 1, "unsupported count of workers");
 #ifdef CCL_ENABLE_SYCL
-    // it hangs if we try to use sycl kernels without ze cache
-    RETURN_FALSE_IF(ccl::global_data::env().enable_ze_cache == 0, "ze cache is not enabled");
     RETURN_FALSE_IF(param.comm->get_pair_comm()->size() > 2,
                     "unsupported pair_comm size: ",
                     param.comm->get_pair_comm()->size());
-    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_p2p_access(),
-                    "no p2p access between devices");
-    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_all_vertices_connected(),
+    // ARC GPUs are exception
+    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_all_vertices_connected() &&
+                        !is_arc_card(ccl::ze::get_device_family(param.stream->get_ze_device())),
                     "no connection between vertices");
     RETURN_FALSE_IF(!param.comm->get_topo_manager().has_same_ppn(),
                     "ppn is not the same among the nodes");
@@ -91,16 +88,28 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
     const ccl::topo_manager& topo_manager = param.comm->get_topo_manager();
     bool is_single_node = topo_manager.is_single_node;
     bool is_oversubscription = topo_manager.has_oversubscription();
+
+    // For recv and send, allow uint8 in addition to the other types.
     bool is_dtype_supported =
         (param.dtype.idx() == ccl::datatype::float16 ||
          param.dtype.idx() == ccl::datatype::bfloat16 ||
-         param.dtype.idx() == ccl::datatype::float32 || param.dtype.idx() == ccl::datatype::int32);
+         param.dtype.idx() == ccl::datatype::float32 ||
+         param.dtype.idx() == ccl::datatype::float64 || param.dtype.idx() == ccl::datatype::int32 ||
+         param.dtype.idx() == ccl::datatype::uint32 || param.dtype.idx() == ccl::datatype::int64 ||
+         param.dtype.idx() == ccl::datatype::uint64 ||
+         (param.dtype.idx() == ccl::datatype::uint8 &&
+          (param.ctype == ccl_coll_recv || param.ctype == ccl_coll_send)));
 
     // Common conditions for all collective operations
     RETURN_FALSE_IF(!ccl::global_data::env().enable_sycl_kernels, "SYCL kernels are not enabled");
     RETURN_FALSE_IF(!param.stream->get_native_stream().is_in_order(), "Stream is not in order");
     RETURN_FALSE_IF(!is_dtype_supported, "Data type is not supported");
     RETURN_FALSE_IF(is_oversubscription, "Oversubscription is not allowed");
+
+    if (param.ctype != ccl_coll_allreduce && param.ctype != ccl_coll_allgatherv) {
+        RETURN_FALSE_IF(!param.comm->get_topo_manager().has_p2p_access(),
+                        "no p2p access between devices");
+    }
 
     // Conditions specific to allreduce
     if (param.ctype == ccl_coll_allreduce) {
@@ -112,8 +121,7 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                         ccl::global_data::env().allreduce_algo_raw,
                         " not supported");
         RETURN_FALSE_IF(
-            param.reduction != ccl::reduction::sum &&
-                (param.reduction != ccl::reduction::avg || ccl::global_data::env().sycl_esimd),
+            param.reduction != ccl::reduction::sum && param.reduction != ccl::reduction::avg,
             "Allreduce only supports sum/avg reductions");
     }
 
@@ -153,6 +161,10 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                 "SYCL based Allgather/Allgatherv in multiple node mode supports only MPI transport");
 
             ccl_comm* r2r_comm = param.comm->get_r2r_comm().get();
+
+            RETURN_FALSE_IF(
+                r2r_comm->size() > 8,
+                "SYCL based Allgather/Allgatherv is not supported at the moment for the larger scale");
             // Since SYCL based Allgatherv supports only equal receive counts,
             // (send_count == recv_counts[i]) we can simplify the operation
             size_t scaleout_count = r2r_comm->size() * param.count;
@@ -174,6 +186,22 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                         " not supported");
     }
 
+    // Conditions specific to broadcast
+    if (param.ctype == ccl_coll_broadcast) {
+        RETURN_FALSE_IF(!ccl::global_data::env().broadcast_algo_raw.empty() &&
+                            ccl::global_data::env().broadcast_algo_raw != "topo",
+                        "algo of coll: ",
+                        ccl_coll_type_to_str(param.ctype),
+                        " is specified explicitly as: ",
+                        ccl::global_data::env().broadcast_algo_raw,
+                        " not supported");
+
+        if (ccl::global_data::env().sycl_esimd) {
+            LOG_DEBUG(
+                "ESIMD kernels are not implemented for broadcast, so SYCL kernels path is selected");
+        }
+    }
+
     // Conditions specific to reduce_scatter
     if (param.ctype == ccl_coll_reduce_scatter) {
         RETURN_FALSE_IF(!ccl::global_data::env().reduce_scatter_algo_raw.empty() &&
@@ -184,8 +212,7 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                         ccl::global_data::env().reduce_scatter_algo_raw,
                         " not supported");
         RETURN_FALSE_IF(
-            param.reduction != ccl::reduction::sum &&
-                (param.reduction != ccl::reduction::avg || ccl::global_data::env().sycl_esimd),
+            param.reduction != ccl::reduction::sum && param.reduction != ccl::reduction::avg,
             "Reduce_scatter only supports sum/avg reductions");
     }
 
@@ -215,7 +242,50 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
     }
 
 #endif // CCL_ENABLE_SYCL
+    if (param.ctype == ccl_coll_recv || param.ctype == ccl_coll_send) {
+        RETURN_FALSE_IF(ccl::global_data::env().sycl_pt2pt_enable == 0,
+                        "SYCL pt2pt kernels are not enabled");
+        auto node_comm = param.comm->get_node_comm().get();
+        bool peer_rank_in_node_comm = node_comm->try_get_rank_from_global(param.peer_rank);
+        bool rank_in_node_comm = node_comm->try_get_rank_from_global(param.comm->rank());
 
+        RETURN_FALSE_IF(!(rank_in_node_comm && peer_rank_in_node_comm),
+                        "peer_rank must be on the same node as own rank is: comm_rank: ",
+                        param.comm->rank(),
+                        ", peer_rank: ",
+                        param.peer_rank,
+                        ", rank_in_node_comm: ",
+                        rank_in_node_comm,
+                        ", peer_rank_in_node_comm: ",
+                        peer_rank_in_node_comm,
+                        ", node_comm_size: ",
+                        node_comm->size());
+
+        if (ccl::global_data::env().recv_algo_raw.length() != 0 &&
+            ccl::global_data::env().send_algo_raw.length() != 0) {
+            auto recv_algo = ccl_algorithm_selector_helper<ccl_coll_recv_algo>::algo_from_str(
+                ccl::global_data::env().recv_algo_raw);
+            auto send_algo = ccl_algorithm_selector_helper<ccl_coll_send_algo>::algo_from_str(
+                ccl::global_data::env().send_algo_raw);
+            RETURN_FALSE_IF((recv_algo == ccl_coll_recv_topo) || (send_algo == ccl_coll_send_topo),
+                            " pt2pt operations set by user: CCL_SEND=",
+                            ccl::global_data::env().send_algo_raw,
+                            ", CCL_RECV=",
+                            ccl::global_data::env().recv_algo_raw);
+            RETURN_FALSE_IF(
+                (recv_algo == ccl_coll_recv_direct) || (send_algo == ccl_coll_send_direct),
+                " pt2pt operations set by user: CCL_SEND=",
+                ccl::global_data::env().send_algo_raw,
+                ", CCL_RECV=",
+                ccl::global_data::env().recv_algo_raw);
+            RETURN_FALSE_IF(
+                (recv_algo == ccl_coll_recv_offload) || (send_algo == ccl_coll_send_offload),
+                " pt2pt operations set by user: CCL_SEND=",
+                ccl::global_data::env().send_algo_raw,
+                ", CCL_RECV=",
+                ccl::global_data::env().recv_algo_raw);
+        }
+    }
     LOG_DEBUG("selected algo: coll ", ccl_coll_type_to_str(param.ctype), ", algo ", "topo sycl");
 
     return true;
@@ -452,19 +522,63 @@ sycl_reduce_scatter_tune_attr reduce_scatter_select_tune_attr(size_t size,
 }
 
 // allgatherv
-size_t default_select_chunk_size() {
+static sycl_allgatherv_tune_attr allgatherv_auto_select_tune_attr(size_t size,
+                                                                  size_t comm_size,
+                                                                  ccl_datatype ccl_dtype) {
+    if (ccl::global_data::env().atl_transport != ccl_atl_mpi) {
+        return { allgatherv_scaleout_algo::ring };
+    }
+
+    // experimental values, should be reviewed later
+    if (comm_size <= 4 && size < 262144 || comm_size <= 16 && size < 131072) {
+        return { allgatherv_scaleout_algo::direct };
+    }
+    else {
+        size_t chunk_size =
+            allgatherv_select_chunk_size(allgatherv_scaleout_algo::ring, size, comm_size);
+        return { allgatherv_scaleout_algo::ring, chunk_size };
+    }
+}
+
+sycl_allgatherv_tune_attr allgatherv_select_tune_attr(size_t size,
+                                                      size_t comm_size,
+                                                      ccl_datatype ccl_dtype) {
+    if (ccl::global_data::env().sycl_allgatherv_scaleout_algo == "auto") {
+        return allgatherv_auto_select_tune_attr(size, comm_size, ccl_dtype);
+    }
+    if (ccl::global_data::env().sycl_allgatherv_scaleout_algo == "direct") {
+        return { allgatherv_scaleout_algo::direct };
+    }
+    if (ccl::global_data::env().sycl_allgatherv_scaleout_algo == "ring") {
+        size_t chunk_size =
+            allgatherv_select_chunk_size(allgatherv_scaleout_algo::ring, size, comm_size);
+        return { allgatherv_scaleout_algo::ring, chunk_size };
+    }
+    CCL_THROW("unsupported allgatherv algo selection");
+}
+
+size_t allgatherv_select_chunk_size(allgatherv_scaleout_algo algo, size_t size, size_t comm_size) {
     // read defaults and user input
     size_t max_pipeline_chunk_size = ccl::global_data::env().sycl_max_pipeline_chunk_size;
     ssize_t env_pipeline_chunk_size = ccl::global_data::env().sycl_pipeline_chunk_size;
-    size_t auto_pipeline_chunk_size = 2 * 1024 * 1024;
     // respect user input
     if (env_pipeline_chunk_size != CCL_ENV_SIZET_NOT_SPECIFIED) {
         return std::min((size_t)env_pipeline_chunk_size, max_pipeline_chunk_size);
     }
+    size_t auto_pipeline_chunk_size = 2 * 1024 * 1024;
+    switch (algo) {
+        case allgatherv_scaleout_algo::ring:
+            if (size >= 128 * 1024 * 1024)
+                auto_pipeline_chunk_size = 64 * 1024 * 1024;
+            else if (size >= 16 * 1024 * 1024)
+                auto_pipeline_chunk_size = 8 * 1024 * 1024;
+            else
+                auto_pipeline_chunk_size = comm_size <= 8 ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
+            break;
+        case allgatherv_scaleout_algo::direct:
+            LOG_WARN("allgatherv direct alogrithm is not supporting pipeline chunk size tuning");
+            break;
+    }
     // error protection
     return std::min(auto_pipeline_chunk_size, max_pipeline_chunk_size);
-}
-
-size_t allgatherv_select_chunk_size() {
-    return default_select_chunk_size();
 }

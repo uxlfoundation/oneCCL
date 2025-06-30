@@ -24,6 +24,7 @@ ccl_log_level ccl_logger::level = ccl_log_level::warn;
 bool ccl_logger::abort_on_throw = false;
 ccl_logger logger;
 
+// TODO: add a label named profile?
 std::map<ccl_log_level, std::string> ccl_logger::level_names = {
     std::make_pair(ccl_log_level::error, "error"),
     std::make_pair(ccl_log_level::warn, "warn"),

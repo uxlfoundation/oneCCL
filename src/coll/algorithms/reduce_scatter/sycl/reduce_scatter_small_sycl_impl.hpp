@@ -49,6 +49,7 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
     const size_t copy_count = comm_size * recv_count + rem_count;
 
     size_t hw_threads = get_total_threads(q);
+    bool is_recording = use_recording_path(q);
 
     // create sections as data size increases and increase the vector size
     // used in each thread so as to reduce the number of threads and this
@@ -63,15 +64,18 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
     const size_t sec_3 = sec_2 * 2; // 32 byte vectors
 
     // use full vector (>= 8 bytes) if buffers and data size are 4 byte aligned
-    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, count * dsize);
+    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, count, dsize);
     const bool use_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
     const bool use_kernel_sync = ccl::global_data::env().sycl_kernel_sync;
 
-    auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
+    auto [local_tmp_buf, remote_ptrs] =
+        is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
-
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
     // VS : vec_size, SGS : sub_group_size, LB : use_local_barrier, GB : use_global_barrier
     auto reduce_sum_invoke = [=, &q]<int VS, int SGS, int LB, int GB>(std::vector<sycl::event> l_dep_events) {
         constexpr int use_block = 1;
@@ -169,16 +173,21 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
 
         sycl::event local_event = reduce_sum_invoke.template operator()<VS, 32, 0, 0>({ barrier_event });
 
+        if (is_recording) {
+            local_event = invoke_barrier(node_comm, q, { local_event }, use_cpu_barrier);
+        }
         return local_event;
     };
-
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
     // run the three phases of collective as separate kernels.
     // when cpu barrier is enabled we cannot use single gpu kernel
     // since control has to go to cpu and perform the barrier.
     // also when user asks to remove the synchronization within kernel
     // run them as separate kernels since single kernel algorithm
     // will require the threads to synchronize between phases
-    if (use_cpu_barrier || !use_kernel_sync) {
+    if (use_cpu_barrier || !use_kernel_sync || is_recording) {
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8>();
             kernel_event = memcpy_reduce_sum.template operator()<vec_size>();
@@ -235,6 +244,8 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
         LOG_DEBUG("reduce_scatter_small calculate average on counts: ", count, ", ranks: ", comm_size);
         kernel_event = sycl_average(q, recv_buf, count, comm_size, dtype, avg_deps_evs);
     }
-
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
     return ccl::event::create_from_native(kernel_event);
 }

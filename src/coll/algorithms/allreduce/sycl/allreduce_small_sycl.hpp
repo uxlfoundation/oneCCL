@@ -148,6 +148,7 @@ public:
                          void *out_buffer,
                          ccl::datatype dtype,
                          size_t size,
+                         ccl::reduction reduction,
                          const ccl::vector_class<ccl::event> &deps,
                          bool &done) {
         sycl::event e;
@@ -178,6 +179,13 @@ public:
                 e = allreduce_esimd<2>(queue, in_buffer, out_buffer, size, deps, done);
             }
         }
+
+        if (reduction == ccl::reduction::avg) {
+            std::vector<sycl::event> evs;
+            evs.push_back(e);
+            e = sycl_average(queue, out_buffer, size, world, dtype, evs);
+        }
+
         return ccl::event::create_from_native(e);
     }
 

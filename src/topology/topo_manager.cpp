@@ -463,11 +463,15 @@ bool topo_manager::build_fabric_connectivity_matrix(
             // set matrix element based on whether there are edges between vertices
             matrix[vertex_a_idx][vertex_b_idx] = (edge_count > 0);
             if (!matrix[vertex_a_idx][vertex_b_idx]) {
+                static int warned = 0;
                 is_matrix_connected = false;
-                LOG_WARN(
-                    "topology recognition shows PCIe connection between devices."
-                    " If this is not correct, you can disable topology recognition,"
-                    " with CCL_TOPO_FABRIC_VERTEX_CONNECTION_CHECK=0. This will assume XeLinks across devices");
+                if (!warned) {
+                    LOG_WARN_ROOT(
+                        "topology recognition shows PCIe connection between devices."
+                        " If this is not correct, you can disable topology recognition,"
+                        " with CCL_TOPO_FABRIC_VERTEX_CONNECTION_CHECK=0. This will assume XeLinks across devices");
+                    warned = 1;
+                }
             }
         }
     }
@@ -781,7 +785,9 @@ void topo_manager::fill_ze_intra_colors(const rank_info_vec_t& local_info_vec) {
     // card = pci_addr + vector of ranks on this card
     // further these ranks will be grouped
     // according to max_ranks_per_card threshold
-    using card_info_t = typename std::pair<zes_pci_address_t, std::vector<int>>;
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+    using card_info_t = typename std::pair<ze_pci_address_ext_t, std::vector<int>>;
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
 
     std::vector<card_info_t> cards;
 
@@ -828,7 +834,10 @@ void topo_manager::fill_ze_inter_colors() {
         // subsequent ranks with same address are skipped and added into separate plane
         // index - plane index
         // value - set of unique pci addresses within this plane
-        std::vector<std::set<zes_pci_address_t, ccl::ze::pci_address_comparator>> plane_pci_addrs;
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+        std::vector<std::set<ze_pci_address_ext_t, ccl::ze::pci_address_comparator>>
+            plane_pci_addrs;
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
 
         // service container with set of ranks already used in one of planes
         // these ranks are not used for creation of subsequent planes
@@ -1553,16 +1562,16 @@ void topo_manager::ze_base_init(const std::shared_ptr<ccl::device>& device,
 
     ze_rank_info.device_uuid = dev_props.uuid;
 
-    zes_pci_properties_t pci_props = {};
-
-    // ZE_CALL(zesDevicePciGetProperties, ((zes_device_handle_t)ze_device, &pci_props));
-    if (zesDevicePciGetProperties((zes_device_handle_t)ze_device, &pci_props) !=
-        ZE_RESULT_SUCCESS) {
-        LOG_INFO("can not retrieve ze pci properties");
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+    ze_pci_ext_properties_t pci_prop = ccl::ze::default_pci_property;
+    ze_result_t ret = zeDevicePciGetPropertiesExt(ze_device, &pci_prop);
+    if (ret == ZE_RESULT_SUCCESS) {
+        ze_rank_info.pci_addr = pci_prop.address;
     }
     else {
-        ze_rank_info.pci_addr = pci_props.address;
+        LOG_INFO("can not retrieve ze pci properties");
     }
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
 
     ZE_CALL(zeDeviceGetSubDevices, (ze_device, &ze_rank_info.subdev_count, nullptr));
     ze_rank_info.subdev_id = dev_props.subdeviceId;

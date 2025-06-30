@@ -411,6 +411,11 @@ sycl::event pipe_sendrecv(sycl::queue& q,
                           ccl_comm* comm,
                           const ccl::vector_class<sycl::event>& deps,
                           bool use_rdma) {
+    ze_device_handle_t ze_dev =
+        sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
+    if (should_disable_rdma(ze_dev)) {
+        use_rdma = false;
+    }
     if (!use_rdma) {
         return pipe_sendrecv_plain(q,
                                    send_buf,

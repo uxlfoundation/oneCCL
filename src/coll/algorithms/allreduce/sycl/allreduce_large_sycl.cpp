@@ -36,6 +36,7 @@ int allreduce_large_buffer_index = 0;
                                           const void *in_buf, \
                                           void *out_buf, \
                                           size_t count, \
+                                          ccl::reduction reduction, \
                                           const ccl::vector_class<ccl::event> &deps, \
                                           bool &done)
 
@@ -66,7 +67,8 @@ void init_allreduce_large(ccl::datatype dtype,
 
 #define SWITCH_RUN_TYPE(TYPE, ccl_type) \
     case ccl_type: \
-        e = run_allreduce_large_##TYPE(dtype, queue, in_buf, out_buf, count, deps, done); \
+        e = run_allreduce_large_##TYPE( \
+            dtype, queue, in_buf, out_buf, count, reduction, deps, done); \
         break;
 
 ccl::event run_allreduce_large(ccl::datatype dtype,
@@ -74,6 +76,7 @@ ccl::event run_allreduce_large(ccl::datatype dtype,
                                const void *in_buf,
                                void *out_buf,
                                size_t count,
+                               ccl::reduction reduction,
                                const ccl::vector_class<ccl::event> &deps,
                                bool &done) {
     ccl::event e;
@@ -114,7 +117,7 @@ ccl::event allreduce_large(const void *send_buf,
     // use full vector (>= 8 bytes) if buffers are 4 byte aligned
     // we dont have to take into account of the count while calculating alignment,
     // since we divide count such that all ranks have aligned addresses
-    bool use_full_vector = can_use_full_vector(send_buf, recv_buf, 0);
+    bool use_full_vector = can_use_full_vector(send_buf, recv_buf, 0, 0);
 
     const bool is_use_tmp = ccl::global_data::env().sycl_allreduce_tmp_buf;
 
@@ -141,9 +144,10 @@ ccl::event allreduce_large(const void *send_buf,
         sycl_ptrs.xelink_ptrs_wr =
             get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, (void *)recv_buf, sched);
         // use full vector (>= 8 bytes) if remote buffers are 4 byte aligned
-        use_full_vector = use_full_vector &&
-                          all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), 0, 4) &&
-                          all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), 0, 4);
+        use_full_vector =
+            use_full_vector &&
+            all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), 0, 0, 4) &&
+            all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), 0, 0, 4);
 
         if (pair_comm->size() > 1) {
             assert(pair_comm->size() == MAX_TILES);
@@ -152,8 +156,8 @@ ccl::event allreduce_large(const void *send_buf,
                 pair_comm, 0, (void *)send_buf, sched)[peer_pair_rank];
             sycl_ptrs.mdfi_ptr_wr = get_ipc_ptrs<void, MAX_TILES>(
                 pair_comm, 1, (void *)recv_buf, sched)[peer_pair_rank];
-            use_full_vector = use_full_vector && all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, 0, 4) &&
-                              all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, 0, 4);
+            use_full_vector = use_full_vector && all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, 0, 0, 4) &&
+                              all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, 0, 0, 4);
         }
 
         delete exchange_entry;

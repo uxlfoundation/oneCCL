@@ -244,8 +244,11 @@ void ze_handle_exchange_entry::fill_payload(payload_t& payload, size_t buf_idx) 
         CCL_THROW("unable to get global id for context\n");
     }
     ssize_t remote_device_id{ ccl::utils::invalid_device_id };
-    if (!ccl::ze::get_device_global_id(remote_device, &remote_device_id)) {
-        CCL_THROW("unable to get global id for device\n");
+    if (ccl::global_data::env().enable_ze_cache_get_ipc_handles == 1 &&
+        ccl::global_data::env().enable_ze_cache_open_ipc_handles == 1) {
+        if (!ccl::ze::get_device_global_id(remote_device, &remote_device_id)) {
+            CCL_THROW("unable to get global id for device\n");
+        }
     }
 
     payload.remote_mem_alloc_id = mem_alloc_props.id;
@@ -351,7 +354,6 @@ void ze_handle_exchange_entry::common_fd_mode_exchange() {
 
 void ze_handle_exchange_entry::pt2pt_fd_mode_exchange() {
     int peer_rank = pt2pt_info.peer_rank;
-    int pt2pt_sched_id = comm->get_atl_comm()->tag_creator->get_pt2pt_sched_id();
 
     LOG_DEBUG("pt2pt_fd_mode_exchange is chosen: in_buffers size: ",
               in_buffers.size(),
@@ -363,10 +365,10 @@ void ze_handle_exchange_entry::pt2pt_fd_mode_exchange() {
         std::vector<payload_t> payloads(1);
         payload_t payload{};
         fill_payload(payload, buf_idx);
-
+        ccl_sched_id_t pt2pt_ack_tag = comm->get_atl_comm()->tag_creator->get_pt2pt_ack_tag();
         if (pt2pt_info.role == ccl::utils::pt2pt_handle_exchange_role::sender) {
             ccl::utils::send(
-                comm->get_atl_comm(), &payload, sizeof(payload_t), peer_rank, pt2pt_sched_id);
+                comm->get_atl_comm(), &payload, sizeof(payload_t), peer_rank, pt2pt_ack_tag);
             LOG_DEBUG("send: from rank: ",
                       rank,
                       " to peer_rank: ",
@@ -377,11 +379,8 @@ void ze_handle_exchange_entry::pt2pt_fd_mode_exchange() {
                       sizeof(payload_t));
         }
         else if (pt2pt_info.role == ccl::utils::pt2pt_handle_exchange_role::receiver) {
-            ccl::utils::recv(comm->get_atl_comm(),
-                             payloads.data(),
-                             sizeof(payload_t),
-                             peer_rank,
-                             pt2pt_sched_id);
+            ccl::utils::recv(
+                comm->get_atl_comm(), payloads.data(), sizeof(payload_t), peer_rank, pt2pt_ack_tag);
             LOG_DEBUG("recv: from rank: ",
                       peer_rank,
                       " in rank: ",

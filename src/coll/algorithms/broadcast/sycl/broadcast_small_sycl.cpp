@@ -23,8 +23,14 @@ ccl::event broadcast_small(const void* send_buf,
                            ccl_comm* comm,
                            ccl_stream* global_stream,
                            const ccl::vector_class<ccl::event>& deps) {
-    LOG_DEBUG("invoking broadcast_small");
-    coll_init(comm, global_stream);
+    if (comm->is_multi_thread_instance() == true) {
+        LOG_DEBUG("|MT|: invoking broadcast_small");
+        coll_initExt(comm, ccl::global_data::get().shared_data->hash_table, global_stream);
+    }
+    else {
+        LOG_DEBUG("invoking broadcast_small");
+        coll_init(comm, global_stream);
+    }
 
     auto lambda = [&]<typename T, int NE, int NP>() {
         return broadcast_small_impl<T, NE, NP>(

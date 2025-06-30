@@ -14,11 +14,11 @@
  limitations under the License.
 */
 #pragma once
-
 #include <atomic>
 #include <unordered_map>
 
 #include "atl/atl_base_comm.hpp"
+#include "comm/comm_common_attr.hpp"
 #include "comm/comm_interface.hpp"
 #include "comm/atl_tag.hpp"
 #include "common/log/log.hpp"
@@ -109,8 +109,10 @@ private:
     int m_rank;
     int m_size;
     size_t m_count = slots - 1;
+    size_t* d_count = nullptr;
     bool m_is_set = false;
     std::array<size_t*, MAX_NODE_RANKS> m_remote_ptrs{};
+    std::array<size_t*, MAX_NODE_RANKS> d_remote_ptrs{};
 
 public:
     static constexpr int slots = 3;
@@ -146,10 +148,33 @@ public:
         return m_remote_ptrs;
     }
 
-    void set_remote_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs) {
+    size_t inc_gpu(size_t n) {
+        *d_count = *d_count + n;
+        return *d_count;
+    }
+
+    size_t count_gpu() const {
+        return *d_count / slots;
+    }
+
+    int slot_gpu() const {
+        return *d_count % slots;
+    }
+
+    std::array<size_t*, MAX_NODE_RANKS> remote_ptrs_gpu() const {
+        return d_remote_ptrs;
+    }
+
+    void set_count_gpu(size_t* count) {
+        d_count = count;
+    }
+
+    void set_remote_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs,
+                         std::array<size_t*, MAX_NODE_RANKS> gpu_barrier_ptrs) {
         assert(!is_set());
         m_is_set = true;
         m_remote_ptrs = ptrs;
+        d_remote_ptrs = gpu_barrier_ptrs;
     }
 };
 
@@ -186,8 +211,16 @@ public:
         tmp_bufs[idx] = ptr;
     }
 
+    void set_tmp_buf_gpu(void* ptr, int idx) {
+        tmp_bufs_gpu[idx] = ptr;
+    }
+
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
         remote_tmp_bufs[idx] = ptrs;
+    }
+
+    void set_remote_tmp_bufs_gpu(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
+        remote_tmp_bufs_gpu[idx] = ptrs;
     }
 
     int get_next_index() {
@@ -198,18 +231,33 @@ public:
         return tmp_bufs[idx];
     }
 
+    void* get_tmp_buf_gpu(int idx) const {
+        return tmp_bufs_gpu[idx];
+    }
+
     std::array<void*, MAX_NODE_RANKS> get_remote_tmp_buf(int idx) const {
         return remote_tmp_bufs[idx];
+    }
+
+    std::array<void*, MAX_NODE_RANKS> get_remote_tmp_buf_gpu(int idx) const {
+        return remote_tmp_bufs_gpu[idx];
     }
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
         int idx = is_next ? get_next_index() : index;
         return { get_tmp_buf(idx), get_remote_tmp_buf(idx) };
     }
+    std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs_gpu(bool is_next) {
+        // int idx = is_next ? get_next_index() : index;
+        int idx = 0;
+        return { get_tmp_buf_gpu(idx), get_remote_tmp_buf_gpu(idx) };
+    }
 
 private:
     void* tmp_bufs[buf_count];
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count];
+    void* tmp_bufs_gpu[buf_count];
+    std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs_gpu[buf_count];
 
     int index = 0;
 };
@@ -319,20 +367,35 @@ public:
         return m_barrier_data;
     };
 
-    void set_barrier_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs) {
-        m_barrier_data.set_remote_ptrs(ptrs);
+    void set_barrier_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs0,
+                          std::array<size_t*, MAX_NODE_RANKS> ptrs1,
+                          size_t* count) {
+        m_barrier_data.set_remote_ptrs(ptrs0, ptrs1);
+        m_barrier_data.set_count_gpu(count);
     }
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
         return m_tmp_buf.get_all_tmp_bufs(is_next);
     }
 
+    std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs_gpu(bool is_next) {
+        return m_tmp_buf.get_all_tmp_bufs_gpu(is_next);
+    }
+
     void set_tmp_buf(void* ptr, int idx) {
         m_tmp_buf.set_tmp_buf(ptr, idx);
     }
 
+    void set_tmp_buf_gpu(void* ptr, int idx) {
+        m_tmp_buf.set_tmp_buf_gpu(ptr, idx);
+    }
+
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
         m_tmp_buf.set_remote_tmp_bufs(ptrs, idx);
+    }
+
+    void set_remote_tmp_bufs_gpu(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
+        m_tmp_buf.set_remote_tmp_bufs_gpu(ptrs, idx);
     }
 
     ccl_large_tmp_bufs& get_large_tmp_bufs() {
@@ -425,6 +488,7 @@ public:
              bool share_resources = false,
              bool is_sub_communicator = false);
     ccl_comm();
+    ccl_comm(ccl::ccl_comm_attr_impl& attr);
     // needed for multithreading (single process multiple devices) approach:
     ccl_comm(int size, int rank);
 
@@ -446,9 +510,15 @@ public:
                             context_t context,
                             int size,
                             int rank,
-                            ccl::shared_ptr_class<ccl::kvs_interface> kvs);
-    static ccl_comm* create(int size, int rank, ccl::shared_ptr_class<ccl::kvs_interface> kvs);
-    static ccl_comm* create(int size, ccl::shared_ptr_class<ccl::kvs_interface> kvs);
+                            ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                            ccl::ccl_comm_attr_impl& attr);
+    static ccl_comm* create(int size,
+                            int rank,
+                            ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                            ccl::ccl_comm_attr_impl& attr);
+    static ccl_comm* create(int size,
+                            ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                            ccl::ccl_comm_attr_impl& attr);
 
     // needed for multithreading (single process multiple devices) approach:
     void initExt(int size,
@@ -462,9 +532,15 @@ public:
                                context_t context,
                                int size,
                                int rank,
-                               ccl::shared_ptr_class<ccl::kvs_interface> kvs);
-    static ccl_comm* createExt(int size, int rank, ccl::shared_ptr_class<ccl::kvs_interface> kvs);
-    static ccl_comm* createExt(int size, ccl::shared_ptr_class<ccl::kvs_interface> kvs);
+                               ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                               ccl::ccl_comm_attr_impl& attr);
+    static ccl_comm* createExt(int size,
+                               int rank,
+                               ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                               ccl::ccl_comm_attr_impl& attr);
+    static ccl_comm* createExt(int size,
+                               ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                               ccl::ccl_comm_attr_impl& attr);
 
 private:
     // common usage: support processes and threads
@@ -475,8 +551,11 @@ private:
              int size = invalid_size,
              int rank = invalid_rank,
              int group_id = 0);
-    ccl_comm(int size, int rank, ccl::shared_ptr_class<ikvs_wrapper> kvs);
-    ccl_comm(int size, ccl::shared_ptr_class<ikvs_wrapper> kvs);
+    ccl_comm(int size,
+             int rank,
+             ccl::shared_ptr_class<ikvs_wrapper> kvs,
+             ccl::ccl_comm_attr_impl& attr);
+    ccl_comm(int size, ccl::shared_ptr_class<ikvs_wrapper> kvs, ccl::ccl_comm_attr_impl& attr);
 
     // copy-constructor with explicit comm_id
     ccl_comm(const ccl_comm& src, int comm_id);
@@ -640,12 +719,18 @@ public:
         return comm_impl->barrier_inc(n);
     }
 
-    void set_barrier_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs) {
-        comm_impl->set_barrier_ptrs(ptrs);
+    void set_barrier_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs0,
+                          std::array<size_t*, MAX_NODE_RANKS> ptrs1,
+                          size_t* count) {
+        comm_impl->set_barrier_ptrs(ptrs0, ptrs1, count);
     }
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
         return comm_impl->get_all_tmp_bufs(is_next);
+    }
+
+    std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs_gpu(bool is_next) {
+        return comm_impl->get_all_tmp_bufs_gpu(is_next);
     }
 
     void set_tmp_buf(void* ptr, int idx) {
@@ -654,6 +739,14 @@ public:
 
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
         comm_impl->set_remote_tmp_bufs(ptrs, idx);
+    }
+
+    void set_tmp_buf_gpu(void* ptr, int idx) {
+        comm_impl->set_tmp_buf_gpu(ptr, idx);
+    }
+
+    void set_remote_tmp_bufs_gpu(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
+        comm_impl->set_remote_tmp_bufs_gpu(ptrs, idx);
     }
 
     ccl_large_tmp_bufs& get_large_tmp_bufs() {

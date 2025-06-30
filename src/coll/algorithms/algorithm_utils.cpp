@@ -355,7 +355,7 @@ sched_group_size_vec serialize_chunks(const sched_group_size_vec& chunks,
     LOG_DEBUG("|GROUPS| Serialize operation with memory scale factor: ", memory_scale_factor);
 
     sched_group_size_vec new_serial_chunks;
-    for (auto [group, bytes] : chunks) {
+    for (auto& [group, bytes] : chunks) {
         size_t mem_align = ccl::global_data::env().kernel_mem_align;
         size_t serial_chunk_bytes = ccl::global_data::env().ze_tmp_buf_size / memory_scale_factor;
         serial_chunk_bytes = (serial_chunk_bytes / mem_align) * mem_align;
@@ -425,7 +425,7 @@ sched_group_size_vec parallelize_chunks(const sched_group_size_vec& chunks,
                                         const size_t pipe_chunk_count) {
     sched_group_size_vec new_parallel_chunks;
 
-    for (auto [group, bytes] : chunks) {
+    for (auto& [group, bytes] : chunks) {
         std::optional<size_t> pipe_chunk_size_opt =
             ccl_get_pipe_size(bytes, dtype_size, pipe_chunk_count);
         size_t pipe_chunk_size = pipe_chunk_size_opt.value_or(bytes);

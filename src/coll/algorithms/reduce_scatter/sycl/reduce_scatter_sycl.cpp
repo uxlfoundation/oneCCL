@@ -32,7 +32,8 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
                                            ccl_comm* comm,
                                            ccl_stream* global_stream,
                                            const vector_class<event>& deps,
-                                           bool& done) {
+                                           bool& done,
+                                           sycl_coll_scaleup_attr coll_attr) {
     ccl::event e;
     done = true;
 
@@ -81,7 +82,8 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
                 "reduce_scatter_large", "send_size", recv_count * world * ccl_dtype.size());
 #endif // CCL_ENABLE_ITT
             LOG_DEBUG("invoking large reduce_scatter: recv_count:", recv_count, " datatype: ", dtype);
-            e = reduce_scatter_large(send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, deps);
+            e = reduce_scatter_large(
+                send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, deps, coll_attr);
 #ifdef CCL_ENABLE_ITT
             ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
@@ -99,7 +101,7 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
         ccl::profile::itt::task_begin("reduce_scatter_small", "send_size", recv_count * world * ccl_dtype.size());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects small kernel, recv_count:", recv_count, " datatype: ", dtype);
-        e = run_reduce_scatter_small(dtype, q, send_buf, recv_buf, recv_count, done);
+        e = run_reduce_scatter_small(dtype, q, send_buf, recv_buf, recv_count, reduction, deps, done);
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects small kernel, recv_count:",
                   recv_count,
                   " datatype: ",
@@ -119,7 +121,7 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
         ccl::profile::itt::task_begin("reduce_scatter_medium", "send_size", recv_count * world * ccl_dtype.size());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects medium kernel: count:", recv_count, " datatype: ", dtype);
-        e = run_reduce_scatter_medium(dtype, q, send_buf, recv_buf, recv_count, done);
+        e = run_reduce_scatter_medium(dtype, q, send_buf, recv_buf, recv_count, reduction, deps, done);
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
@@ -131,7 +133,7 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
         ccl::profile::itt::task_begin("reduce_scatter_large", "send_size", recv_count * world * ccl_dtype.size());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects large kernel: count:", recv_count, " datatype: ", dtype);
-        e = run_reduce_scatter_large(dtype, q, send_buf, recv_buf, recv_count, done);
+        e = run_reduce_scatter_large(dtype, q, send_buf, recv_buf, recv_count, reduction, deps, done);
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
@@ -282,29 +284,29 @@ static sycl::event rearrange(sycl::queue& q,
 
     if (total_size <= 1073741824) {
         // single sycl kernel only works on the full buffer
-        int align4 = ccl_dtype.size() >= 4 || is_aligned(send_buf, recv_count * ccl_dtype.size(), 4);
+        bool align4 = ccl_dtype.size() >= 4 || is_aligned(send_buf, recv_count, ccl_dtype.size(), 4);
         auto lambda = [&]<typename T>() {
             if (recv_count <= 65536) {
                 // can not use full vector size (8) if not 4-byte aligned
                 if (align4) {
-                    constexpr int vec_size = 8 / sizeof(T);
+                    constexpr int vec_size = get_num_elements<T, 8>();
                     return transposeT<T, vec_size, 8>(
                         q, send_buf, staging_buf, recv_count, displ, block_count, dtype, nodes, ppn, dep_events);
                 }
                 else {
-                    constexpr int vec_size = 4 / sizeof(T);
+                    constexpr int vec_size = get_num_elements<T, 8, false>();
                     return transposeT<T, vec_size, 32>(
                         q, send_buf, staging_buf, recv_count, displ, block_count, dtype, nodes, ppn, dep_events);
                 }
             }
             else {
                 if (align4) {
-                    constexpr int vec_size = 8 / sizeof(T);
+                    constexpr int vec_size = get_num_elements<T, 8>();
                     return transposeT<T, vec_size, 32>(
                         q, send_buf, staging_buf, recv_count, displ, block_count, dtype, nodes, ppn, dep_events);
                 }
                 else {
-                    constexpr int vec_size = 4 / sizeof(T);
+                    constexpr int vec_size = get_num_elements<T, 8, false>();
                     return transposeT<T, vec_size, 32>(
                         q, send_buf, staging_buf, recv_count, displ, block_count, dtype, nodes, ppn, dep_events);
                 }
@@ -451,6 +453,8 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
         evs.push_back(std::move(ev));
         size_t scaleup_recv_count = pack_count * r2r_comm->size();
         void* scaleup_buf = (char*)staging_buf + scaleup_recv_count * node_comm->rank() * ccl_dtype.size();
+        sycl_coll_scaleup_attr coll_attr;
+        coll_attr.force_use_tmp = true;
         ev = reduce_scatter_sycl_single_node(q,
                                              staging_buf,
                                              scaleup_buf,
@@ -460,7 +464,8 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
                                              node_comm.get(),
                                              global_stream,
                                              evs,
-                                             done);
+                                             done,
+                                             coll_attr);
         if (!done) {
             // fallback
             LOG_INFO("allreduce_sycl allgatherv was not done -- falling back");

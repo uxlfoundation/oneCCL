@@ -246,16 +246,14 @@ ccl::event ccl_comm::alltoall_impl(const buffer_type* send_buf,
                                    const ccl::stream::impl_value_t& stream,
                                    const ccl::alltoall_attr& attr,
                                    const ccl::vector_class<ccl::event>& deps) {
-    ccl_request* req = ccl_alltoall_impl(reinterpret_cast<const void*>(send_buf),
-                                         reinterpret_cast<void*>(recv_buf),
-                                         count,
-                                         ccl::native_type_info<buffer_type>::dtype,
-                                         attr,
-                                         this,
-                                         get_stream_ptr(stream),
-                                         deps);
-
-    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
+    return ccl_alltoall(reinterpret_cast<const void*>(send_buf),
+                        reinterpret_cast<void*>(recv_buf),
+                        count,
+                        ccl::native_type_info<buffer_type>::dtype,
+                        attr,
+                        this,
+                        get_stream_ptr(stream),
+                        deps);
 }
 
 template <class buffer_type>
@@ -280,16 +278,14 @@ ccl::event ccl_comm::alltoall_impl(const buffer_type& send_buf,
 #ifdef CCL_ENABLE_SYCL
     internal_attr.is_sycl_buf = 1;
 #endif // CCL_ENABLE_SYCL
-    ccl_request* req = ccl_alltoall_impl(reinterpret_cast<const void*>(&send_buf),
-                                         reinterpret_cast<void*>(&recv_buf),
-                                         count,
-                                         ccl::native_type_info<buffer_type>::dtype,
-                                         internal_attr,
-                                         this,
-                                         get_stream_ptr(stream),
-                                         deps);
-
-    return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
+    return ccl_alltoall(reinterpret_cast<const void*>(&send_buf),
+                        reinterpret_cast<void*>(&recv_buf),
+                        count,
+                        ccl::native_type_info<buffer_type>::dtype,
+                        internal_attr,
+                        this,
+                        get_stream_ptr(stream),
+                        deps);
 }
 
 template <class buffer_type>

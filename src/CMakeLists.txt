@@ -63,6 +63,7 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         coll/algorithms/allgatherv/sycl/allgatherv_medium_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_large_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_scaleout_sycl.cpp
+        coll/algorithms/allgatherv/sycl/allgatherv_pcie.cpp
 
         coll/algorithms/alltoall/sycl/alltoall_sycl.cpp
         coll/algorithms/alltoall/sycl/alltoall_large_sycl.cpp
@@ -80,6 +81,8 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         coll/algorithms/allreduce/sycl/allreduce_large_sycl_int32.cpp
         coll/algorithms/allreduce/sycl/allreduce_sycl.cpp
         coll/algorithms/allreduce/sycl/allreduce_scaleout_sycl.cpp
+        coll/algorithms/allreduce/sycl/allreduce_ring_ll256.cpp
+        coll/algorithms/allreduce/sycl/allreduce_pcie.cpp
 
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.cpp
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_small_sycl.cpp
@@ -93,10 +96,16 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
 
         coll/algorithms/broadcast/sycl/broadcast_sycl.cpp
         coll/algorithms/broadcast/sycl/broadcast_small_sycl.cpp
+        coll/algorithms/broadcast/sycl/broadcast_large_sycl.cpp
+        coll/algorithms/broadcast/sycl/broadcast_scaleout_sycl.cpp
+
+        coll/algorithms/recv/sycl/recv_sycl.cpp
+        coll/algorithms/send/sycl/send_sycl.cpp
 
         coll/algorithms/utils/sycl_coll_base.cpp
         coll/algorithms/utils/sycl_pipe_send.cpp
         coll/algorithms/utils/sycl_selection.cpp
+        coll/algorithms/utils/sycl_ll256.cpp
     )
     if (ENABLE_UMF)
         list(APPEND EXTENSIONS_SRC
@@ -150,10 +159,10 @@ set(CCL_SRC
     coll/algorithms/broadcast/bcast.cpp
     coll/algorithms/broadcast/broadcast.cpp
     coll/algorithms/double_tree_ops.cpp
-    coll/algorithms/recv.cpp
+    coll/algorithms/recv/recv.cpp
     coll/algorithms/reduce.cpp
     coll/algorithms/reduce_scatter/reduce_scatter.cpp
-    coll/algorithms/send.cpp
+    coll/algorithms/send/send.cpp
     coll/coll.cpp
     coll/coll_check.cpp
     coll/group/group.cpp
@@ -196,6 +205,7 @@ set(CCL_SRC
     common/utils/utils.cpp
     common/utils/version.cpp
     common/utils/yield.cpp
+    common/utils/comm_profile.cpp
 
     common/api_wrapper/api_wrapper.cpp
     common/api_wrapper/mpi_api_wrapper.cpp

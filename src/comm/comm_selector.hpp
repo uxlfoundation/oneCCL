@@ -46,27 +46,34 @@ struct comm_selector {
     virtual context_ptr_t get_context() const = 0;
 
     static comm_interface_ptr create_comm_impl();
+    static comm_interface_ptr create_comm_impl(const comm_attr& attr);
     static comm_interface_ptr create_comm_impl(const size_t size,
-                                               shared_ptr_class<kvs_interface> kvs);
+                                               shared_ptr_class<kvs_interface> kvs,
+                                               const comm_attr& attr);
     static comm_interface_ptr create_comm_impl(const size_t size,
                                                const int rank,
-                                               shared_ptr_class<kvs_interface> kvs);
+                                               shared_ptr_class<kvs_interface> kvs,
+                                               const comm_attr& attr);
     static comm_interface_ptr create_comm_impl(const size_t size,
                                                const int rank,
                                                device_t ccl_device,
                                                context_t ccl_context,
-                                               shared_ptr_class<kvs_interface> kvs);
+                                               shared_ptr_class<kvs_interface> kvs,
+                                               const comm_attr& attr);
     static comm_interface_ptr create_comm_implExt();
     static comm_interface_ptr create_comm_implExt(const size_t size,
-                                                  shared_ptr_class<kvs_interface> kvs);
+                                                  shared_ptr_class<kvs_interface> kvs,
+                                                  const comm_attr& attr);
     static comm_interface_ptr create_comm_implExt(const size_t size,
                                                   const int rank,
-                                                  shared_ptr_class<kvs_interface> kvs);
+                                                  shared_ptr_class<kvs_interface> kvs,
+                                                  const comm_attr& attr);
     static comm_interface_ptr create_comm_implExt(const size_t size,
                                                   const int rank,
                                                   device_t ccl_device,
                                                   context_t ccl_context,
-                                                  shared_ptr_class<kvs_interface> kvs);
+                                                  shared_ptr_class<kvs_interface> kvs,
+                                                  const comm_attr& attr);
 };
 
 } // namespace ccl

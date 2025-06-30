@@ -100,6 +100,8 @@ atl_status_t atl_ofi::init(int* argc,
     base_hints->domain_attr->control_progress = FI_PROGRESS_MANUAL;
     base_hints->domain_attr->data_progress = FI_PROGRESS_MANUAL;
     base_hints->caps = FI_TAGGED;
+    base_hints->rx_attr->msg_order = FI_ORDER_SAS;
+    base_hints->caps |= FI_DIRECTED_RECV;
 
     prov_env = getenv("FI_PROVIDER");
 
@@ -833,7 +835,10 @@ atl_status_t atl_ofi::get_rank2proc_map(std::shared_ptr<ipmi> pmi,
                                         &shared_memory);
         }
         call_count_id++;
-        munmap(shared_memory, length);
+        if (shared_memory) {
+            munmap(shared_memory, length);
+            shared_memory = nullptr;
+        }
         LOG_DEBUG("Shared memory unmapped");
     }
     else {
@@ -1347,13 +1352,14 @@ void atl_ofi::handle_address_table_update(atl_ofi_prov_t& prov,
                                           const std::vector<std::vector<char>>& prov_ep_names,
                                           atl_ofi_ctx_t& ctx,
                                           size_t length,
-                                          void* shared_memory) {
+                                          void** shared_memory_ptr) {
     if (new_ep_names_count <= 0) {
         return;
     }
 
     CCL_THROW_IF_NOT(old_prov_ep_names_size < prov_ep_names.size());
     size_t new_size = prov_ep_names.size();
+
     // Reallocate the address table
     if (prov.sep) {
         prov.addr_table =
@@ -1362,47 +1368,57 @@ void atl_ofi::handle_address_table_update(atl_ofi_prov_t& prov,
     else {
         prov.addr_table = (fi_addr_t*)realloc(prov.addr_table, new_size * sizeof(fi_addr_t));
     }
+
     if (!prov.addr_table) {
         LOG_ERROR("Failed addr_table allocation");
         if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi_shm) {
-            if (shared_memory) {
-                munmap(shared_memory, length);
+            // Only unmap if shared_memory_ptr is valid and points to a valid mapping
+            if (shared_memory_ptr && *shared_memory_ptr) {
+                munmap(*shared_memory_ptr, length);
+                *shared_memory_ptr = nullptr;
             }
         }
         return;
     }
+
     // Insert addresses into AV
     int insert_count = 0;
     for (size_t i = old_prov_ep_names_size; i < prov_ep_names.size(); i++) {
         insert_count +=
             fi_av_insert(prov.av, prov_ep_names[i].data(), 1, &prov.addr_table[i], 0, nullptr);
     }
+
     if (insert_count != (int)new_ep_names_count) {
         LOG_ERROR(
             "Unexpected av_insert results: expected ", new_ep_names_count, " got ", insert_count);
         if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi_shm) {
-            if (shared_memory) {
-                munmap(shared_memory, length);
+            if (shared_memory_ptr && *shared_memory_ptr) {
+                munmap(*shared_memory_ptr, length);
+                *shared_memory_ptr = nullptr;
             }
         }
         return;
     }
+
     // Handle scalable endpoints if prov.sep is true
     if (prov.sep) {
-        fi_addr_t* table = (fi_addr_t*)calloc(1, new_ep_names_count * sizeof(fi_addr_t));
-        if (table == nullptr) {
+        fi_addr_t* table = (fi_addr_t*)calloc(new_ep_names_count, sizeof(fi_addr_t));
+        if (!table) {
             LOG_ERROR("Memory allocation failed");
             if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi_shm) {
-                if (shared_memory) {
-                    munmap(shared_memory, length);
+                if (shared_memory_ptr && *shared_memory_ptr) {
+                    munmap(*shared_memory_ptr, length);
+                    *shared_memory_ptr = nullptr;
                 }
             }
             return;
         }
+
         // Copy the new addresses into the temporary table
         memcpy(table,
                &prov.addr_table[old_prov_ep_names_size],
                new_ep_names_count * sizeof(fi_addr_t));
+
         // Replicate for each endpoint context
         for (int i = 0; i < (int)new_ep_names_count; i++) {
             for (size_t j = 0; j < ctx.ep_count; j++) {

@@ -14,6 +14,7 @@
  limitations under the License.
 */
 #pragma once
+#include "coll/algorithms/utils/sycl_coll_base.hpp"
 #include "oneapi/ccl.hpp"
 #include "common/global/global.hpp"
 #include "coll/algorithms/utils/sycl_kernels.hpp"
@@ -746,6 +747,7 @@ ccl::event allreduce_large_impl(const void *send_buf,
                                                it);
                 });
         });
+        work_event = invoke_barrier(node_comm, q, { work_event }, is_cpu_barrier);
     }
 
     // do the average reduction separately after sum

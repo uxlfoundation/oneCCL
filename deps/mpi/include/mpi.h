@@ -88,10 +88,11 @@
 #elif defined(__SYCL_DEVICE_ONLY__)
 #ifdef SYCL_EXTERNAL
 #define IMPI_DEVICE_EXPORT SYCL_EXTERNAL
-#else
+#elif defined(__DPCPP_SYCL_EXTERNAL)
 #define IMPI_DEVICE_EXPORT __DPCPP_SYCL_EXTERNAL
 #endif
-#else
+#endif
+#ifndef IMPI_DEVICE_EXPORT
 #define IMPI_DEVICE_EXPORT
 #endif
 
@@ -549,7 +550,7 @@ typedef void (MPI_User_function_c) ( void *, void *, MPI_Count *, MPI_Datatype *
 typedef int (MPI_Copy_function) ( MPI_Comm, int, void *, void *, void *, int * );
 typedef int (MPI_Delete_function) ( MPI_Comm, int, void *, void * );
 
-#define MPI_VERSION    3
+#define MPI_VERSION    4
 #define MPI_SUBVERSION 1
 #define MPICH_NAME     3
 #define MPICH         1
@@ -614,8 +615,8 @@ typedef int (MPI_Delete_function) ( MPI_Comm, int, void *, void * );
  * digits for REV, 1 digit for EXT and 2 digits for EXT_NUMBER. So,
  * 2019.0.0b0 will have the numeric version 20190000100.
  */
-#define I_MPI_VERSION "2021.15.0"
-#define I_MPI_NUMVERSION 20211500300
+#define I_MPI_VERSION "2021.16.0"
+#define I_MPI_NUMVERSION 20211600300
 
 /* for the datatype decoders */
 enum MPIR_Combiner_enum {
@@ -637,7 +638,8 @@ enum MPIR_Combiner_enum {
     MPI_COMBINER_F90_COMPLEX      = 16,
     MPI_COMBINER_F90_INTEGER      = 17,
     MPI_COMBINER_RESIZED          = 18,
-    MPI_COMBINER_HINDEXED_BLOCK   = 19
+    MPI_COMBINER_HINDEXED_BLOCK   = 19,
+    MPI_COMBINER_VALUE_INDEX      = 20
 };
 
 /* for info */
@@ -711,11 +713,15 @@ struct MPIR_T_enum_s;
 struct MPIR_T_cvar_handle_s;
 struct MPIR_T_pvar_handle_s;
 struct MPIR_T_pvar_session_s;
+struct MPIR_T_event_registration_s;
+struct MPIR_T_event_instance_s;
 
 typedef struct MPIR_T_enum_s * MPI_T_enum;
 typedef struct MPIR_T_cvar_handle_s * MPI_T_cvar_handle;
 typedef struct MPIR_T_pvar_handle_s * MPI_T_pvar_handle;
 typedef struct MPIR_T_pvar_session_s * MPI_T_pvar_session;
+typedef struct MPIR_T_event_registration_s * MPI_T_event_registration;
+typedef struct MPIR_T_event_instance_s * MPI_T_event_instance;
 
 /* extra const at front would be safer, but is incompatible with MPI_T_ prototypes */
 extern MPIU_DLL_SPEC struct MPIR_T_pvar_handle_s * const MPI_T_PVAR_ALL_HANDLES MPICH_API_PUBLIC;
@@ -800,6 +806,22 @@ typedef enum MPIR_T_pvar_class_t {
     MPIR_T_PVAR_CLASS_LAST,
     MPIR_T_PVAR_CLASS_NUMBER = MPIR_T_PVAR_CLASS_LAST - MPIR_T_PVAR_CLASS_FIRST
 } MPIR_T_pvar_class_t;
+
+typedef enum MPI_T_cb_safety {
+    MPI_T_CB_REQUIRE_NONE = 0,
+    MPI_T_CB_REQUIRE_MPI_RESTRICTED,
+    MPI_T_CB_REQUIRE_THREAD_SAFE,
+    MPI_T_CB_REQUIRE_ASYNC_SIGNAL_SAFE
+} MPI_T_cb_safety;
+
+typedef enum MPI_T_source_order {
+    MPI_T_SOURCE_ORDERED = 0,
+    MPI_T_SOURCE_UNORDERED
+} MPI_T_source_order;
+
+typedef void (MPI_T_event_cb_function)(MPI_T_event_instance event_instance, MPI_T_event_registration event_registration, MPI_T_cb_safety cb_safety, void *user_data);
+typedef void (MPI_T_event_free_cb_function)(MPI_T_event_registration event_registration, MPI_T_cb_safety cb_safety, void *user_data);
+typedef void (MPI_T_event_dropped_cb_function)(int count, MPI_T_event_registration event_registration, int source_index, MPI_T_cb_safety cb_safety, void *user_data);
 
 /* Handle conversion types/functions */
 
@@ -1009,10 +1031,13 @@ typedef int (MPIX_Grequest_wait_function)(int, void **, double, MPI_Status *);
 #define MPI_ERR_SESSION            75  /* Invalid session handle */
 #define MPI_ERR_PROC_ABORTED       76  /* Trying to communicate with aborted processes */
 #define MPI_ERR_VALUE_TOO_LARGE    77  /* Value is too large to store */
+#define MPI_T_ERR_NOT_SUPPORTED    78  /* Requested functionality not supported */
+#define MPI_T_ERR_NOT_ACCESSIBLE   79  /* Requested functionality not accessible */
 
+#define MPI_ERR_ERRHANDLER         80  /* Invalid errhandler handle */
 #define MPI_ERR_LASTCODE    0x3fffffff  /* Last valid error code for a 
 					   predefined error class */
-#define MPICH_ERR_LAST_CLASS 75     /* It is also helpful to know the
+#define MPICH_ERR_LAST_CLASS 80     /* It is also helpful to know the
 				       last valid class */
 
 #define MPICH_ERR_FIRST_MPIX 100 /* Define a gap here because sock is
@@ -1063,130 +1088,11 @@ typedef struct {
 #ifndef MPICH_SUPPRESS_PROTOTYPES
 /* We require that the C compiler support prototypes */
 /* Begin Prototypes */
-int MPI_Wait(MPI_Request *request, MPI_Status *status) MPICH_API_PUBLIC;
-int MPI_Test(MPI_Request *request, int *flag, MPI_Status *status) MPICH_API_PUBLIC;
-int MPI_Request_free(MPI_Request *request) MPICH_API_PUBLIC;
-int MPI_Waitany(int count, MPI_Request array_of_requests[], int *indx, MPI_Status *status) MPICH_API_PUBLIC;
-int MPI_Testany(int count, MPI_Request array_of_requests[], int *indx, int *flag,
-                MPI_Status *status) MPICH_API_PUBLIC;
-int MPI_Waitall(int count, MPI_Request array_of_requests[], MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int MPI_Testall(int count, MPI_Request array_of_requests[], int *flag,
-                MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int MPI_Waitsome(int incount, MPI_Request array_of_requests[], int *outcount,
-                 int array_of_indices[], MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int MPI_Testsome(int incount, MPI_Request array_of_requests[], int *outcount,
-                 int array_of_indices[], MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int MPI_Cancel(MPI_Request *request) MPICH_API_PUBLIC;
-int MPI_Test_cancelled(const MPI_Status *status, int *flag) MPICH_API_PUBLIC;
-int MPI_Start(MPI_Request *request) MPICH_API_PUBLIC;
-int MPI_Startall(int count, MPI_Request array_of_requests[]) MPICH_API_PUBLIC;
-int MPI_Keyval_create(MPI_Copy_function *copy_fn, MPI_Delete_function *delete_fn,
-                      int *keyval, void *extra_state) MPICH_API_PUBLIC;
-int MPI_Keyval_free(int *keyval) MPICH_API_PUBLIC;
-int MPI_Attr_put(MPI_Comm comm, int keyval, void *attribute_val) MPICH_API_PUBLIC;
-int MPI_Attr_get(MPI_Comm comm, int keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int MPI_Attr_delete(MPI_Comm comm, int keyval) MPICH_API_PUBLIC;
-int MPI_Topo_test(MPI_Comm comm, int *status) MPICH_API_PUBLIC;
-int MPI_Cart_create(MPI_Comm comm_old, int ndims, const int dims[], const int periods[],
-                    int reorder, MPI_Comm *comm_cart) MPICH_API_PUBLIC;
-int MPI_Dims_create(int nnodes, int ndims, int dims[]) MPICH_API_PUBLIC;
-int MPI_Graph_create(MPI_Comm comm_old, int nnodes, const int indx[], const int edges[],
-                     int reorder, MPI_Comm *comm_graph) MPICH_API_PUBLIC;
-int MPI_Graphdims_get(MPI_Comm comm, int *nnodes, int *nedges) MPICH_API_PUBLIC;
-int MPI_Graph_get(MPI_Comm comm, int maxindex, int maxedges, int indx[], int edges[]) MPICH_API_PUBLIC;
-int MPI_Cartdim_get(MPI_Comm comm, int *ndims) MPICH_API_PUBLIC;
-int MPI_Cart_get(MPI_Comm comm, int maxdims, int dims[], int periods[], int coords[]) MPICH_API_PUBLIC;
-int MPI_Cart_rank(MPI_Comm comm, const int coords[], int *rank) MPICH_API_PUBLIC;
-int MPI_Cart_coords(MPI_Comm comm, int rank, int maxdims, int coords[]) MPICH_API_PUBLIC;
-int MPI_Graph_neighbors_count(MPI_Comm comm, int rank, int *nneighbors) MPICH_API_PUBLIC;
-int MPI_Graph_neighbors(MPI_Comm comm, int rank, int maxneighbors, int neighbors[]) MPICH_API_PUBLIC;
-int MPI_Cart_shift(MPI_Comm comm, int direction, int disp, int *rank_source, int *rank_dest) MPICH_API_PUBLIC;
-int MPI_Cart_sub(MPI_Comm comm, const int remain_dims[], MPI_Comm *newcomm) MPICH_API_PUBLIC;
-int MPI_Cart_map(MPI_Comm comm, int ndims, const int dims[], const int periods[], int *newrank) MPICH_API_PUBLIC;
-int MPI_Graph_map(MPI_Comm comm, int nnodes, const int indx[], const int edges[], int *newrank) MPICH_API_PUBLIC;
-int MPI_Get_processor_name(char *name, int *resultlen) MPICH_API_PUBLIC;
-int MPI_Get_version(int *version, int *subversion) MPICH_API_PUBLIC;
-int MPI_Get_library_version(char *version, int *resultlen) MPICH_API_PUBLIC;
-int MPI_Errhandler_create(MPI_Handler_function *function, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_Errhandler_set(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
-int MPI_Errhandler_get(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_Errhandler_free(MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_Error_string(int errorcode, char *string, int *resultlen) MPICH_API_PUBLIC;
-int MPI_Error_class(int errorcode, int *errorclass) MPICH_API_PUBLIC;
-int MPI_Init(int *argc, char ***argv) MPICH_API_PUBLIC;
-int MPI_Finalize(void) MPICH_API_PUBLIC;
-int MPI_Initialized(int *flag) MPICH_API_PUBLIC;
-int MPI_Abort(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
-
-/* Note that we may need to define a @PCONTROL_LIST@ depending on whether
-   stdargs are supported */
-int MPI_Pcontrol(const int level, ...) MPICH_API_PUBLIC;
 int MPI_DUP_FN(MPI_Comm oldcomm, int keyval, void *extra_state, void *attribute_val_in,
                void *attribute_val_out, int *flag) MPICH_API_PUBLIC;
 
-/* MPI notification extentions */
-/* External Interfaces */
-int MPI_Add_error_class(int *errorclass) MPICH_API_PUBLIC;
-int MPI_Add_error_code(int errorclass, int *errorcode) MPICH_API_PUBLIC;
-int MPI_Add_error_string(int errorcode, const char *string) MPICH_API_PUBLIC;
-int MPI_Comm_call_errhandler(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
-int MPI_Comm_create_keyval(MPI_Comm_copy_attr_function *comm_copy_attr_fn,
-                           MPI_Comm_delete_attr_function *comm_delete_attr_fn, int *comm_keyval,
-                           void *extra_state) MPICH_API_PUBLIC;
-int MPI_Comm_delete_attr(MPI_Comm comm, int comm_keyval) MPICH_API_PUBLIC;
-int MPI_Comm_free_keyval(int *comm_keyval) MPICH_API_PUBLIC;
-int MPI_Comm_get_attr(MPI_Comm comm, int comm_keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int MPI_Comm_set_attr(MPI_Comm comm, int comm_keyval, void *attribute_val) MPICH_API_PUBLIC;
-int MPI_File_call_errhandler(MPI_File fh, int errorcode) MPICH_API_PUBLIC;
-int MPI_Grequest_complete(MPI_Request request) MPICH_API_PUBLIC;
-int MPI_Grequest_start(MPI_Grequest_query_function *query_fn, MPI_Grequest_free_function *free_fn,
-                       MPI_Grequest_cancel_function *cancel_fn, void *extra_state,
-                       MPI_Request *request) MPICH_API_PUBLIC;
-int MPI_Init_thread(int *argc, char ***argv, int required, int *provided) MPICH_API_PUBLIC;
-int MPI_Is_thread_main(int *flag) MPICH_API_PUBLIC;
-int MPI_Query_thread(int *provided) MPICH_API_PUBLIC;
-int MPI_Status_set_cancelled(MPI_Status *status, int flag) MPICH_API_PUBLIC;
-int MPI_Type_create_keyval(MPI_Type_copy_attr_function *type_copy_attr_fn,
-                           MPI_Type_delete_attr_function *type_delete_attr_fn,
-                           int *type_keyval, void *extra_state) MPICH_API_PUBLIC;
-int MPI_Type_delete_attr(MPI_Datatype datatype, int type_keyval) MPICH_API_PUBLIC;
-int MPI_Type_free_keyval(int *type_keyval) MPICH_API_PUBLIC;
-int MPI_Type_get_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int MPI_Type_set_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val) MPICH_API_PUBLIC;
-int MPI_Win_call_errhandler(MPI_Win win, int errorcode) MPICH_API_PUBLIC;
-int MPI_Win_create_keyval(MPI_Win_copy_attr_function *win_copy_attr_fn,
-                          MPI_Win_delete_attr_function *win_delete_attr_fn, int *win_keyval,
-                          void *extra_state) MPICH_API_PUBLIC;
-int MPI_Win_delete_attr(MPI_Win win, int win_keyval) MPICH_API_PUBLIC;
-int MPI_Win_free_keyval(int *win_keyval) MPICH_API_PUBLIC;
-IMPI_DEVICE_EXPORT int MPI_Win_get_attr(MPI_Win win, int win_keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int MPI_Win_set_attr(MPI_Win win, int win_keyval, void *attribute_val) MPICH_API_PUBLIC;
-
-int MPI_Comm_create_errhandler(MPI_Comm_errhandler_function *comm_errhandler_fn,
-                               MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_Comm_get_errhandler(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_Comm_set_errhandler(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
-int MPI_File_create_errhandler(MPI_File_errhandler_function *file_errhandler_fn,
-                               MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_File_get_errhandler(MPI_File file, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_File_set_errhandler(MPI_File file, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
-int MPI_Finalized(int *flag) MPICH_API_PUBLIC;
-int MPI_Info_create(MPI_Info *info) MPICH_API_PUBLIC;
-int MPI_Info_delete(MPI_Info info, const char *key) MPICH_API_PUBLIC;
-int MPI_Info_dup(MPI_Info info, MPI_Info *newinfo) MPICH_API_PUBLIC;
-int MPI_Info_free(MPI_Info *info) MPICH_API_PUBLIC;
-int MPI_Info_get(MPI_Info info, const char *key, int valuelen, char *value, int *flag) MPICH_API_PUBLIC;
-int MPI_Info_get_nkeys(MPI_Info info, int *nkeys) MPICH_API_PUBLIC;
-int MPI_Info_get_nthkey(MPI_Info info, int n, char *key) MPICH_API_PUBLIC;
-int MPI_Info_get_valuelen(MPI_Info info, const char *key, int *valuelen, int *flag) MPICH_API_PUBLIC;
-int MPI_Info_set(MPI_Info info, const char *key, const char *value) MPICH_API_PUBLIC;
-int MPI_Request_get_status(MPI_Request request, int *flag, MPI_Status *status) MPICH_API_PUBLIC;
 int MPI_Status_c2f(const MPI_Status *c_status, MPI_Fint *f_status) MPICH_API_PUBLIC;
 int MPI_Status_f2c(const MPI_Fint *f_status, MPI_Status *c_status) MPICH_API_PUBLIC;
-int MPI_Win_create_errhandler(MPI_Win_errhandler_function *win_errhandler_fn,
-                              MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_Win_get_errhandler(MPI_Win win, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int MPI_Win_set_errhandler(MPI_Win win, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
 
 /* Fortran 90-related functions.  These routines are available only if
    Fortran 90 support is enabled 
@@ -1195,63 +1101,10 @@ int MPI_Type_create_f90_integer(int range, MPI_Datatype *newtype) MPICH_API_PUBL
 int MPI_Type_create_f90_real(int precision, int range, MPI_Datatype *newtype) MPICH_API_PUBLIC;
 int MPI_Type_create_f90_complex(int precision, int range, MPI_Datatype *newtype) MPICH_API_PUBLIC;
 
-int MPI_Dist_graph_create_adjacent(MPI_Comm comm_old, int indegree, const int sources[],
-                                   const int sourceweights[], int outdegree,
-                                   const int destinations[], const int destweights[],
-                                   MPI_Info info, int reorder, MPI_Comm *comm_dist_graph) MPICH_API_PUBLIC;
-int MPI_Dist_graph_create(MPI_Comm comm_old, int n, const int sources[], const int degrees[],
-                          const int destinations[], const int weights[], MPI_Info info,
-                          int reorder, MPI_Comm *comm_dist_graph) MPICH_API_PUBLIC;
-int MPI_Dist_graph_neighbors_count(MPI_Comm comm, int *indegree, int *outdegree, int *weighted) MPICH_API_PUBLIC;
-int MPI_Dist_graph_neighbors(MPI_Comm comm, int maxindegree, int sources[], int sourceweights[],
-                             int maxoutdegree, int destinations[], int destweights[]) MPICH_API_PUBLIC;
-
-/* MPI_Aint addressing arithmetic */
-MPI_Aint MPI_Aint_add(MPI_Aint base, MPI_Aint disp) MPICH_API_PUBLIC;
-MPI_Aint MPI_Aint_diff(MPI_Aint addr1, MPI_Aint addr2) MPICH_API_PUBLIC;
-
 /* MPI_T interface */
 /* The MPI_T routines are available only in C bindings - tell tools that they
    can skip these prototypes */
 /* Begin Skip Prototypes */
-int MPI_T_init_thread(int required, int *provided) MPICH_API_PUBLIC;
-int MPI_T_finalize(void) MPICH_API_PUBLIC;
-int MPI_T_enum_get_info(MPI_T_enum enumtype, int *num, char *name, int *name_len) MPICH_API_PUBLIC;
-int MPI_T_enum_get_item(MPI_T_enum enumtype, int indx, int *value, char *name, int *name_len) MPICH_API_PUBLIC;
-int MPI_T_cvar_get_num(int *num_cvar) MPICH_API_PUBLIC;
-int MPI_T_cvar_get_info(int cvar_index, char *name, int *name_len, int *verbosity,
-                        MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
-                        int *binding, int *scope) MPICH_API_PUBLIC;
-int MPI_T_cvar_handle_alloc(int cvar_index, void *obj_handle, MPI_T_cvar_handle *handle,
-                            int *count) MPICH_API_PUBLIC;
-int MPI_T_cvar_handle_free(MPI_T_cvar_handle *handle) MPICH_API_PUBLIC;
-int MPI_T_cvar_read(MPI_T_cvar_handle handle, void *buf) MPICH_API_PUBLIC;
-int MPI_T_cvar_write(MPI_T_cvar_handle handle, const void *buf) MPICH_API_PUBLIC;
-int MPI_T_pvar_get_num(int *num_pvar) MPICH_API_PUBLIC;
-int MPI_T_pvar_get_info(int pvar_index, char *name, int *name_len, int *verbosity, int *var_class,
-                        MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
-                        int *binding, int *readonly, int *continuous, int *atomic) MPICH_API_PUBLIC;
-int MPI_T_pvar_session_create(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
-int MPI_T_pvar_session_free(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
-int MPI_T_pvar_handle_alloc(MPI_T_pvar_session session, int pvar_index, void *obj_handle,
-                            MPI_T_pvar_handle *handle, int *count) MPICH_API_PUBLIC;
-int MPI_T_pvar_handle_free(MPI_T_pvar_session session, MPI_T_pvar_handle *handle) MPICH_API_PUBLIC;
-int MPI_T_pvar_start(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
-int MPI_T_pvar_stop(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
-int MPI_T_pvar_read(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf) MPICH_API_PUBLIC;
-int MPI_T_pvar_write(MPI_T_pvar_session session, MPI_T_pvar_handle handle, const void *buf) MPICH_API_PUBLIC;
-int MPI_T_pvar_reset(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
-int MPI_T_pvar_readreset(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf) MPICH_API_PUBLIC;
-int MPI_T_category_get_num(int *num_cat) MPICH_API_PUBLIC;
-int MPI_T_category_get_info(int cat_index, char *name, int *name_len, char *desc, int *desc_len,
-                            int *num_cvars, int *num_pvars, int *num_categories) MPICH_API_PUBLIC;
-int MPI_T_category_get_cvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
-int MPI_T_category_get_pvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
-int MPI_T_category_get_categories(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
-int MPI_T_category_changed(int *stamp) MPICH_API_PUBLIC;
-int MPI_T_cvar_get_index(const char *name, int *cvar_index) MPICH_API_PUBLIC;
-int MPI_T_pvar_get_index(const char *name, int var_class, int *pvar_index) MPICH_API_PUBLIC;
-int MPI_T_category_get_index(const char *name, int *cat_index) MPICH_API_PUBLIC;
 /* End Skip Prototypes */
 
 
@@ -1261,129 +1114,8 @@ int MPI_T_category_get_index(const char *name, int *cat_index) MPICH_API_PUBLIC;
 /* Here are the bindings of the profiling routines */
 /* Begin Skip Prototypes */
 #if !defined(MPI_BUILD_PROFILING)
-int PMPI_Wait(MPI_Request *request, MPI_Status *status) MPICH_API_PUBLIC;
-int PMPI_Test(MPI_Request *request, int *flag, MPI_Status *status) MPICH_API_PUBLIC;
-int PMPI_Request_free(MPI_Request *request) MPICH_API_PUBLIC;
-int PMPI_Waitany(int count, MPI_Request array_of_requests[], int *indx, MPI_Status *status) MPICH_API_PUBLIC;
-int PMPI_Testany(int count, MPI_Request array_of_requests[], int *indx, int *flag,
-                 MPI_Status *status) MPICH_API_PUBLIC;
-int PMPI_Waitall(int count, MPI_Request array_of_requests[], MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int PMPI_Testall(int count, MPI_Request array_of_requests[], int *flag,
-                 MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int PMPI_Waitsome(int incount, MPI_Request array_of_requests[], int *outcount,
-                  int array_of_indices[], MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int PMPI_Testsome(int incount, MPI_Request array_of_requests[], int *outcount,
-                  int array_of_indices[], MPI_Status array_of_statuses[]) MPICH_API_PUBLIC;
-int PMPI_Cancel(MPI_Request *request) MPICH_API_PUBLIC;
-int PMPI_Test_cancelled(const MPI_Status *status, int *flag) MPICH_API_PUBLIC;
-int PMPI_Start(MPI_Request *request) MPICH_API_PUBLIC;
-int PMPI_Startall(int count, MPI_Request array_of_requests[]) MPICH_API_PUBLIC;
-int PMPI_Keyval_create(MPI_Copy_function *copy_fn, MPI_Delete_function *delete_fn,
-                       int *keyval, void *extra_state) MPICH_API_PUBLIC;
-int PMPI_Keyval_free(int *keyval) MPICH_API_PUBLIC;
-int PMPI_Attr_put(MPI_Comm comm, int keyval, void *attribute_val) MPICH_API_PUBLIC;
-int PMPI_Attr_get(MPI_Comm comm, int keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int PMPI_Attr_delete(MPI_Comm comm, int keyval) MPICH_API_PUBLIC;
-int PMPI_Topo_test(MPI_Comm comm, int *status) MPICH_API_PUBLIC;
-int PMPI_Cart_create(MPI_Comm comm_old, int ndims, const int dims[], const int periods[],
-                     int reorder, MPI_Comm *comm_cart) MPICH_API_PUBLIC;
-int PMPI_Dims_create(int nnodes, int ndims, int dims[]) MPICH_API_PUBLIC;
-int PMPI_Graph_create(MPI_Comm comm_old, int nnodes, const int indx[], const int edges[],
-                      int reorder, MPI_Comm *comm_graph) MPICH_API_PUBLIC;
-int PMPI_Graphdims_get(MPI_Comm comm, int *nnodes, int *nedges) MPICH_API_PUBLIC;
-int PMPI_Graph_get(MPI_Comm comm, int maxindex, int maxedges, int indx[], int edges[]) MPICH_API_PUBLIC;
-int PMPI_Cartdim_get(MPI_Comm comm, int *ndims) MPICH_API_PUBLIC;
-int PMPI_Cart_get(MPI_Comm comm, int maxdims, int dims[], int periods[], int coords[]) MPICH_API_PUBLIC;
-int PMPI_Cart_rank(MPI_Comm comm, const int coords[], int *rank) MPICH_API_PUBLIC;
-int PMPI_Cart_coords(MPI_Comm comm, int rank, int maxdims, int coords[]) MPICH_API_PUBLIC;
-int PMPI_Graph_neighbors_count(MPI_Comm comm, int rank, int *nneighbors) MPICH_API_PUBLIC;
-int PMPI_Graph_neighbors(MPI_Comm comm, int rank, int maxneighbors, int neighbors[]) MPICH_API_PUBLIC;
-int PMPI_Cart_shift(MPI_Comm comm, int direction, int disp, int *rank_source, int *rank_dest) MPICH_API_PUBLIC;
-int PMPI_Cart_sub(MPI_Comm comm, const int remain_dims[], MPI_Comm *newcomm) MPICH_API_PUBLIC;
-int PMPI_Cart_map(MPI_Comm comm, int ndims, const int dims[], const int periods[], int *newrank) MPICH_API_PUBLIC;
-int PMPI_Graph_map(MPI_Comm comm, int nnodes, const int indx[], const int edges[], int *newrank) MPICH_API_PUBLIC;
-int PMPI_Get_processor_name(char *name, int *resultlen) MPICH_API_PUBLIC;
-int PMPI_Get_version(int *version, int *subversion) MPICH_API_PUBLIC;
-int PMPI_Get_library_version(char *version, int *resultlen) MPICH_API_PUBLIC;
-int PMPI_Errhandler_create(MPI_Handler_function *function, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_Errhandler_set(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
-int PMPI_Errhandler_get(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_Errhandler_free(MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_Error_string(int errorcode, char *string, int *resultlen) MPICH_API_PUBLIC;
-int PMPI_Error_class(int errorcode, int *errorclass) MPICH_API_PUBLIC;
-int PMPI_Init(int *argc, char ***argv) MPICH_API_PUBLIC;
-int PMPI_Finalize(void) MPICH_API_PUBLIC;
-int PMPI_Initialized(int *flag) MPICH_API_PUBLIC;
-int PMPI_Abort(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
-
-/* Note that we may need to define a @PCONTROL_LIST@ depending on whether
-   stdargs are supported */
-int PMPI_Pcontrol(const int level, ...) MPICH_API_PUBLIC;
-
-/* MPI-3 One-Sided Communication Routines */
-/* MPI notification extentions */
-/* External Interfaces */
-int PMPI_Add_error_class(int *errorclass) MPICH_API_PUBLIC;
-int PMPI_Add_error_code(int errorclass, int *errorcode) MPICH_API_PUBLIC;
-int PMPI_Add_error_string(int errorcode, const char *string) MPICH_API_PUBLIC;
-int PMPI_Comm_call_errhandler(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
-int PMPI_Comm_create_keyval(MPI_Comm_copy_attr_function *comm_copy_attr_fn,
-                            MPI_Comm_delete_attr_function *comm_delete_attr_fn, int *comm_keyval,
-                            void *extra_state) MPICH_API_PUBLIC;
-int PMPI_Comm_delete_attr(MPI_Comm comm, int comm_keyval) MPICH_API_PUBLIC;
-int PMPI_Comm_free_keyval(int *comm_keyval) MPICH_API_PUBLIC;
-int PMPI_Comm_get_attr(MPI_Comm comm, int comm_keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int PMPI_Comm_set_attr(MPI_Comm comm, int comm_keyval, void *attribute_val) MPICH_API_PUBLIC;
-int PMPI_File_call_errhandler(MPI_File fh, int errorcode) MPICH_API_PUBLIC;
-int PMPI_Grequest_complete(MPI_Request request) MPICH_API_PUBLIC;
-int PMPI_Grequest_start(MPI_Grequest_query_function *query_fn, MPI_Grequest_free_function *free_fn,
-                        MPI_Grequest_cancel_function *cancel_fn, void *extra_state,
-                        MPI_Request *request) MPICH_API_PUBLIC;
-int PMPI_Init_thread(int *argc, char ***argv, int required, int *provided) MPICH_API_PUBLIC;
-int PMPI_Is_thread_main(int *flag) MPICH_API_PUBLIC;
-int PMPI_Query_thread(int *provided) MPICH_API_PUBLIC;
-int PMPI_Status_set_cancelled(MPI_Status *status, int flag) MPICH_API_PUBLIC;
-int PMPI_Type_create_keyval(MPI_Type_copy_attr_function *type_copy_attr_fn,
-                            MPI_Type_delete_attr_function *type_delete_attr_fn,
-                            int *type_keyval, void *extra_state) MPICH_API_PUBLIC;
-int PMPI_Type_delete_attr(MPI_Datatype datatype, int type_keyval) MPICH_API_PUBLIC;
-int PMPI_Type_free_keyval(int *type_keyval) MPICH_API_PUBLIC;
-int PMPI_Type_get_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int PMPI_Type_set_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val) MPICH_API_PUBLIC;
-int PMPI_Win_call_errhandler(MPI_Win win, int errorcode) MPICH_API_PUBLIC;
-int PMPI_Win_create_keyval(MPI_Win_copy_attr_function *win_copy_attr_fn,
-                           MPI_Win_delete_attr_function *win_delete_attr_fn, int *win_keyval,
-                           void *extra_state) MPICH_API_PUBLIC;
-int PMPI_Win_delete_attr(MPI_Win win, int win_keyval) MPICH_API_PUBLIC;
-int PMPI_Win_free_keyval(int *win_keyval) MPICH_API_PUBLIC;
-int PMPI_Win_get_attr(MPI_Win win, int win_keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
-int PMPI_Win_set_attr(MPI_Win win, int win_keyval, void *attribute_val) MPICH_API_PUBLIC;
-
-int PMPI_Comm_create_errhandler(MPI_Comm_errhandler_function *comm_errhandler_fn,
-                                MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_Comm_get_errhandler(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_Comm_set_errhandler(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
-int PMPI_File_create_errhandler(MPI_File_errhandler_function *file_errhandler_fn,
-                                MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_File_get_errhandler(MPI_File file, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_File_set_errhandler(MPI_File file, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
-int PMPI_Finalized(int *flag) MPICH_API_PUBLIC;
-int PMPI_Info_create(MPI_Info *info) MPICH_API_PUBLIC;
-int PMPI_Info_delete(MPI_Info info, const char *key) MPICH_API_PUBLIC;
-int PMPI_Info_dup(MPI_Info info, MPI_Info *newinfo) MPICH_API_PUBLIC;
-int PMPI_Info_free(MPI_Info *info) MPICH_API_PUBLIC;
-int PMPI_Info_get(MPI_Info info, const char *key, int valuelen, char *value, int *flag) MPICH_API_PUBLIC;
-int PMPI_Info_get_nkeys(MPI_Info info, int *nkeys) MPICH_API_PUBLIC;
-int PMPI_Info_get_nthkey(MPI_Info info, int n, char *key) MPICH_API_PUBLIC;
-int PMPI_Info_get_valuelen(MPI_Info info, const char *key, int *valuelen, int *flag) MPICH_API_PUBLIC;
-int PMPI_Info_set(MPI_Info info, const char *key, const char *value) MPICH_API_PUBLIC;
-int PMPI_Request_get_status(MPI_Request request, int *flag, MPI_Status *status) MPICH_API_PUBLIC;
 int PMPI_Status_c2f(const MPI_Status *c_status, MPI_Fint *f_status) MPICH_API_PUBLIC;
 int PMPI_Status_f2c(const MPI_Fint *f_status, MPI_Status *c_status) MPICH_API_PUBLIC;
-int PMPI_Win_create_errhandler(MPI_Win_errhandler_function *win_errhandler_fn,
-                               MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_Win_get_errhandler(MPI_Win win, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
-int PMPI_Win_set_errhandler(MPI_Win win, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
 
 /* Fortran 90-related functions.  These routines are available only if
    Fortran 90 support is enabled 
@@ -1392,66 +1124,46 @@ int PMPI_Type_create_f90_integer(int r, MPI_Datatype *newtype) MPICH_API_PUBLIC;
 int PMPI_Type_create_f90_real(int p, int r, MPI_Datatype *newtype) MPICH_API_PUBLIC;
 int PMPI_Type_create_f90_complex(int p, int r, MPI_Datatype *newtype) MPICH_API_PUBLIC;
 
-int PMPI_Dist_graph_create_adjacent(MPI_Comm comm_old, int indegree, const int sources[],
-                                    const int sourceweights[], int outdegree,
-                                    const int destinations[], const int destweights[],
-                                    MPI_Info info, int reorder, MPI_Comm *comm_dist_graph) MPICH_API_PUBLIC;
-int PMPI_Dist_graph_create(MPI_Comm comm_old, int n, const int sources[], const int degrees[],
-                           const int destinations[], const int weights[], MPI_Info info,
-                           int reorder, MPI_Comm *comm_dist_graph) MPICH_API_PUBLIC;
-int PMPI_Dist_graph_neighbors_count(MPI_Comm comm, int *indegree, int *outdegree, int *weighted) MPICH_API_PUBLIC;
-int PMPI_Dist_graph_neighbors(MPI_Comm comm, int maxindegree, int sources[], int sourceweights[],
-                              int maxoutdegree, int destinations[], int destweights[]) MPICH_API_PUBLIC;
-/* MPI_Aint addressing arithmetic */
-MPI_Aint PMPI_Aint_add(MPI_Aint base, MPI_Aint disp) MPICH_API_PUBLIC;
-MPI_Aint PMPI_Aint_diff(MPI_Aint addr1, MPI_Aint addr2) MPICH_API_PUBLIC;
-
 /* MPI_T interface */
 /* The MPI_T routines are available only in C bindings - tell tools that they
    can skip these prototypes */
-int PMPI_T_init_thread(int required, int *provided) MPICH_API_PUBLIC;
-int PMPI_T_finalize(void) MPICH_API_PUBLIC;
-int PMPI_T_enum_get_info(MPI_T_enum enumtype, int *num, char *name, int *name_len) MPICH_API_PUBLIC;
-int PMPI_T_enum_get_item(MPI_T_enum enumtype, int indx, int *value, char *name, int *name_len) MPICH_API_PUBLIC;
-int PMPI_T_cvar_get_num(int *num_cvar) MPICH_API_PUBLIC;
-int PMPI_T_cvar_get_info(int cvar_index, char *name, int *name_len, int *verbosity,
-                         MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
-                         int *binding, int *scope) MPICH_API_PUBLIC;
-int PMPI_T_cvar_handle_alloc(int cvar_index, void *obj_handle, MPI_T_cvar_handle *handle,
-                             int *count) MPICH_API_PUBLIC;
-int PMPI_T_cvar_handle_free(MPI_T_cvar_handle *handle) MPICH_API_PUBLIC;
-int PMPI_T_cvar_read(MPI_T_cvar_handle handle, void *buf) MPICH_API_PUBLIC;
-int PMPI_T_cvar_write(MPI_T_cvar_handle handle, const void *buf) MPICH_API_PUBLIC;
-int PMPI_T_pvar_get_num(int *num_pvar) MPICH_API_PUBLIC;
-int PMPI_T_pvar_get_info(int pvar_index, char *name, int *name_len, int *verbosity, int *var_class,
-                         MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
-                         int *binding, int *readonly, int *continuous, int *atomic) MPICH_API_PUBLIC;
-int PMPI_T_pvar_session_create(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
-int PMPI_T_pvar_session_free(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
-int PMPI_T_pvar_handle_alloc(MPI_T_pvar_session session, int pvar_index, void *obj_handle,
-                             MPI_T_pvar_handle *handle, int *count) MPICH_API_PUBLIC;
-int PMPI_T_pvar_handle_free(MPI_T_pvar_session session, MPI_T_pvar_handle *handle) MPICH_API_PUBLIC;
-int PMPI_T_pvar_start(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
-int PMPI_T_pvar_stop(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
-int PMPI_T_pvar_read(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf) MPICH_API_PUBLIC;
-int PMPI_T_pvar_write(MPI_T_pvar_session session, MPI_T_pvar_handle handle, const void *buf) MPICH_API_PUBLIC;
-int PMPI_T_pvar_reset(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
-int PMPI_T_pvar_readreset(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf) MPICH_API_PUBLIC;
-int PMPI_T_category_get_num(int *num_cat) MPICH_API_PUBLIC;
-int PMPI_T_category_get_info(int cat_index, char *name, int *name_len, char *desc, int *desc_len,
-                             int *num_cvars, int *num_pvars, int *num_categories) MPICH_API_PUBLIC;
-int PMPI_T_category_get_cvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
-int PMPI_T_category_get_pvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
-int PMPI_T_category_get_categories(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
-int PMPI_T_category_changed(int *stamp) MPICH_API_PUBLIC;
-int PMPI_T_cvar_get_index(const char *name, int *cvar_index) MPICH_API_PUBLIC;
-int PMPI_T_pvar_get_index(const char *name, int var_class, int *pvar_index) MPICH_API_PUBLIC;
-int PMPI_T_category_get_index(const char *name, int *cat_index) MPICH_API_PUBLIC;
+/* Begin Skip Prototypes */
 /* End Skip Prototypes */
+
 #endif  /* MPI_BUILD_PROFILING */
 
 
 #ifndef MPICH_SUPPRESS_PROTOTYPES
+int MPI_Attr_delete(MPI_Comm comm, int keyval) MPICH_API_PUBLIC;
+int MPI_Attr_get(MPI_Comm comm, int keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
+int MPI_Attr_put(MPI_Comm comm, int keyval, void *attribute_val) MPICH_API_PUBLIC;
+int MPI_Comm_create_keyval(MPI_Comm_copy_attr_function *comm_copy_attr_fn,
+                           MPI_Comm_delete_attr_function *comm_delete_attr_fn, int *comm_keyval,
+                           void *extra_state) MPICH_API_PUBLIC;
+int MPI_Comm_delete_attr(MPI_Comm comm, int comm_keyval) MPICH_API_PUBLIC;
+int MPI_Comm_free_keyval(int *comm_keyval) MPICH_API_PUBLIC;
+int MPI_Comm_get_attr(MPI_Comm comm, int comm_keyval, void *attribute_val, int *flag)
+    MPICH_API_PUBLIC;
+int MPI_Comm_set_attr(MPI_Comm comm, int comm_keyval, void *attribute_val) MPICH_API_PUBLIC;
+int MPI_Keyval_create(MPI_Copy_function *copy_fn, MPI_Delete_function *delete_fn, int *keyval,
+                      void *extra_state) MPICH_API_PUBLIC;
+int MPI_Keyval_free(int *keyval) MPICH_API_PUBLIC;
+int MPI_Type_create_keyval(MPI_Type_copy_attr_function *type_copy_attr_fn,
+                           MPI_Type_delete_attr_function *type_delete_attr_fn, int *type_keyval,
+                           void *extra_state) MPICH_API_PUBLIC;
+int MPI_Type_delete_attr(MPI_Datatype datatype, int type_keyval) MPICH_API_PUBLIC;
+int MPI_Type_free_keyval(int *type_keyval) MPICH_API_PUBLIC;
+int MPI_Type_get_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val, int *flag)
+    MPICH_API_PUBLIC;
+int MPI_Type_set_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val)
+    MPICH_API_PUBLIC;
+int MPI_Win_create_keyval(MPI_Win_copy_attr_function *win_copy_attr_fn,
+                          MPI_Win_delete_attr_function *win_delete_attr_fn, int *win_keyval,
+                          void *extra_state) MPICH_API_PUBLIC;
+int MPI_Win_delete_attr(MPI_Win win, int win_keyval) MPICH_API_PUBLIC;
+int MPI_Win_free_keyval(int *win_keyval) MPICH_API_PUBLIC;
+IMPI_DEVICE_EXPORT int MPI_Win_get_attr(MPI_Win win, int win_keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
+int MPI_Win_set_attr(MPI_Win win, int win_keyval, void *attribute_val) MPICH_API_PUBLIC;
 int MPI_Allgather(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf,
                   int recvcount, MPI_Datatype recvtype, MPI_Comm comm)
                   MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_ATTR_POINTER_WITH_TYPE_TAG(4,6) MPICH_API_PUBLIC;
@@ -1780,6 +1492,8 @@ int MPI_Type_get_true_extent(MPI_Datatype datatype, MPI_Aint *true_lb, MPI_Aint 
     MPICH_API_PUBLIC;
 int MPI_Type_get_true_extent_x(MPI_Datatype datatype, MPI_Count *true_lb, MPI_Count *true_extent)
     MPICH_API_PUBLIC;
+int MPI_Type_get_value_index(MPI_Datatype value_type, MPI_Datatype index_type,
+                             MPI_Datatype *pair_type) MPICH_API_PUBLIC;
 int MPI_Type_indexed(int count, const int array_of_blocklengths[],
                      const int array_of_displacements[], MPI_Datatype oldtype,
                      MPI_Datatype *newtype) MPICH_API_PUBLIC;
@@ -1804,6 +1518,34 @@ int MPI_Type_hvector(int count, int blocklength, MPI_Aint stride, MPI_Datatype o
                      MPI_Datatype *newtype) MPICH_API_PUBLIC;
 int MPI_Type_struct(int count, int array_of_blocklengths[], MPI_Aint array_of_displacements[],
                     MPI_Datatype array_of_types[], MPI_Datatype *newtype) MPICH_API_PUBLIC;
+int MPI_Add_error_class(int *errorclass) MPICH_API_PUBLIC;
+int MPI_Add_error_code(int errorclass, int *errorcode) MPICH_API_PUBLIC;
+int MPI_Add_error_string(int errorcode, const char *string) MPICH_API_PUBLIC;
+int MPI_Comm_call_errhandler(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
+int MPI_Comm_create_errhandler(MPI_Comm_errhandler_function *comm_errhandler_fn,
+                               MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_Comm_get_errhandler(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_Comm_set_errhandler(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
+int MPI_Errhandler_free(MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_Error_class(int errorcode, int *errorclass) MPICH_API_PUBLIC;
+int MPI_Error_string(int errorcode, char *string, int *resultlen) MPICH_API_PUBLIC;
+int MPI_File_call_errhandler(MPI_File fh, int errorcode) MPICH_API_PUBLIC;
+int MPI_File_create_errhandler(MPI_File_errhandler_function *file_errhandler_fn,
+                               MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_File_get_errhandler(MPI_File file, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_File_set_errhandler(MPI_File file, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
+int MPI_Remove_error_class(int errorclass) MPICH_API_PUBLIC;
+int MPI_Remove_error_code(int errorcode) MPICH_API_PUBLIC;
+int MPI_Remove_error_string(int errorcode) MPICH_API_PUBLIC;
+int MPI_Win_call_errhandler(MPI_Win win, int errorcode) MPICH_API_PUBLIC;
+int MPI_Win_create_errhandler(MPI_Win_errhandler_function *win_errhandler_fn,
+                              MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_Win_get_errhandler(MPI_Win win, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_Win_set_errhandler(MPI_Win win, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
+int MPI_Errhandler_create(MPI_Comm_errhandler_function *comm_errhandler_fn,
+                          MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_Errhandler_get(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int MPI_Errhandler_set(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
 int MPIX_GPU_query_support(int gpu_type, int *is_supported) MPICH_API_PUBLIC;
 int MPIX_Query_cuda_support(void) MPICH_API_PUBLIC;
 int MPIX_Query_ze_support(void) MPICH_API_PUBLIC;
@@ -1859,6 +1601,20 @@ int MPI_Info_get_string(MPI_Info info, const char *key, int *buflen, char *value
 int MPI_Info_get_valuelen(MPI_Info info, const char *key, int *valuelen, int *flag)
     MPICH_API_PUBLIC;
 int MPI_Info_set(MPI_Info info, const char *key, const char *value) MPICH_API_PUBLIC;
+int MPI_Abort(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
+int MPI_Finalize(void) MPICH_API_PUBLIC;
+int MPI_Finalized(int *flag) MPICH_API_PUBLIC;
+int MPI_Init(int *argc, char ***argv) MPICH_API_PUBLIC;
+int MPI_Init_thread(int *argc, char ***argv, int required, int *provided) MPICH_API_PUBLIC;
+int MPI_Initialized(int *flag) MPICH_API_PUBLIC;
+int MPI_Is_thread_main(int *flag) MPICH_API_PUBLIC;
+int MPI_Query_thread(int *provided) MPICH_API_PUBLIC;
+MPI_Aint MPI_Aint_add(MPI_Aint base, MPI_Aint disp) MPICH_API_PUBLIC;
+MPI_Aint MPI_Aint_diff(MPI_Aint addr1, MPI_Aint addr2) MPICH_API_PUBLIC;
+int MPI_Get_library_version(char *version, int *resultlen) MPICH_API_PUBLIC;
+int MPI_Get_processor_name(char *name, int *resultlen) MPICH_API_PUBLIC;
+int MPI_Get_version(int *version, int *subversion) MPICH_API_PUBLIC;
+int MPI_Pcontrol(const int level, ...) MPICH_API_PUBLIC;
 int MPI_Op_commutative(MPI_Op op, int *commute) MPICH_API_PUBLIC;
 int MPI_Op_create(MPI_User_function *user_fn, int commute, MPI_Op *op) MPICH_API_PUBLIC;
 int MPI_Op_free(MPI_Op *op) MPICH_API_PUBLIC;
@@ -1880,6 +1636,12 @@ int MPI_Bsend_init(const void *buf, int count, MPI_Datatype datatype, int dest, 
                    MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
 int MPI_Buffer_attach(void *buffer, int size) MPICH_API_PUBLIC;
 int MPI_Buffer_detach(void *buffer_addr, int *size) MPICH_API_PUBLIC;
+int MPI_Buffer_flush(void) MPICH_API_PUBLIC;
+int MPI_Buffer_iflush(MPI_Request *request) MPICH_API_PUBLIC;
+int MPI_Comm_attach_buffer(MPI_Comm comm, void *buffer, int size) MPICH_API_PUBLIC;
+int MPI_Comm_detach_buffer(MPI_Comm comm, void *buffer_addr, int *size) MPICH_API_PUBLIC;
+int MPI_Comm_flush_buffer(MPI_Comm comm) MPICH_API_PUBLIC;
+int MPI_Comm_iflush_buffer(MPI_Comm comm, MPI_Request *request) MPICH_API_PUBLIC;
 int MPI_Ibsend(const void *buf, int count, MPI_Datatype datatype, int dest, int tag, MPI_Comm comm,
                MPI_Request *request) MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
 int MPI_Improbe(int source, int tag, MPI_Comm comm, int *flag, MPI_Message *message,
@@ -1928,6 +1690,10 @@ int MPI_Sendrecv(const void *sendbuf, int sendcount, MPI_Datatype sendtype, int 
 int MPI_Sendrecv_replace(void *buf, int count, MPI_Datatype datatype, int dest, int sendtag,
                          int source, int recvtag, MPI_Comm comm, MPI_Status *status)
                          MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
+int MPI_Session_attach_buffer(MPI_Session session, void *buffer, int size) MPICH_API_PUBLIC;
+int MPI_Session_detach_buffer(MPI_Session session, void *buffer_addr, int *size) MPICH_API_PUBLIC;
+int MPI_Session_flush_buffer(MPI_Session session) MPICH_API_PUBLIC;
+int MPI_Session_iflush_buffer(MPI_Session session, MPI_Request *request) MPICH_API_PUBLIC;
 int MPI_Ssend(const void *buf, int count, MPI_Datatype datatype, int dest, int tag, MPI_Comm comm)
     MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
 int MPI_Ssend_init(const void *buf, int count, MPI_Datatype datatype, int dest, int tag,
@@ -2083,8 +1849,125 @@ int MPI_Unpublish_name(const char *service_name, MPI_Info info, const char *port
     MPICH_API_PUBLIC;
 double MPI_Wtick(void) MPICH_API_PUBLIC;
 double MPI_Wtime(void) MPICH_API_PUBLIC;
+int MPI_Cart_coords(MPI_Comm comm, int rank, int maxdims, int coords[]) MPICH_API_PUBLIC;
+int MPI_Cart_create(MPI_Comm comm_old, int ndims, const int dims[], const int periods[],
+                    int reorder, MPI_Comm *comm_cart) MPICH_API_PUBLIC;
+int MPI_Cart_get(MPI_Comm comm, int maxdims, int dims[], int periods[], int coords[])
+    MPICH_API_PUBLIC;
+int MPI_Cart_map(MPI_Comm comm, int ndims, const int dims[], const int periods[], int *newrank)
+    MPICH_API_PUBLIC;
+int MPI_Cart_rank(MPI_Comm comm, const int coords[], int *rank) MPICH_API_PUBLIC;
+int MPI_Cart_shift(MPI_Comm comm, int direction, int disp, int *rank_source, int *rank_dest)
+    MPICH_API_PUBLIC;
+int MPI_Cart_sub(MPI_Comm comm, const int remain_dims[], MPI_Comm *newcomm) MPICH_API_PUBLIC;
+int MPI_Cartdim_get(MPI_Comm comm, int *ndims) MPICH_API_PUBLIC;
+int MPI_Dims_create(int nnodes, int ndims, int dims[]) MPICH_API_PUBLIC;
+int MPI_Dist_graph_create(MPI_Comm comm_old, int n, const int sources[], const int degrees[],
+                          const int destinations[], const int weights[], MPI_Info info, int reorder,
+                          MPI_Comm *comm_dist_graph) MPICH_API_PUBLIC;
+int MPI_Dist_graph_create_adjacent(MPI_Comm comm_old, int indegree, const int sources[],
+                                   const int sourceweights[], int outdegree,
+                                   const int destinations[], const int destweights[], MPI_Info info,
+                                   int reorder, MPI_Comm *comm_dist_graph) MPICH_API_PUBLIC;
+int MPI_Dist_graph_neighbors(MPI_Comm comm, int maxindegree, int sources[], int sourceweights[],
+                             int maxoutdegree, int destinations[], int destweights[])
+                             MPICH_API_PUBLIC;
+int MPI_Dist_graph_neighbors_count(MPI_Comm comm, int *indegree, int *outdegree, int *weighted)
+    MPICH_API_PUBLIC;
+int MPI_Get_hw_resource_info(MPI_Info *hw_info) MPICH_API_PUBLIC;
+int MPI_Graph_create(MPI_Comm comm_old, int nnodes, const int indx[], const int edges[],
+                     int reorder, MPI_Comm *comm_graph) MPICH_API_PUBLIC;
+int MPI_Graph_get(MPI_Comm comm, int maxindex, int maxedges, int indx[], int edges[])
+    MPICH_API_PUBLIC;
+int MPI_Graph_map(MPI_Comm comm, int nnodes, const int indx[], const int edges[], int *newrank)
+    MPICH_API_PUBLIC;
+int MPI_Graph_neighbors(MPI_Comm comm, int rank, int maxneighbors, int neighbors[])
+    MPICH_API_PUBLIC;
+int MPI_Graph_neighbors_count(MPI_Comm comm, int rank, int *nneighbors) MPICH_API_PUBLIC;
+int MPI_Graphdims_get(MPI_Comm comm, int *nnodes, int *nedges) MPICH_API_PUBLIC;
+int MPI_Topo_test(MPI_Comm comm, int *status) MPICH_API_PUBLIC;
 
 /* Begin Skip Prototypes */
+int MPI_T_category_changed(int *update_number) MPICH_API_PUBLIC;
+int MPI_T_category_get_categories(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int MPI_T_category_get_cvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int MPI_T_category_get_events(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int MPI_T_category_get_index(const char *name, int *cat_index) MPICH_API_PUBLIC;
+int MPI_T_category_get_info(int cat_index, char *name, int *name_len, char *desc, int *desc_len,
+                            int *num_cvars, int *num_pvars, int *num_categories) MPICH_API_PUBLIC;
+int MPI_T_category_get_num(int *num_cat) MPICH_API_PUBLIC;
+int MPI_T_category_get_num_events(int cat_index, int *num_events) MPICH_API_PUBLIC;
+int MPI_T_category_get_pvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int MPI_T_cvar_get_index(const char *name, int *cvar_index) MPICH_API_PUBLIC;
+int MPI_T_cvar_get_info(int cvar_index, char *name, int *name_len, int *verbosity,
+                        MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
+                        int *bind, int *scope) MPICH_API_PUBLIC;
+int MPI_T_cvar_get_num(int *num_cvar) MPICH_API_PUBLIC;
+int MPI_T_cvar_handle_alloc(int cvar_index, void *obj_handle, MPI_T_cvar_handle *handle,
+                            int *count) MPICH_API_PUBLIC;
+int MPI_T_cvar_handle_free(MPI_T_cvar_handle *handle) MPICH_API_PUBLIC;
+int MPI_T_cvar_read(MPI_T_cvar_handle handle, void *buf) MPICH_API_PUBLIC;
+int MPI_T_cvar_write(MPI_T_cvar_handle handle, const void *buf) MPICH_API_PUBLIC;
+int MPI_T_enum_get_info(MPI_T_enum enumtype, int *num, char *name, int *name_len) MPICH_API_PUBLIC;
+int MPI_T_enum_get_item(MPI_T_enum enumtype, int indx, int *value, char *name, int *name_len)
+    MPICH_API_PUBLIC;
+int MPI_T_event_callback_get_info(MPI_T_event_registration event_registration,
+                                  MPI_T_cb_safety cb_safety, MPI_Info *info_used) MPICH_API_PUBLIC;
+int MPI_T_event_callback_set_info(MPI_T_event_registration event_registration,
+                                  MPI_T_cb_safety cb_safety, MPI_Info info) MPICH_API_PUBLIC;
+int MPI_T_event_copy(MPI_T_event_instance event_instance, void *buffer) MPICH_API_PUBLIC;
+int MPI_T_event_get_index(const char *name, int *event_index) MPICH_API_PUBLIC;
+int MPI_T_event_get_info(int event_index, char *name, int *name_len, int *verbosity,
+                         MPI_Datatype array_of_datatypes[], MPI_Aint array_of_displacements[],
+                         int *num_elements, MPI_T_enum *enumtype, MPI_Info *info, char *desc,
+                         int *desc_len, int *bind) MPICH_API_PUBLIC;
+int MPI_T_event_get_num(int *num_events) MPICH_API_PUBLIC;
+int MPI_T_event_get_source(MPI_T_event_instance event_instance, int *source_index)
+    MPICH_API_PUBLIC;
+int MPI_T_event_get_timestamp(MPI_T_event_instance event_instance, MPI_Count *event_timestamp)
+    MPICH_API_PUBLIC;
+int MPI_T_event_handle_alloc(int event_index, void *obj_handle, MPI_Info info,
+                             MPI_T_event_registration *event_registration) MPICH_API_PUBLIC;
+int MPI_T_event_handle_free(MPI_T_event_registration event_registration, void *user_data,
+                            MPI_T_event_free_cb_function free_cb_function) MPICH_API_PUBLIC;
+int MPI_T_event_handle_get_info(MPI_T_event_registration event_registration, MPI_Info *info_used)
+    MPICH_API_PUBLIC;
+int MPI_T_event_handle_set_info(MPI_T_event_registration event_registration, MPI_Info info)
+    MPICH_API_PUBLIC;
+int MPI_T_event_read(MPI_T_event_instance event_instance, int element_index, void *buffer)
+    MPICH_API_PUBLIC;
+int MPI_T_event_register_callback(MPI_T_event_registration event_registration,
+                                  MPI_T_cb_safety cb_safety, MPI_Info info, void *user_data,
+                                  MPI_T_event_cb_function event_cb_function) MPICH_API_PUBLIC;
+int MPI_T_event_set_dropped_handler(MPI_T_event_registration event_registration,
+                                    MPI_T_event_dropped_cb_function dropped_cb_function)
+                                    MPICH_API_PUBLIC;
+int MPI_T_finalize(void) MPICH_API_PUBLIC;
+int MPI_T_init_thread(int required, int *provided) MPICH_API_PUBLIC;
+int MPI_T_pvar_get_index(const char *name, int var_class, int *pvar_index) MPICH_API_PUBLIC;
+int MPI_T_pvar_get_info(int pvar_index, char *name, int *name_len, int *verbosity, int *var_class,
+                        MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
+                        int *bind, int *readonly, int *continuous, int *atomic) MPICH_API_PUBLIC;
+int MPI_T_pvar_get_num(int *num_pvar) MPICH_API_PUBLIC;
+int MPI_T_pvar_handle_alloc(MPI_T_pvar_session session, int pvar_index, void *obj_handle,
+                            MPI_T_pvar_handle *handle, int *count) MPICH_API_PUBLIC;
+int MPI_T_pvar_handle_free(MPI_T_pvar_session session, MPI_T_pvar_handle *handle) MPICH_API_PUBLIC;
+int MPI_T_pvar_read(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf)
+    MPICH_API_PUBLIC;
+int MPI_T_pvar_readreset(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf)
+    MPICH_API_PUBLIC;
+int MPI_T_pvar_reset(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
+int MPI_T_pvar_session_create(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
+int MPI_T_pvar_session_free(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
+int MPI_T_pvar_start(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
+int MPI_T_pvar_stop(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
+int MPI_T_pvar_write(MPI_T_pvar_session session, MPI_T_pvar_handle handle, const void *buf)
+    MPICH_API_PUBLIC;
+int MPI_T_source_get_info(int source_index, char *name, int *name_len, char *desc, int *desc_len,
+                          MPI_T_source_order *ordering, MPI_Count *ticks_per_second,
+                          MPI_Count *max_ticks, MPI_Info *info) MPICH_API_PUBLIC;
+int MPI_T_source_get_num(int *num_sources) MPICH_API_PUBLIC;
+int MPI_T_source_get_timestamp(int source_index, MPI_Count *timestamp) MPICH_API_PUBLIC;
 int MPIX_Grequest_start(MPI_Grequest_query_function *query_fn, MPI_Grequest_free_function *free_fn,
                         MPI_Grequest_cancel_function *cancel_fn,
                         MPIX_Grequest_poll_function *poll_fn, MPIX_Grequest_wait_function *wait_fn,
@@ -2425,6 +2308,8 @@ int MPI_Bsend_init_c(const void *buf, MPI_Count count, MPI_Datatype datatype, in
                      MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
 int MPI_Buffer_attach_c(void *buffer, MPI_Count size) MPICH_API_PUBLIC;
 int MPI_Buffer_detach_c(void *buffer_addr, MPI_Count *size) MPICH_API_PUBLIC;
+int MPI_Comm_attach_buffer_c(MPI_Comm comm, void *buffer, MPI_Count size) MPICH_API_PUBLIC;
+int MPI_Comm_detach_buffer_c(MPI_Comm comm, void *buffer_addr, MPI_Count *size) MPICH_API_PUBLIC;
 int MPI_Ibsend_c(const void *buf, MPI_Count count, MPI_Datatype datatype, int dest, int tag,
                  MPI_Comm comm, MPI_Request *request)
                  MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
@@ -2475,6 +2360,10 @@ int MPI_Sendrecv_c(const void *sendbuf, MPI_Count sendcount, MPI_Datatype sendty
 int MPI_Sendrecv_replace_c(void *buf, MPI_Count count, MPI_Datatype datatype, int dest, int sendtag,
                            int source, int recvtag, MPI_Comm comm, MPI_Status *status)
                            MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
+int MPI_Session_attach_buffer_c(MPI_Session session, void *buffer, MPI_Count size)
+    MPICH_API_PUBLIC;
+int MPI_Session_detach_buffer_c(MPI_Session session, void *buffer_addr, MPI_Count *size)
+    MPICH_API_PUBLIC;
 int MPI_Ssend_c(const void *buf, MPI_Count count, MPI_Datatype datatype, int dest, int tag,
                 MPI_Comm comm) MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
 int MPI_Ssend_init_c(const void *buf, MPI_Count count, MPI_Datatype datatype, int dest, int tag,
@@ -2528,6 +2417,37 @@ int MPI_Win_shared_query_c(MPI_Win win, int rank, MPI_Aint *size, MPI_Aint *disp
 #endif /* MPICH_SUPPRESS_PROTOTYPES */
 #if !defined(MPI_BUILD_PROFILING)
 /* Begin Skip Prototypes */
+int PMPI_Attr_delete(MPI_Comm comm, int keyval) MPICH_API_PUBLIC;
+int PMPI_Attr_get(MPI_Comm comm, int keyval, void *attribute_val, int *flag) MPICH_API_PUBLIC;
+int PMPI_Attr_put(MPI_Comm comm, int keyval, void *attribute_val) MPICH_API_PUBLIC;
+int PMPI_Comm_create_keyval(MPI_Comm_copy_attr_function *comm_copy_attr_fn,
+                            MPI_Comm_delete_attr_function *comm_delete_attr_fn, int *comm_keyval,
+                            void *extra_state) MPICH_API_PUBLIC;
+int PMPI_Comm_delete_attr(MPI_Comm comm, int comm_keyval) MPICH_API_PUBLIC;
+int PMPI_Comm_free_keyval(int *comm_keyval) MPICH_API_PUBLIC;
+int PMPI_Comm_get_attr(MPI_Comm comm, int comm_keyval, void *attribute_val, int *flag)
+    MPICH_API_PUBLIC;
+int PMPI_Comm_set_attr(MPI_Comm comm, int comm_keyval, void *attribute_val) MPICH_API_PUBLIC;
+int PMPI_Keyval_create(MPI_Copy_function *copy_fn, MPI_Delete_function *delete_fn, int *keyval,
+                       void *extra_state) MPICH_API_PUBLIC;
+int PMPI_Keyval_free(int *keyval) MPICH_API_PUBLIC;
+int PMPI_Type_create_keyval(MPI_Type_copy_attr_function *type_copy_attr_fn,
+                            MPI_Type_delete_attr_function *type_delete_attr_fn, int *type_keyval,
+                            void *extra_state) MPICH_API_PUBLIC;
+int PMPI_Type_delete_attr(MPI_Datatype datatype, int type_keyval) MPICH_API_PUBLIC;
+int PMPI_Type_free_keyval(int *type_keyval) MPICH_API_PUBLIC;
+int PMPI_Type_get_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val, int *flag)
+    MPICH_API_PUBLIC;
+int PMPI_Type_set_attr(MPI_Datatype datatype, int type_keyval, void *attribute_val)
+    MPICH_API_PUBLIC;
+int PMPI_Win_create_keyval(MPI_Win_copy_attr_function *win_copy_attr_fn,
+                           MPI_Win_delete_attr_function *win_delete_attr_fn, int *win_keyval,
+                           void *extra_state) MPICH_API_PUBLIC;
+int PMPI_Win_delete_attr(MPI_Win win, int win_keyval) MPICH_API_PUBLIC;
+int PMPI_Win_free_keyval(int *win_keyval) MPICH_API_PUBLIC;
+int PMPI_Win_get_attr(MPI_Win win, int win_keyval, void *attribute_val, int *flag)
+    MPICH_API_PUBLIC;
+int PMPI_Win_set_attr(MPI_Win win, int win_keyval, void *attribute_val) MPICH_API_PUBLIC;
 int PMPI_Allgather(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf,
                    int recvcount, MPI_Datatype recvtype, MPI_Comm comm)
                    MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_ATTR_POINTER_WITH_TYPE_TAG(4,6) MPICH_API_PUBLIC;
@@ -3163,6 +3083,8 @@ int PMPI_Type_get_true_extent_c(MPI_Datatype datatype, MPI_Count *true_lb, MPI_C
     MPICH_API_PUBLIC;
 int PMPI_Type_get_true_extent_x(MPI_Datatype datatype, MPI_Count *true_lb, MPI_Count *true_extent)
     MPICH_API_PUBLIC;
+int PMPI_Type_get_value_index(MPI_Datatype value_type, MPI_Datatype index_type,
+                              MPI_Datatype *pair_type) MPICH_API_PUBLIC;
 int PMPI_Type_indexed(int count, const int array_of_blocklengths[],
                       const int array_of_displacements[], MPI_Datatype oldtype,
                       MPI_Datatype *newtype) MPICH_API_PUBLIC;
@@ -3198,6 +3120,34 @@ int PMPI_Type_hvector(int count, int blocklength, MPI_Aint stride, MPI_Datatype 
                       MPI_Datatype *newtype) MPICH_API_PUBLIC;
 int PMPI_Type_struct(int count, int array_of_blocklengths[], MPI_Aint array_of_displacements[],
                      MPI_Datatype array_of_types[], MPI_Datatype *newtype) MPICH_API_PUBLIC;
+int PMPI_Add_error_class(int *errorclass) MPICH_API_PUBLIC;
+int PMPI_Add_error_code(int errorclass, int *errorcode) MPICH_API_PUBLIC;
+int PMPI_Add_error_string(int errorcode, const char *string) MPICH_API_PUBLIC;
+int PMPI_Comm_call_errhandler(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
+int PMPI_Comm_create_errhandler(MPI_Comm_errhandler_function *comm_errhandler_fn,
+                                MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_Comm_get_errhandler(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_Comm_set_errhandler(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
+int PMPI_Errhandler_free(MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_Error_class(int errorcode, int *errorclass) MPICH_API_PUBLIC;
+int PMPI_Error_string(int errorcode, char *string, int *resultlen) MPICH_API_PUBLIC;
+int PMPI_File_call_errhandler(MPI_File fh, int errorcode) MPICH_API_PUBLIC;
+int PMPI_File_create_errhandler(MPI_File_errhandler_function *file_errhandler_fn,
+                                MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_File_get_errhandler(MPI_File file, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_File_set_errhandler(MPI_File file, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
+int PMPI_Remove_error_class(int errorclass) MPICH_API_PUBLIC;
+int PMPI_Remove_error_code(int errorcode) MPICH_API_PUBLIC;
+int PMPI_Remove_error_string(int errorcode) MPICH_API_PUBLIC;
+int PMPI_Win_call_errhandler(MPI_Win win, int errorcode) MPICH_API_PUBLIC;
+int PMPI_Win_create_errhandler(MPI_Win_errhandler_function *win_errhandler_fn,
+                               MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_Win_get_errhandler(MPI_Win win, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_Win_set_errhandler(MPI_Win win, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
+int PMPI_Errhandler_create(MPI_Comm_errhandler_function *comm_errhandler_fn,
+                           MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_Errhandler_get(MPI_Comm comm, MPI_Errhandler *errhandler) MPICH_API_PUBLIC;
+int PMPI_Errhandler_set(MPI_Comm comm, MPI_Errhandler errhandler) MPICH_API_PUBLIC;
 int PMPIX_GPU_query_support(int gpu_type, int *is_supported) MPICH_API_PUBLIC;
 int PMPIX_Query_cuda_support(void) MPICH_API_PUBLIC;
 int PMPIX_Query_ze_support(void) MPICH_API_PUBLIC;
@@ -3262,6 +3212,103 @@ int PMPI_Info_get_string(MPI_Info info, const char *key, int *buflen, char *valu
 int PMPI_Info_get_valuelen(MPI_Info info, const char *key, int *valuelen, int *flag)
     MPICH_API_PUBLIC;
 int PMPI_Info_set(MPI_Info info, const char *key, const char *value) MPICH_API_PUBLIC;
+int PMPI_Abort(MPI_Comm comm, int errorcode) MPICH_API_PUBLIC;
+int PMPI_Finalize(void) MPICH_API_PUBLIC;
+int PMPI_Finalized(int *flag) MPICH_API_PUBLIC;
+int PMPI_Init(int *argc, char ***argv) MPICH_API_PUBLIC;
+int PMPI_Init_thread(int *argc, char ***argv, int required, int *provided) MPICH_API_PUBLIC;
+int PMPI_Initialized(int *flag) MPICH_API_PUBLIC;
+int PMPI_Is_thread_main(int *flag) MPICH_API_PUBLIC;
+int PMPI_Query_thread(int *provided) MPICH_API_PUBLIC;
+MPI_Aint PMPI_Aint_add(MPI_Aint base, MPI_Aint disp) MPICH_API_PUBLIC;
+MPI_Aint PMPI_Aint_diff(MPI_Aint addr1, MPI_Aint addr2) MPICH_API_PUBLIC;
+int PMPI_Get_library_version(char *version, int *resultlen) MPICH_API_PUBLIC;
+int PMPI_Get_processor_name(char *name, int *resultlen) MPICH_API_PUBLIC;
+int PMPI_Get_version(int *version, int *subversion) MPICH_API_PUBLIC;
+int PMPI_Pcontrol(const int level, ...) MPICH_API_PUBLIC;
+int PMPI_T_category_changed(int *update_number) MPICH_API_PUBLIC;
+int PMPI_T_category_get_categories(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int PMPI_T_category_get_cvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int PMPI_T_category_get_events(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int PMPI_T_category_get_index(const char *name, int *cat_index) MPICH_API_PUBLIC;
+int PMPI_T_category_get_info(int cat_index, char *name, int *name_len, char *desc, int *desc_len,
+                             int *num_cvars, int *num_pvars, int *num_categories) MPICH_API_PUBLIC;
+int PMPI_T_category_get_num(int *num_cat) MPICH_API_PUBLIC;
+int PMPI_T_category_get_num_events(int cat_index, int *num_events) MPICH_API_PUBLIC;
+int PMPI_T_category_get_pvars(int cat_index, int len, int indices[]) MPICH_API_PUBLIC;
+int PMPI_T_cvar_get_index(const char *name, int *cvar_index) MPICH_API_PUBLIC;
+int PMPI_T_cvar_get_info(int cvar_index, char *name, int *name_len, int *verbosity,
+                         MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
+                         int *bind, int *scope) MPICH_API_PUBLIC;
+int PMPI_T_cvar_get_num(int *num_cvar) MPICH_API_PUBLIC;
+int PMPI_T_cvar_handle_alloc(int cvar_index, void *obj_handle, MPI_T_cvar_handle *handle,
+                             int *count) MPICH_API_PUBLIC;
+int PMPI_T_cvar_handle_free(MPI_T_cvar_handle *handle) MPICH_API_PUBLIC;
+int PMPI_T_cvar_read(MPI_T_cvar_handle handle, void *buf) MPICH_API_PUBLIC;
+int PMPI_T_cvar_write(MPI_T_cvar_handle handle, const void *buf) MPICH_API_PUBLIC;
+int PMPI_T_enum_get_info(MPI_T_enum enumtype, int *num, char *name, int *name_len)
+    MPICH_API_PUBLIC;
+int PMPI_T_enum_get_item(MPI_T_enum enumtype, int indx, int *value, char *name, int *name_len)
+    MPICH_API_PUBLIC;
+int PMPI_T_event_callback_get_info(MPI_T_event_registration event_registration,
+                                   MPI_T_cb_safety cb_safety, MPI_Info *info_used)
+                                   MPICH_API_PUBLIC;
+int PMPI_T_event_callback_set_info(MPI_T_event_registration event_registration,
+                                   MPI_T_cb_safety cb_safety, MPI_Info info) MPICH_API_PUBLIC;
+int PMPI_T_event_copy(MPI_T_event_instance event_instance, void *buffer) MPICH_API_PUBLIC;
+int PMPI_T_event_get_index(const char *name, int *event_index) MPICH_API_PUBLIC;
+int PMPI_T_event_get_info(int event_index, char *name, int *name_len, int *verbosity,
+                          MPI_Datatype array_of_datatypes[], MPI_Aint array_of_displacements[],
+                          int *num_elements, MPI_T_enum *enumtype, MPI_Info *info, char *desc,
+                          int *desc_len, int *bind) MPICH_API_PUBLIC;
+int PMPI_T_event_get_num(int *num_events) MPICH_API_PUBLIC;
+int PMPI_T_event_get_source(MPI_T_event_instance event_instance, int *source_index)
+    MPICH_API_PUBLIC;
+int PMPI_T_event_get_timestamp(MPI_T_event_instance event_instance, MPI_Count *event_timestamp)
+    MPICH_API_PUBLIC;
+int PMPI_T_event_handle_alloc(int event_index, void *obj_handle, MPI_Info info,
+                              MPI_T_event_registration *event_registration) MPICH_API_PUBLIC;
+int PMPI_T_event_handle_free(MPI_T_event_registration event_registration, void *user_data,
+                             MPI_T_event_free_cb_function free_cb_function) MPICH_API_PUBLIC;
+int PMPI_T_event_handle_get_info(MPI_T_event_registration event_registration, MPI_Info *info_used)
+    MPICH_API_PUBLIC;
+int PMPI_T_event_handle_set_info(MPI_T_event_registration event_registration, MPI_Info info)
+    MPICH_API_PUBLIC;
+int PMPI_T_event_read(MPI_T_event_instance event_instance, int element_index, void *buffer)
+    MPICH_API_PUBLIC;
+int PMPI_T_event_register_callback(MPI_T_event_registration event_registration,
+                                   MPI_T_cb_safety cb_safety, MPI_Info info, void *user_data,
+                                   MPI_T_event_cb_function event_cb_function) MPICH_API_PUBLIC;
+int PMPI_T_event_set_dropped_handler(MPI_T_event_registration event_registration,
+                                     MPI_T_event_dropped_cb_function dropped_cb_function)
+                                     MPICH_API_PUBLIC;
+int PMPI_T_finalize(void) MPICH_API_PUBLIC;
+int PMPI_T_init_thread(int required, int *provided) MPICH_API_PUBLIC;
+int PMPI_T_pvar_get_index(const char *name, int var_class, int *pvar_index) MPICH_API_PUBLIC;
+int PMPI_T_pvar_get_info(int pvar_index, char *name, int *name_len, int *verbosity, int *var_class,
+                         MPI_Datatype *datatype, MPI_T_enum *enumtype, char *desc, int *desc_len,
+                         int *bind, int *readonly, int *continuous, int *atomic) MPICH_API_PUBLIC;
+int PMPI_T_pvar_get_num(int *num_pvar) MPICH_API_PUBLIC;
+int PMPI_T_pvar_handle_alloc(MPI_T_pvar_session session, int pvar_index, void *obj_handle,
+                             MPI_T_pvar_handle *handle, int *count) MPICH_API_PUBLIC;
+int PMPI_T_pvar_handle_free(MPI_T_pvar_session session, MPI_T_pvar_handle *handle)
+    MPICH_API_PUBLIC;
+int PMPI_T_pvar_read(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf)
+    MPICH_API_PUBLIC;
+int PMPI_T_pvar_readreset(MPI_T_pvar_session session, MPI_T_pvar_handle handle, void *buf)
+    MPICH_API_PUBLIC;
+int PMPI_T_pvar_reset(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
+int PMPI_T_pvar_session_create(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
+int PMPI_T_pvar_session_free(MPI_T_pvar_session *session) MPICH_API_PUBLIC;
+int PMPI_T_pvar_start(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
+int PMPI_T_pvar_stop(MPI_T_pvar_session session, MPI_T_pvar_handle handle) MPICH_API_PUBLIC;
+int PMPI_T_pvar_write(MPI_T_pvar_session session, MPI_T_pvar_handle handle, const void *buf)
+    MPICH_API_PUBLIC;
+int PMPI_T_source_get_info(int source_index, char *name, int *name_len, char *desc, int *desc_len,
+                           MPI_T_source_order *ordering, MPI_Count *ticks_per_second,
+                           MPI_Count *max_ticks, MPI_Info *info) MPICH_API_PUBLIC;
+int PMPI_T_source_get_num(int *num_sources) MPICH_API_PUBLIC;
+int PMPI_T_source_get_timestamp(int source_index, MPI_Count *timestamp) MPICH_API_PUBLIC;
 int PMPI_Op_commutative(MPI_Op op, int *commute) MPICH_API_PUBLIC;
 int PMPI_Op_create(MPI_User_function *user_fn, int commute, MPI_Op *op) MPICH_API_PUBLIC;
 int PMPI_Op_create_c(MPI_User_function_c *user_fn, int commute, MPI_Op *op) MPICH_API_PUBLIC;
@@ -3291,6 +3338,14 @@ int PMPI_Buffer_attach(void *buffer, int size) MPICH_API_PUBLIC;
 int PMPI_Buffer_attach_c(void *buffer, MPI_Count size) MPICH_API_PUBLIC;
 int PMPI_Buffer_detach(void *buffer_addr, int *size) MPICH_API_PUBLIC;
 int PMPI_Buffer_detach_c(void *buffer_addr, MPI_Count *size) MPICH_API_PUBLIC;
+int PMPI_Buffer_flush(void) MPICH_API_PUBLIC;
+int PMPI_Buffer_iflush(MPI_Request *request) MPICH_API_PUBLIC;
+int PMPI_Comm_attach_buffer(MPI_Comm comm, void *buffer, int size) MPICH_API_PUBLIC;
+int PMPI_Comm_attach_buffer_c(MPI_Comm comm, void *buffer, MPI_Count size) MPICH_API_PUBLIC;
+int PMPI_Comm_detach_buffer(MPI_Comm comm, void *buffer_addr, int *size) MPICH_API_PUBLIC;
+int PMPI_Comm_detach_buffer_c(MPI_Comm comm, void *buffer_addr, MPI_Count *size) MPICH_API_PUBLIC;
+int PMPI_Comm_flush_buffer(MPI_Comm comm) MPICH_API_PUBLIC;
+int PMPI_Comm_iflush_buffer(MPI_Comm comm, MPI_Request *request) MPICH_API_PUBLIC;
 int PMPI_Ibsend(const void *buf, int count, MPI_Datatype datatype, int dest, int tag, MPI_Comm comm,
                 MPI_Request *request) MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
 int PMPI_Ibsend_c(const void *buf, MPI_Count count, MPI_Datatype datatype, int dest, int tag,
@@ -3391,6 +3446,14 @@ int PMPI_Sendrecv_replace_c(void *buf, MPI_Count count, MPI_Datatype datatype, i
                             int sendtag, int source, int recvtag, MPI_Comm comm,
                             MPI_Status *status)
                             MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
+int PMPI_Session_attach_buffer(MPI_Session session, void *buffer, int size) MPICH_API_PUBLIC;
+int PMPI_Session_attach_buffer_c(MPI_Session session, void *buffer, MPI_Count size)
+    MPICH_API_PUBLIC;
+int PMPI_Session_detach_buffer(MPI_Session session, void *buffer_addr, int *size) MPICH_API_PUBLIC;
+int PMPI_Session_detach_buffer_c(MPI_Session session, void *buffer_addr, MPI_Count *size)
+    MPICH_API_PUBLIC;
+int PMPI_Session_flush_buffer(MPI_Session session) MPICH_API_PUBLIC;
+int PMPI_Session_iflush_buffer(MPI_Session session, MPI_Request *request) MPICH_API_PUBLIC;
 int PMPI_Ssend(const void *buf, int count, MPI_Datatype datatype, int dest, int tag, MPI_Comm comm)
     MPICH_ATTR_POINTER_WITH_TYPE_TAG(1,3) MPICH_API_PUBLIC;
 int PMPI_Ssend_c(const void *buf, MPI_Count count, MPI_Datatype datatype, int dest, int tag,
@@ -3609,6 +3672,44 @@ int PMPI_Unpublish_name(const char *service_name, MPI_Info info, const char *por
     MPICH_API_PUBLIC;
 double PMPI_Wtick(void) MPICH_API_PUBLIC;
 double PMPI_Wtime(void) MPICH_API_PUBLIC;
+int PMPI_Cart_coords(MPI_Comm comm, int rank, int maxdims, int coords[]) MPICH_API_PUBLIC;
+int PMPI_Cart_create(MPI_Comm comm_old, int ndims, const int dims[], const int periods[],
+                     int reorder, MPI_Comm *comm_cart) MPICH_API_PUBLIC;
+int PMPI_Cart_get(MPI_Comm comm, int maxdims, int dims[], int periods[], int coords[])
+    MPICH_API_PUBLIC;
+int PMPI_Cart_map(MPI_Comm comm, int ndims, const int dims[], const int periods[], int *newrank)
+    MPICH_API_PUBLIC;
+int PMPI_Cart_rank(MPI_Comm comm, const int coords[], int *rank) MPICH_API_PUBLIC;
+int PMPI_Cart_shift(MPI_Comm comm, int direction, int disp, int *rank_source, int *rank_dest)
+    MPICH_API_PUBLIC;
+int PMPI_Cart_sub(MPI_Comm comm, const int remain_dims[], MPI_Comm *newcomm) MPICH_API_PUBLIC;
+int PMPI_Cartdim_get(MPI_Comm comm, int *ndims) MPICH_API_PUBLIC;
+int PMPI_Dims_create(int nnodes, int ndims, int dims[]) MPICH_API_PUBLIC;
+int PMPI_Dist_graph_create(MPI_Comm comm_old, int n, const int sources[], const int degrees[],
+                           const int destinations[], const int weights[], MPI_Info info,
+                           int reorder, MPI_Comm *comm_dist_graph) MPICH_API_PUBLIC;
+int PMPI_Dist_graph_create_adjacent(MPI_Comm comm_old, int indegree, const int sources[],
+                                    const int sourceweights[], int outdegree,
+                                    const int destinations[], const int destweights[],
+                                    MPI_Info info, int reorder, MPI_Comm *comm_dist_graph)
+                                    MPICH_API_PUBLIC;
+int PMPI_Dist_graph_neighbors(MPI_Comm comm, int maxindegree, int sources[], int sourceweights[],
+                              int maxoutdegree, int destinations[], int destweights[])
+                              MPICH_API_PUBLIC;
+int PMPI_Dist_graph_neighbors_count(MPI_Comm comm, int *indegree, int *outdegree, int *weighted)
+    MPICH_API_PUBLIC;
+int PMPI_Get_hw_resource_info(MPI_Info *hw_info) MPICH_API_PUBLIC;
+int PMPI_Graph_create(MPI_Comm comm_old, int nnodes, const int indx[], const int edges[],
+                      int reorder, MPI_Comm *comm_graph) MPICH_API_PUBLIC;
+int PMPI_Graph_get(MPI_Comm comm, int maxindex, int maxedges, int indx[], int edges[])
+    MPICH_API_PUBLIC;
+int PMPI_Graph_map(MPI_Comm comm, int nnodes, const int indx[], const int edges[], int *newrank)
+    MPICH_API_PUBLIC;
+int PMPI_Graph_neighbors(MPI_Comm comm, int rank, int maxneighbors, int neighbors[])
+    MPICH_API_PUBLIC;
+int PMPI_Graph_neighbors_count(MPI_Comm comm, int rank, int *nneighbors) MPICH_API_PUBLIC;
+int PMPI_Graphdims_get(MPI_Comm comm, int *nnodes, int *nedges) MPICH_API_PUBLIC;
+int PMPI_Topo_test(MPI_Comm comm, int *status) MPICH_API_PUBLIC;
 /* End Skip Prototypes */
 #endif /* MPI_BUILD_PROFILING */
 

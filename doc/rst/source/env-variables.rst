@@ -7,38 +7,51 @@ Environment Variables
 Collective Algorithms Selection
 ###############################
 
-oneCCL supports collective operations for the host (CPU) memory buffers and
-device (GPU) memory buffers. In addition, oneCCL has two different paths to
-support collectives with GPU buffers; one directly uses Level Zero, and the
-other uses SYCL. The SYCL path is a new code being developed and not all
-collectives are supported.
+oneCCL supports collective operations for the host (CPU) memory buffers and 
+device (GPU) memory buffers. In addition, oneCCL has two different paths to 
+support collectives with the GPU buffers; one directly uses Level Zero, and 
+the other uses SYCL. The SYCL path is a new code being developed and support 
+for new collectives and algorithms are expanding.
 
-For the Level Zero implementation, in the case of GPU buffers, oneCCL
-collectives are optimized to execute a hierarchical algorithm composed of an
-optimized scale-up phase (communication between ranks/processes in the same
-node) and a scaleout phase (communication between ranks/processes on different
-nodes). In the case of CPU buffers, the current collective algorithms do not
-have support for scale-up and scaleout phases; only a non-hierarchical
-algorithm can be chosen.
+.. note:: The documentation is being updated as more collectives and algorithms are supported.  
 
-With ``CCL_<coll_name> = <algo_name>``, you can select the algorithm for the
-collective in ``<coll_name>``. For GPU buffers, the default algorithm is
-``topo``, which refers to the scale-up algorithm. If you select an algorithm
-different from ``topo``, oneCCL will implement a non-hierarchical algorithm,
-where it will copy the GPU buffers to the Host (CPU) and will run the specified
-algorithm.
+For GPU buffers, oneCCL collectives are optimized to execute a hierarchical 
+algorithm composed of an optimized scale-up phase (communication between 
+ranks/processes in the same node) and a scaleout phase (communication between 
+ranks/processes on different nodes). For CPU buffers, the current 
+collective algorithms do not have support for scale-up and scaleout phases; 
+only a non-hierarchical algorithm can be chosen. 
 
-For CPU buffers, ``topo`` is not available; you can only select one of the
-other algorithms in the table for a given collective.
 
-If the collective uses GPU buffers, you can select whether the implementation
-of the scale-up algorithm should use copy engines or kernels. There is also the
-option to select the scaleout algorithm using
-``CCL_<coll_name>_SCALEOUT=<algo_name>``.
+For the *Level Zero* path, use ``CCL_<coll_name> = <algo_name>`` to select the 
+algorithm for the collective in ``<coll_name>``. For GPU buffers, the default 
+algorithm is ``topo``, which refers to the scale-up algorithm. If you select 
+an algorithm different from ``topo``, oneCCL will implement a non-hierarchical 
+algorithm, where it will copy the GPU buffers to the Host (CPU) and will run 
+the specified algorithm. If the collective uses GPU buffers, you can select 
+whether the implementation of the scale-up algorithm should use copy engines 
+or kernels. Another alternative option is to select the scaleout algorithm using 
+``CCL_<coll_name>_SCALEOUT=<algo_name>``. For CPU buffers, the collective 
+selection is similar to that of the Level Zero path, but the ``topo`` algorithm 
+is not available in that case.  
 
-Next, environment variables for collective algorithm selection are explained
-based on the code path (Level Zero or SYCL), the collective being called, and
-the type of buffer (GPU or CPU).
+For the *SYCL* path, the implementation also uses a hierarchical algorithm. 
+The implementation has two different scale-up algorithms depending on the 
+message size (small or large). It is possible to change the threshold with 
+``CCL_SYCL_<coll_name>_SMALL_THRESHOLD``, so that collectives with message 
+sizes smaller than the specified threshold use an algorithm specialized 
+for small-sized messages. For large messages, the implementation supports 
+the usage of temporary buffers for communication across processes or writing 
+directly to the user buffer on the other process. This can be selected 
+with ``CCL_SYCL_<coll_name>_TMP_BUF`` variable.  The algorithm to use for 
+scaleout can be specified with ``CCL_SYCL_<coll_name>_SCALEOUT``. Notice that 
+by default oneCCL will use a SYCL-based implementation. To fallback to a Level Zero-based 
+implementation, use the ``CCL_SYCL_<coll_name>_SCALEOUT_THRESHOLD`` variable, 
+in which case messages larger than this threshold will take the Level Zero path.  
+
+In the next section, the environment variables for collective algorithm selection 
+are explained based on the code path (Level Zero or SYCL), the collectives  
+being called, and the type of buffer (GPU or CPU).
 
 
 Level Zero Path 
@@ -206,6 +219,36 @@ This option is only available if ``CCL_ALLGATHERV = topo`` or ``CCL_ALLGATHER = 
 oneCCL internally fills the algorithm selection table with appropriate defaults. Your input complements the selection table.
 
 To see the actual table values, set ``CCL_LOG_LEVEL=info``.
+
+
+CCL_SYCL_ALLGATHERV_SCALEOUT 
+----------------------------
+
+**Syntax**
+
+::
+
+  CCL_SYCL_ALLGATHERV_SCALEOUT=<value>
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+
+   * - <algo_name>
+     - Description
+   * - ``auto``
+     - Default value. For different message chunk sizes uses different algorithms. 
+   * - ``direct``
+     - Explicitly uses a direct algorithm in scale-out phase. 
+   * - ``ring``
+     - Explicitly uses a ring algorithm in scale-out phase.
+  
+**Description** 
+
+Use this environment variable to specify the algorithm for ``ALLGATHER/ALLGATHERV``. Currently, the selected algorithm is used for all message sizes. 
 
 ALLREDUCE
 =========
@@ -780,7 +823,7 @@ oneCCL internally fills the algorithm selection table with appropriate defaults.
 
 To see the actual table values, set ``CCL_LOG_LEVEL=info``.
 
-REDUCE_SCATTER
+REDUCE SCATTER
 ==============
 
 
@@ -962,15 +1005,18 @@ CCL_ENABLE_SYCL_KERNELS
 
 **Description**
 
-Setting this environment variable to ``1`` enables SYCL kernel-based implementations for ``ALLGATHER``, ``ALLGATHERV``, ``ALLREDUCE``, ``REDUCE_SCATTER``, and ``ALLTOALL``.
+Setting this environment variable to ``1`` enables SYCL kernel-based implementations for ``ALLGATHER``, ``ALLGATHERV``, ``ALLREDUCE``, ``BROADCAST``, ``REDUCE_SCATTER``, and ``ALLTOALL``.
 
 This optimization supports all message sizes and the following data types:
 
-* int32
-* fp32
-* fp16
-* bf16
-* sum operations
+* int8/uint8 (for now only for `send/recv`) 
+* int32/uint32 
+* int64/uint64 
+* float16 
+* bfloat16
+* float32 
+* float64 
+* sum and average operations 
 
 
 oneCCL falls back to other implementations when the support is unavailable with SYCL kernels, so that you can set up this environment variable safely.
@@ -1160,7 +1206,6 @@ CCL_SYCL_ALLREDUCE_SCALEOUT_DIRECT_THRESHOLD
 
 For allreduce collectives with message sizes below this threshold in bytes, ``MPI_Iallreduce`` direct algorithm is selected as scale-out phase of the colllective. For message sizes above this threshold and under the ``CCL_SYCL_ALLREDUCE_SCALEOUT_THRESHOLD``, the default algorithm (ring) is selected.
 
-
 CCL_SYCL_ALLREDUCE_SCALEOUT    
 ---------------------------
 
@@ -1188,17 +1233,93 @@ CCL_SYCL_ALLREDUCE_SCALEOUT
    * - ``rabenseifner``
      - Selects the Rabenseifner algorithm 
 
-   * - ``ring ``
+   * - ``ring``
      - Ring implementation based on ring ``REDUCE_SCATTER`` followed by ring ``ALLGATHER``.
     
-
-
-**Description** 
+**Description**
 
 Use this environment variable to specify the algorithm for ``ALLREDUCE``. Currently, the selected algorithm is used for all message sizes. 
 
+BROADCAST
+=========
 
-REDUCE_SCATTER
+CCL_SYCL_BROADCAST_TMP_BUF  
+--------------------------
+
+**Syntax**
+
+::
+
+  CCL_SYCL_BROADCAST_TMP_BUF=<value>
+
+ 
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``1``
+     - Uses a persistent temporary buffer to perform the `BROADCAST` operation. 
+   * - ``0``
+     - Performs an IPC handle exchange, avoiding copies to temporary buffers. Default value. 
+ 
+**Description** 
+
+Specifies if the ``BROADCAST`` implementation should use a persistent temporary buffer or not. The implementation with temporary buffers makes the collective fully asynchronous, but adds some additional overhead due to the extra copy of the user buffer to a (persistent) temporary buffer. The current default uses Level Zero IPC support to avoid the copies to the temporary buffer. 
+
+
+CCL_SYCL_BROADCAST_SMALL_THRESHOLD 
+----------------------------------
+
+**Syntax**
+
+::
+
+  CCL_SYCL_BROADCAST_SMALL_THRESHOLD=<value> 
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``>=0``
+     - Threshold in bytes to specify the small-size algorithm. Default value is `524288`. 
+
+**Description** 
+
+`BROADCAST` collectives with message sizes smaller than the specified threshold will use an algorithm specialized for small-sized messages. 
+
+CCL_SYCL_BROADCAST_SCALEOUT_THRESHOLD 
+-------------------------------------
+
+**Syntax**
+
+::
+  
+  CCL_SYCL_BROADCAST_SCALEOUT_THRESHOLD=<value> 
+ 
+**Arguments** 
+
+.. list-table::
+   :widths: 25 50
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``>=0``
+     - Threshold in bytes to specify when scale-out broadcast uses SYCL kernel-based implementation. Default value is `4294967296` (`4GiB` in bytes). 
+
+**Description**
+
+For `BROADCAST` collectives, with message sizes below this threshold in bytes, the SYCL path is chosen to execute the collective operation. For message sizes exceeding this threshold, the implementation will switch to the Level Zero Path. 
+
+REDUCE SCATTER
 ==============
 
 CCL_SYCL_REDUCE_SCATTER_TMP_BUF
@@ -1588,6 +1709,11 @@ To enable DSA, set the following environment variables:
 Refer to Libfabric* Programmer's Manual for the additional details about DSA*
 support in the SHM provider:
 https://ofiwg.github.io/libfabric/main/man/fi_shm.7.html.
+
+PROCESS LAUNCHER
+################
+
+The group of environment variables to control PROCESS_LAUNCHER.
 
 CCL_PROCESS_LAUNCHER
 ********************
@@ -1992,8 +2118,6 @@ CCL_ATL_MPI_BF16
 Set this environment variable to enable or disable Intel MPI native BF16 support. Requires Intel MPI newer than 2021.13. This variable can be enabled with MPI implementation that is not Intel MPI, such as ``MPICH``, but it will have no impact.  
 
 
-
-
 CCL_LOG_LEVEL
 #############
 
@@ -2020,9 +2144,11 @@ CCL_LOG_LEVEL
 
 Set this environment variable to control logging level.
 
+Profiling
+#########
 
 CCL_ITT_LEVEL
-#############
+*************
 
 **Syntax**
 
@@ -2047,13 +2173,72 @@ CCL_ITT_LEVEL
 **Description**
 
 Set this environment variable to specify Intel\ |reg|\  Instrumentation and Tracing Technology (ITT) profiling level.
-Once the environment variable is enabled (value > 0), it is possible to collect and display profiling
-data for |product_short| using tools such as Intel\ |reg|\  VTune\ |tm|\  Profiler.
+Once the environment variable is enabled (`value>0`), it is possible to collect and display profiling
+data for |product_short| using tools such as Intel\ |reg|\  VTune\ |tm|\  Profiler and `Unified Tracing and Profiling Tool <https://github.com/intel/pti-gpu/tree/master/tools/unitrace>`_.
+
+CCL_PROFILING_ENABLE 
+********************
+
+**Syntax**
+
+::
+
+  CCL_PROFILING_ENABLE=<value> 
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``1``
+     - Enable oneCCL profiling. 
+   * - ``0``
+     - Disable oneCCL profiling (default). 
+
+.. note:: This release provides a *technical preview* of a new profiling feature under development. All aspects of this feature are subject to change. There is no guarantee that the output format will remain stable and should not yet be relied upon. The feature may be removed without notice. The profiler captures environment information and oneCCL communication API call information. 
+
+**Description**
+Set this environment variable to enable profiling within the oneCCL library.  
+
+This environment variable enables profiling for:
+
+* All the ranks, when the same value is set for all ranks or 
+* Selectively for defined ranks by specifying different value of this environment variable for different ranks. This may be accomplished through the use of a wrapper script with the job launcher.  
+
+Notice that the `CCL_PROFILING_ENABLE` enables profiling information within the oneCCL library, which is different from the support provided by `CCL_ITT_LEVEL`. 
+
+The profiler captures CCL environment information such as the CCL library version, compute backend, compiler, runtime environment variables, and OFI provider.
+
+The API call information profiles the following operations: `ALLREDUCE`, `ALLGATHER`, `ALLGATHERV`, `ALLTOALL`, `ALLTOALLV`, `BARRIER`, `BROADCAST`, `REDUCE`, `REDUCE_SCATTER`, `send`, and `recv`. The information is collected on a per communicator basis and captures the following information: 
+
+* User arguments for the API calls, 
+* Communicator ID, 
+* The host time consumed by the API calls with same user arguments and communicator ID, and 
+* Operation count/API calls with a unique set of arguments and communicator ID. Notice that the time measurement begins when the application calls the oneCCL API and ends when control returns to the application. 
+
+The output for the environment info is printed with preceding `Profiling_env`. An example output is shown next:
+
+.. code::
+
+  2025:05:01-12:16:24:(1407613) |Profiling_env| CCL_WORKER_COUNT: 1 
+  2025:05:01-12:16:24:(1407613) |Profiling_env| CCL_WORKER_OFFLOAD: 1 
+  2025:05:01-12:16:24:(1407613) |Profiling_env| CCL_WORKER_WAIT: 1 
+  2025:05:01-12:16:24:(1407613) |Profiling_env| CCL_LOG_LEVEL: warn 
+
+The generated output for the oneCCL communication API calls is printed in a CSV format. An example below shows the profiling header and sample output for `ALLGATHERV`. Output is printed with preceding `Profiling_Header` and `Profiling_log`, which can help filter out the profiling information during analysis.
+
+.. code::
+
+   Profiling_Header:, operation, comm_id, rank, comm_size, msg_count, datatype, op_count, [duration-us;*].  
+   Profiling_log:,allgatherv,1,0,12,9,float64,34,[262;96;105;95;99;93;104;88;99;96;113;83;106;83;143;91;112;90;115;91;133;101;104;76;168;96;206;108;253;104;222;89;260;99;] 
 
 
 Fusion
 ######
-
 
 The group of environment variables to control fusion of collective operations.
 

@@ -46,7 +46,8 @@ typedef struct umf_mempolicy_split_partition_t {
 /// @param hPolicy [out] handle to the newly created memory policy
 /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 ///
-umf_result_t umfMempolicyCreate(umf_mempolicy_membind_t bind, umf_mempolicy_handle_t *hPolicy);
+umf_result_t umfMempolicyCreate(umf_mempolicy_membind_t bind,
+                                umf_mempolicy_handle_t *hPolicy);
 
 ///
 /// @brief Destroys memory policy
@@ -61,7 +62,8 @@ umf_result_t umfMempolicyDestroy(umf_mempolicy_handle_t hPolicy);
 /// @param partSize size of the part or zero to use default part size (page size)
 /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 ///
-umf_result_t umfMempolicySetInterleavePartSize(umf_mempolicy_handle_t hPolicy, size_t partSize);
+umf_result_t umfMempolicySetInterleavePartSize(umf_mempolicy_handle_t hPolicy,
+                                               size_t partSize);
 
 ///
 /// @brief Sets custom split partitions
@@ -70,9 +72,10 @@ umf_result_t umfMempolicySetInterleavePartSize(umf_mempolicy_handle_t hPolicy, s
 /// @param partListLen length of the partList array
 /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 ///
-umf_result_t umfMempolicySetCustomSplitPartitions(umf_mempolicy_handle_t hPolicy,
-                                                  umf_mempolicy_split_partition_t *partList,
-                                                  size_t partListLen);
+umf_result_t
+umfMempolicySetCustomSplitPartitions(umf_mempolicy_handle_t hPolicy,
+                                     umf_mempolicy_split_partition_t *partList,
+                                     size_t partListLen);
 #ifdef __cplusplus
 }
 #endif

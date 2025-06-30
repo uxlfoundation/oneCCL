@@ -77,6 +77,7 @@ ccl::event allgatherv_large_impl_ipc_ce(const void* send_buf,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const int dsize = ccl_dtype.size();
     sycl::queue q = global_stream->get_native_stream();
+    bool is_recording = use_recording_path(q);
 
     std::shared_ptr<ccl_comm> pair_comm = comm->get_pair_comm();
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
@@ -213,6 +214,7 @@ ccl::event allgatherv_large_impl_ipc(const void* send_buf,
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
+    bool is_recording = use_recording_path(q);
 
     std::array<void*, MAX_GPUS> local_peer_even_ptrs, local_local_ptrs, local_peer_pair_ptrs;
     for (int i = 0; i < even_comm->size(); i++) {
@@ -260,6 +262,7 @@ ccl::event allgatherv_large_impl_tmp(const void* send_buf,
                                      const ccl::vector_class<ccl::event>& deps) {
     LOG_DEBUG("allgatherv large kernel with tmp buffer");
     sycl::queue q = global_stream->get_native_stream();
+    bool is_recording = use_recording_path(q);
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
@@ -326,7 +329,8 @@ ccl::event allgatherv_large_impl_tmp(const void* send_buf,
 
         for (int i = 0; i < even_comm_size; i++) {
             // offsets for read_write kernel
-            int global_rank = even_comm->get_node_rank(i);
+            int global_rank = comm->is_multi_thread_instance() ? i * pair_comm->size() + pair_comm->rank()
+                                                               : even_comm->get_node_rank(i);
             const size_t offset_bytes = !offsets.empty() ? offsets[global_rank] + chunk_count * nc * dsize
                                                          : (send_count * global_rank + chunk_count * nc) * dsize;
             const size_t offset_bytes_tmp = chunk_count * global_rank * dsize;
@@ -491,6 +495,12 @@ ccl::event allgatherv_large_impl_tmp(const void* send_buf,
                 output_event = submit_wait_on_events(q, work_events);
             }
         }
+        else if (nc == num_chunks - 1) {
+            sycl::event barrier_event2;
+            barrier_event2 = invoke_barrier(node_comm, q, work_events, is_cpu_barrier);
+            work_events.clear();
+            output_event = submit_wait_on_events(q, { barrier_event2 });
+        }
         else {
             output_event = submit_wait_on_events(q, work_events);
         }
@@ -511,7 +521,8 @@ ccl::event allgatherv_large_impl(const void* send_buf,
                                  ccl_comm* comm,
                                  ccl_stream* global_stream,
                                  sycl_ptrs_type& sycl_ptrs,
-                                 const ccl::vector_class<ccl::event>& deps) {
+                                 const ccl::vector_class<ccl::event>& deps,
+                                 bool use_tmp) {
     constexpr int N = NE;
     // for 2 byte types with odd count, use 4 byte vectors instead of 8 bytes
     constexpr int vec_size_use = get_num_elements<T, 8, use_full_vector>();
@@ -519,15 +530,7 @@ ccl::event allgatherv_large_impl(const void* send_buf,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
 
-    // TODO : generalize constraints for different hardware.
-    // kernels with remote access is best performant at 64 bytes alignment (sycl_kernels_line_size/2) on PVC
-    const size_t align_size = ccl::global_data::env().sycl_kernels_line_size / 2;
-    const bool is_aligned = (send_count * dsize) % align_size == 0;
-    // use tmp buf for types < 4 byte size with odd count or non 4 byte aligned data
-    // use tmp buf when data count bytes is not 64 byte aligned
-    // since tmp buf version performs better in that case
-    const bool is_tmp_used = ccl::global_data::env().sycl_allgatherv_tmp_buf ||
-                             ((!use_full_vector || !is_aligned) && ccl::global_data::env().sycl_auto_use_tmp_buf);
+    const bool is_tmp_used = use_tmp;
 
     ccl::event e;
     // TODO: copy engines currently does not support tmp buf

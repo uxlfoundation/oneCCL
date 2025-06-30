@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2023-2024 Intel Corporation
+ * Copyright (C) 2023-2025 Intel Corporation
  *
  * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -11,6 +11,7 @@
 #define UMF_MEMORY_POOL_H 1
 
 #include <umf/base.h>
+#include <umf/memory_pool_ops.h>
 #include <umf/memory_provider.h>
 
 #ifdef __cplusplus
@@ -21,12 +22,6 @@ extern "C" {
 ///        structure containing pointers to implementations of provider-specific
 ///        functions
 typedef struct umf_memory_pool_t *umf_memory_pool_handle_t;
-
-/// @brief This structure comprises function pointers used by corresponding umfPool*
-///        calls. Each memory pool implementation should initialize all function
-///        pointers.
-///
-typedef struct umf_memory_pool_ops_t umf_memory_pool_ops_t;
 
 /// @brief Supported pool creation flags
 typedef enum umf_pool_create_flag_t {
@@ -140,7 +135,7 @@ umf_result_t umfFree(void *ptr);
 /// * Implementations *must* store the error code in thread-local
 ///   storage prior to returning NULL from the allocation functions.
 ///
-/// * If the last allocation/de-allocation operation succeeded, the value returned by
+/// * If the last allocation/deallocation operation succeeded, the value returned by
 ///   this function is unspecified.
 ///
 /// * The application *may* call this function from simultaneous threads.
@@ -169,6 +164,22 @@ umf_memory_pool_handle_t umfPoolByPtr(const void *ptr);
 ///
 umf_result_t umfPoolGetMemoryProvider(umf_memory_pool_handle_t hPool,
                                       umf_memory_provider_handle_t *hProvider);
+
+///
+/// @brief Set a custom tag on the memory pool that can be later retrieved using umfPoolGetTag.
+/// @param hPool specified memory pool
+/// @param tag tag to be set
+/// @param oldTag [out][optional] previous tag set on the memory pool
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+umf_result_t umfPoolSetTag(umf_memory_pool_handle_t hPool, void *tag,
+                           void **oldTag);
+
+///
+/// @brief Retrieve the tag associated with the memory pool or NULL if no tag is set.
+/// @param hPool specified memory pool
+/// @param tag [out] tag associated with the memory pool
+/// @return UMF_RESULT_SUCCESS on success.
+umf_result_t umfPoolGetTag(umf_memory_pool_handle_t hPool, void **tag);
 
 #ifdef __cplusplus
 }

@@ -45,6 +45,7 @@ enum class reduction : int {
     max,
     avg,
     custom,
+    none,
 };
 
 /**

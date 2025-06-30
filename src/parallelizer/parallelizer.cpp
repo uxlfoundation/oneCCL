@@ -217,6 +217,7 @@ ccl::status ccl_parallelizer::process_base(ccl_sched* sched, bool update_sched_i
 #ifdef CCL_ENABLE_SYCL
     selector_param.is_sycl_buf = coll_attr.is_sycl_buf;
 #endif // CCL_ENABLE_SYCL
+    selector_param.peer_rank = coll_param.peer_rank;
 
     switch (coll_type) {
         case ccl_coll_barrier: part_count = max_data_partition_count; break;
@@ -354,6 +355,7 @@ ccl::status ccl_parallelizer::process_base(ccl_sched* sched, bool update_sched_i
         part_coll_param.stream = sched->coll_param.stream;
         part_coll_param.comm = comm;
         part_coll_param.is_pt2pt = sched->coll_param.is_pt2pt;
+        part_coll_param.peer_rank = sched->coll_param.peer_rank;
         sched->add_subsched(part_coll_param, update_sched_id);
     }
 

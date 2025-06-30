@@ -129,7 +129,7 @@ MPILIBNAME="mpi"
 MPICXXLIBNAME="mpicxx"
 
 # MPIVERSION is the version of the Intel(R) MPI Library that mpiicpc is intended for
-MPIVERSION="2021.15"
+MPIVERSION="2021.16"
 
 # Internal variables
 # Show is set to echo to cause the compilation command to be echoed instead
@@ -199,6 +199,7 @@ fi
 # If these are *not* found, add the library options
 
 linking=yes
+verbose=no
 allargs=""
 for arg in "$@" ; do
     # Set addarg to no if this arg should be ignored by the C compiler
@@ -273,13 +274,18 @@ for arg in "$@" ; do
         ;;
     -v)
         # Pass this argument to the compiler as well.
-        echo "$(basename $0) for the Intel(R) MPI Library $MPIVERSION for Linux*"
-        echo "Copyright Intel Corporation."
-        linking=no
+        verbose=yes
+        if [ "$#" -eq 1 ]; then
+            linking=no
+        fi
         ;;
     -V)
         # Pass this argument to the compiler to query the compiler version.
-        linking=no
+        if [ "$#" -eq 1 ]; then
+            linking=no
+        fi
+        echo "$(basename $0) for the Intel(R) MPI Library $MPIVERSION for Linux*"
+        echo "Copyright Intel Corporation."
         ;;
     -profile=*)
         # Pass the name of a profiling configuration.  As
@@ -543,6 +549,9 @@ if [ "$linking" = yes ] ; then
     if [ "$Show" = echo ] ; then
         echo $cmd_line
     else
+        if [ "$verbose" = yes ] ; then
+            echo mpiicpx generated: $cmd_line
+        fi
         eval `echo $cmd_line`
     fi
     rc=$?
@@ -562,4 +571,3 @@ else
 fi
 
 exit $rc
-

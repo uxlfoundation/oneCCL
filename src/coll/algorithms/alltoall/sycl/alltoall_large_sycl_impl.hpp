@@ -526,10 +526,46 @@ ccl::event alltoall_large_impl(const void *send_buf,
     std::vector<void *> ptrs{ (void *)send_buf, (T *)recv_buf }; // index 0 and 1
     size_t rank = node_comm->rank();
 
-    auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
-    auto send_pointers = get_ipc_ptrs<T, N_RANKS>(node_comm, 0, (void *)send_buf, sched);
-    auto recv_pointers = get_ipc_ptrs<T, N_RANKS>(node_comm, 1, (void *)recv_buf, sched);
+    std::array<T *, N_RANKS> send_pointers;
+    std::array<T *, N_RANKS> recv_pointers;
 
+    if (comm->is_multi_thread_instance() == true) {
+        ccl::global_data::get().shared_data->do_ipc_exchangeExt(
+            comm,
+            ccl::global_data::get().shared_data->hash_table,
+            global_stream,
+            ptrs,
+            comm->global_current_id);
+        send_pointers = ccl::global_data::get().shared_data->get_ipc_ptrsExt<T, N_RANKS>(
+            node_comm,
+            ccl::global_data::get().shared_data->hash_table,
+            0,
+            0,
+            (void *)send_buf,
+            comm->global_current_id,
+            0,
+            comm->get_even_comm(),
+            comm->get_pair_comm());
+        recv_pointers = ccl::global_data::get().shared_data->get_ipc_ptrsExt<T, N_RANKS>(
+            node_comm,
+            ccl::global_data::get().shared_data->hash_table,
+            0,
+            1,
+            (void *)recv_buf,
+            comm->global_current_id,
+            0,
+            comm->get_even_comm(),
+            comm->get_pair_comm());
+        if (comm->is_multi_thread_instance()) {
+            pthread_barrier_wait(
+                &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        }
+    }
+    else {
+        auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+        send_pointers = get_ipc_ptrs<T, N_RANKS>(node_comm, 0, (void *)send_buf, sched);
+        recv_pointers = get_ipc_ptrs<T, N_RANKS>(node_comm, 1, (void *)recv_buf, sched);
+    }
     auto dep = invoke_barrier(node_comm, q, dep_events, is_cpu_barrier);
 
     constexpr size_t vec_size =

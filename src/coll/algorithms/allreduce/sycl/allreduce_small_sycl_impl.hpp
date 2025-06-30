@@ -135,6 +135,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
     const int comm_rank = node_comm->rank();
 
     size_t hw_threads = get_total_threads(q);
+    bool is_recording = use_recording_path(q);
 
     // create sections as data size increases and increase the vector size
     // used in each thread so as to reduce the number of threads and this
@@ -149,11 +150,12 @@ ccl::event allreduce_small_impl(const void *send_buf,
     // use full vector (>= 8 bytes) if buffers are 4 byte aligned
     // we dont have to take the count for calculating alignment,
     // since we are not dividing the data among ranks
-    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, 0);
+    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, 0, 0);
     const bool use_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
     const bool use_kernel_sync = ccl::global_data::env().sycl_kernel_sync;
 
-    auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
+    auto [local_tmp_buf, remote_ptrs] =
+        is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
@@ -221,6 +223,9 @@ ccl::event allreduce_small_impl(const void *send_buf,
         sycl::event local_event =
             reduce_sum_invoke.template operator()<VS, 32, 0, 0>({ barrier_event });
 
+        if (is_recording) {
+            local_event = invoke_barrier(node_comm, q, { local_event }, use_cpu_barrier);
+        }
         return local_event;
     };
     if (comm->is_multi_thread_instance() == true) {
@@ -233,7 +238,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
     // also when user asks to remove the synchronization within kernel
     // run them as separate kernels since single kernel algorithm
     // will require the threads to synchronize between phases
-    if (use_cpu_barrier || !use_kernel_sync) {
+    if (use_cpu_barrier || !use_kernel_sync || is_recording) {
         // TODO: use cpu_barrier option with read_write kernel
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8>();

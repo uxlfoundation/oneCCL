@@ -40,8 +40,8 @@ std::map<backend_type_t, std::string> backend_names = { std::make_pair(BACKEND_C
 #define DEFAULT_ITERS        (16)
 #define DEFAULT_WARMUP_ITERS (16)
 
-#define DEFAULT_CACHE_OPS   (1)
-#define DEFAULT_QUEUE       (0)
+#define DEFAULT_CACHE_OPS   (0)
+#define DEFAULT_QUEUE       (1) // in order queue
 #define DEFAULT_WAIT        (1)
 #define DEFAULT_WINDOW_SIZE (64)
 

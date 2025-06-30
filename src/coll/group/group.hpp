@@ -29,11 +29,19 @@ public:
     static void start();
     static void end();
     static void add_operation(ccl_coll_type ctype, std::function<ccl::event()> operation);
+    static void add_post_processing_step(std::function<bool(atl_req_t&, bool)> step);
+#ifdef CCL_ENABLE_SYCL
+    static void set_sycl_queue(sycl::queue q);
+#endif // CCL_ENABLE_SYCL
 
     static thread_local bool is_group_active;
     static thread_local bool first_group_op;
     static thread_local std::vector<std::pair<ccl_coll_type, std::function<ccl::event()>>>
         operation_storage;
+    static thread_local std::vector<std::function<bool(atl_req_t&, bool)>> post_processing_steps;
+#ifdef CCL_ENABLE_SYCL
+    static thread_local sycl::queue sycl_queue;
+#endif // CCL_ENABLE_SYCL
 
 private:
     static std::mutex group_mutex;

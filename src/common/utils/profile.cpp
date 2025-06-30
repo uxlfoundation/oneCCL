@@ -24,12 +24,12 @@ void ccl::profile::metrics_counter::init() {
 ccl::profile::metrics_counter::~metrics_counter() {
     std::string pipe_metrics;
 
-    for (auto calls_per_count : this->nonparallel_calls_per_count) {
+    for (auto& calls_per_count : this->nonparallel_calls_per_count) {
         pipe_metrics += "nonparallel_calls_per_count[" + std::to_string(calls_per_count.first) +
                         "]=" + std::to_string(calls_per_count.second) + ",\n";
     }
 
-    for (auto calls_per_count : this->parallel_calls_per_count) {
+    for (auto& calls_per_count : this->parallel_calls_per_count) {
         pipe_metrics += "   parallel_calls_per_count[" + std::to_string(calls_per_count.first) +
                         "]=" + std::to_string(calls_per_count.second) + ",\n";
     }

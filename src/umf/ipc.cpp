@@ -143,7 +143,7 @@ int create_level_zero_pool(sycl::queue q,
     umf_memory_provider_handle_t ze_provider = nullptr;
     umf_level_zero_memory_provider_params_handle_t level_zero_params = nullptr;
 
-    umf_memory_provider_ops_t* ze_ops = umfLevelZeroMemoryProviderOps();
+    const umf_memory_provider_ops_t* ze_ops = umfLevelZeroMemoryProviderOps();
     sycl::context ctx = q.get_context();
     ze_context_handle_t ze_ctx = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(ctx);
 
@@ -174,7 +174,7 @@ int create_level_zero_pool(sycl::queue q,
     }
 
     umf_pool_create_flags_t flags = UMF_POOL_CREATE_FLAG_OWN_PROVIDER;
-    umf_memory_pool_ops_t* pool_ops = umfProxyPoolOps();
+    const umf_memory_pool_ops_t* pool_ops = umfProxyPoolOps();
 
     umf_result = umfPoolCreate(pool_ops, ze_provider, nullptr, flags, pool);
     if (umf_result != UMF_RESULT_SUCCESS) {

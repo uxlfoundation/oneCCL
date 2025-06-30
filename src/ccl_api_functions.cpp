@@ -112,14 +112,6 @@ communicator create_communicator(const int size,
 
 namespace v1 {
 /***************** SPLIT COMMUNICATOR *****************/
-
-vector_class<communicator> split_communicators(
-    const vector_class<pair_class<communicator, comm_split_attr>>& attrs) {
-    throw ccl::exception(std::string(__PRETTY_FUNCTION__) + " - is not implemented");
-
-    return {};
-}
-
 communicator split_communicator(const communicator& comm, int color, int key) {
     return ccl::detail::environment::instance().split_communicator(comm, color, key);
 }

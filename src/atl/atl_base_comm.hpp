@@ -285,10 +285,13 @@ protected:
 class atl_comm_manager {
 public:
     static std::shared_ptr<atl_base_comm> create();
-    static std::shared_ptr<atl_base_comm> create(std::shared_ptr<ikvs_wrapper> k);
+    static std::shared_ptr<atl_base_comm> create(ccl::ccl_comm_attr_impl& attr);
+    static std::shared_ptr<atl_base_comm> create(std::shared_ptr<ikvs_wrapper> k,
+                                                 ccl::ccl_comm_attr_impl& attr);
     static std::shared_ptr<atl_base_comm> create(int comm_size,
                                                  const std::vector<int>& ranks,
-                                                 std::shared_ptr<ikvs_wrapper> k);
+                                                 std::shared_ptr<ikvs_wrapper> k,
+                                                 ccl::ccl_comm_attr_impl& attr);
     static std::shared_ptr<atl_base_comm> create_with_id(const std::shared_ptr<atl_base_comm> other,
                                                          int comm_id);
 

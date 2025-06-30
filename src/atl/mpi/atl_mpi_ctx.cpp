@@ -628,17 +628,28 @@ atl_status_t atl_mpi_ctx::set_impi_env(const atl_attr_t& attr, const atl_mpi_lib
 #ifdef CCL_ENABLE_OMP
     if (getenv("OMP_NUM_THREADS") != NULL) {
         setenv("I_MPI_THREAD_RUNTIME", "openmp", 0);
+        if (strcmp(getenv("I_MPI_THREAD_RUNTIME"), "openmp") != 0) {
+            LOG_WARN_ROOT(
+                "I_MPI_THREAD_RUNTIME must be unset or set to 'openmp' to achieve optimal performance");
+        }
+        // set I_MPI_THREAD_LOCK_LEVEL to vci for any number of ccl workers
+        setenv("I_MPI_THREAD_LOCK_LEVEL", "vci", 0);
+        if (strcmp(getenv("I_MPI_THREAD_LOCK_LEVEL"), "vci") != 0) {
+            LOG_WARN_ROOT(
+                "I_MPI_THREAD_LOCK_LEVEL must be unset or set to 'vci' to achieve optimal performance");
+        }
     }
-    // disable omp allreduce when OMP_NUM_THREADS is not specified
+    // disable omp collectives when OMP_NUM_THREADS is not specified
     else {
         setenv("I_MPI_THREAD_RUNTIME", "generic", 0);
-        ccl::global_data::env().enable_omp_allreduce = false;
+        ccl::global_data::env().enable_omp_coll = false;
     }
 #else
     setenv("I_MPI_THREAD_RUNTIME", "generic", 0);
 #endif // CCL_ENABLE_OMP
     setenv("I_MPI_THREAD_MAX", ep_count_str, 0);
     setenv("I_MPI_THREAD_ID_KEY", EP_IDX_KEY, 0);
+    // this setenv will not overwrite I_MPI_THREAD_LOCK_LEVEL if it has value
     setenv("I_MPI_THREAD_LOCK_LEVEL", (attr.in.ep_count == 1) ? "global" : "vci", 0);
 
     return ATL_STATUS_SUCCESS;
@@ -677,11 +688,17 @@ atl_status_t atl_mpi_ctx::check_impi_env(const atl_attr_t& attr) {
 
     if (!getenv("ONEAPI_ROOT") && !getenv("I_MPI_ROOT")) {
         atl_mpi_lib_type_t type = ATL_MPI_LIB_IMPI;
-        LOG_INFO("oneCCL MPI network transport layer is using ",
-                 mpi_lib_infos[type].version_prefix_1,
-                 " but $I_MPI_ROOT is not set.",
-                 " Transport variables will be initialized automatically.",
-                 " To override them run `source $I_MPI_ROOT/env/vars.sh`");
+        LOG_ERROR("CCL/MPI uses ",
+                  mpi_lib_infos[type].version_prefix_1,
+                  " but neither I_MPI_ROOT nor ONEAPI_ROOT is set. ",
+                  "Please source ",
+                  mpi_lib_infos[type].kind_value,
+                  " version of ",
+                  mpi_lib_infos[type].version_prefix_1,
+                  " (",
+                  mpi_lib_infos[type].min_version_value,
+                  " or higher version).");
+        return ATL_STATUS_FAILURE;
     }
 
     return ATL_STATUS_SUCCESS;

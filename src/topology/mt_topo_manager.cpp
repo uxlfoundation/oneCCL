@@ -87,8 +87,6 @@ void topo_manager::build_host_info(int size, int rank, int global_current_id) {
               ", current_global_id: ",
               global_current_id);
 
-    std::vector<int> data = { rank };
-
     allgather(
         size,
         rank,

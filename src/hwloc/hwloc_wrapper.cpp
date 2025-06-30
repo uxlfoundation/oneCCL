@@ -250,7 +250,7 @@ ccl_numa_node ccl_hwloc_wrapper::get_numa_node(int numa_node) {
         return {};
     }
 
-    for (auto node : numa_nodes) {
+    for (auto& node : numa_nodes) {
         if (node.os_idx == numa_node) {
             return node;
         }
@@ -275,7 +275,7 @@ bool ccl_hwloc_wrapper::is_valid_numa_node(int numa_node) {
         return false;
     }
 
-    for (auto node : numa_nodes) {
+    for (auto& node : numa_nodes) {
         if (node.os_idx == numa_node) {
             return true;
         }

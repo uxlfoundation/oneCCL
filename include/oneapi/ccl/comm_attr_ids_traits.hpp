@@ -29,6 +29,12 @@ struct ccl_api_type_attr_traits<comm_attr_id, comm_attr_id::version> {
     using return_type = type;
 };
 
+template <>
+struct ccl_api_type_attr_traits<comm_attr_id, comm_attr_id::blocking> {
+    using type = int;
+    using return_type = type;
+};
+
 } // namespace detail
 
 } // namespace ccl

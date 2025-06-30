@@ -18,6 +18,7 @@
 #include <vector>
 #include <unordered_map>
 #include <mutex>
+#include <condition_variable>
 
 #ifdef CCL_ENABLE_SYCL
 #include <sycl/sycl.hpp>
@@ -28,17 +29,44 @@
 #include "topology/topo_manager.hpp"
 
 namespace ccl {
+
+static std::atomic<int> next_op_id{ 0 };
+
+struct op_id_entry {
+    std::mutex m;
+    std::condition_variable cv;
+    int id = -1;
+    bool ready = false;
+};
+
+struct handshake_data {
+    std::mutex m;
+    std::condition_variable cv;
+
+    // Indicate that the receiver has published its pointer
+    bool recv_published = false;
+
+    // Indicate that the sender has finished its memcpy
+    bool copy_done = false;
+};
+
 class shared_resources {
 private:
     std::unordered_map<int, std::mutex> resource_mutexes;
     std::unordered_map<int, int> barrier_initialized_flags;
-    std::unordered_map<int, pthread_mutex_t> barrier_mutexes;
 
 public:
     std::unordered_map<int, rank_info_vec_t> rank_info_vec_globs;
     std::unordered_map<int, std::vector<char>> all_hostnames_raw_globs;
     std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> hash_table;
-
+#ifdef CCL_ENABLE_SYCL
+    sycl::event copy_event;
+#endif // CCL_ENABLE_SYCL
+    std::unordered_map<int, handshake_data> handshakes;
+    std::unordered_map<int, op_id_entry> op_id_map;
+#ifdef CCL_ENABLE_SYCL
+    std::unordered_map<int, sycl::event> receiver_ready_events_map;
+#endif // CCL_ENABLE_SYCL
     int current_global_id = ccl_comm::invalid_id;
     std::unordered_map<int, pthread_barrier_t> barrier_waits;
 
@@ -50,34 +78,49 @@ public:
         hash_table.clear();
         barrier_waits.clear();
         rank_info_vec_globs.clear();
-        barrier_mutexes.clear();
         barrier_initialized_flags.clear();
         resource_mutexes.clear();
         all_hostnames_raw_globs.clear();
     }
+#ifdef CCL_ENABLE_SYCL
+    void set_receiver_ready_event(int op_id, const sycl::event &evt) {
+        std::lock_guard<std::mutex> lk(get_resource_mutex(op_id));
+        receiver_ready_events_map[op_id] = evt;
+    }
 
+    sycl::event get_receiver_ready_event(int op_id) {
+        std::lock_guard<std::mutex> lk(get_resource_mutex(op_id));
+        return receiver_ready_events_map.at(op_id);
+    }
+#endif // CCL_ENABLE_SYCL
     void resize_rank_info_vec_glob(size_t new_size, int global_id) {
-        std::lock_guard<std::mutex> lock(resource_mutexes[global_id]);
+        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
         rank_info_vec_globs[global_id].resize(new_size);
     }
 
     void resize_all_hostnames_raw(size_t new_size, int global_id) {
-        std::lock_guard<std::mutex> lock(resource_mutexes[global_id]);
+        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
         all_hostnames_raw_globs[global_id].resize(new_size);
     }
 
+    std::mutex &get_resource_mutex(int global_id) {
+        static std::mutex mu;
+        std::lock_guard<std::mutex> guard(mu);
+        return resource_mutexes[global_id];
+    }
+
     std::vector<char> &get_all_hostnames_raw_glob(int global_id) {
-        std::lock_guard<std::mutex> lock(resource_mutexes[global_id]);
+        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
         return all_hostnames_raw_globs[global_id];
     }
 
     rank_info_vec_t &get_rank_info_vec_glob(int global_id) {
-        std::lock_guard<std::mutex> lock(resource_mutexes[global_id]);
+        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
         return rank_info_vec_globs[global_id];
     }
 
     void init_barrier_wait(int threads_num, int global_id) {
-        std::mutex &mutex = resource_mutexes[global_id];
+        std::mutex &mutex = get_resource_mutex(global_id);
 
         mutex.lock();
 
@@ -100,9 +143,16 @@ public:
         std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> &hash_table,
         ccl_stream *stream,
         std::vector<void *> ptrs,
-        int exchange_id = 0) {
-        hash_table[exchange_id][comm->rank()] = ptrs;
-        pthread_barrier_wait(&barrier_waits[comm->global_current_id]);
+        int exchange_id = 0,
+        bool is_pt2pt = false) {
+        {
+            static std::mutex hash_table_mutex;
+            std::lock_guard<std::mutex> guard(hash_table_mutex);
+            hash_table[exchange_id][comm->rank()] = ptrs;
+        }
+        if (!is_pt2pt) {
+            pthread_barrier_wait(&barrier_waits[comm->global_current_id]);
+        }
     }
 
     int get_node_rank(int ranks[2], int pair_comm_size) {
@@ -121,7 +171,7 @@ public:
         bool dummy_copy = 0,
         std::shared_ptr<ccl_comm> even_comm = nullptr,
         std::shared_ptr<ccl_comm> pair_comm = nullptr) {
-        std::array<T *, N> remote_ptrs;
+        std::array<T *, N> remote_ptrs = {};
         const int rank = comm->rank();
         const int size = comm->size();
 
@@ -139,8 +189,33 @@ public:
                 const auto &ptr = hash_table[exchange_id][peer_rank_node][handle_index];
                 remote_ptrs[peer_rank] = (T *)ptr;
             }
+            CCL_ASSERT(remote_ptrs[peer_rank] != NULL);
         }
         return remote_ptrs;
+    }
+
+    int get_shared_op_id(int global_id, bool is_sender) {
+        auto &entry = op_id_map[global_id];
+
+        if (is_sender) {
+            // sender path: create & broadcast
+            std::unique_lock<std::mutex> lk(entry.m);
+            entry.id = next_op_id.fetch_add(1, std::memory_order_relaxed);
+            entry.ready = true;
+            lk.unlock();
+            entry.cv.notify_one(); // wake exactly one waiting receiver
+            return entry.id;
+        }
+        else {
+            // receiver path: wait until sender sets it
+            std::unique_lock<std::mutex> lk(entry.m);
+            entry.cv.wait(lk, [&] {
+                return entry.ready;
+            });
+            int id = entry.id;
+            entry.ready = false; // reset so the same entry can be reused
+            return id;
+        }
     }
 };
 

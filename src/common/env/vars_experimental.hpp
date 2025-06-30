@@ -47,7 +47,7 @@
  * @details This enviroment variable has the advantage of forming a seamless
  * pipeline that conceals the data transfer time across MDFI. This way,
  * a process reads the data from its peer tile on the same GPU, performs
- * the reduction, and writes to a temporary buffer located on a different
+ * the reduction, and writes to a intermediate buffer located on a different
  * GPU. This modification will cover the time for transferring
  * the data through XeLinks during the reduce-scatter phase in allreduce
  * and reduce collectives.
@@ -183,12 +183,12 @@ constexpr const char* CCL_BARRIER_SYNC = "CCL_BARRIER_SYNC";
 constexpr const char* CCL_ENABLE_SYCL_KERNELS = "CCL_ENABLE_SYCL_KERNELS";
 
 /**
- * @brief Enable the use of persistent temporary buffer in allgatherv
+ * @brief Enable the use of persistent intermediate buffer in allgatherv
  *
- * @details Setting this environment variable to 1 enables the use of a persistent temporary
+ * @details Setting this environment variable to 1 enables the use of a persistent intermediate
  * buffer to perform the allgatherv operation. This implementation makes the collective fully
  * asynchronous but adds some additional overhead due to the extra copy of the user buffer
- * to a (persistent) temporary buffer.
+ * to a persistent intermediate buffer.
  *
  * "<value>" : "0", "1"
  *
@@ -224,12 +224,12 @@ constexpr const char* CCL_SYCL_ALLGATHERV_MEDIUM_THRESHOLD = "CCL_SYCL_ALLGATHER
 constexpr const char* CCL_SYCL_ALLGATHERV_SCALEOUT_THRESHOLD = "CCL_SYCL_ALLGATHERV_SCALEOUT_THRESHOLD";
 
 /**
- * @brief Enable the use of persistent temporary buffer in allreduce
+ * @brief Enable the use of persistent intermediate buffer in allreduce
  *
- * @details Setting this environment variable to 1 enables the use of a persistent temporary
+ * @details Setting this environment variable to 1 enables the use of a persistent intermediate
  * buffer to perform the allreduce operation. This implementation makes the collective fully
  * asynchronous but adds some additional overhead due to the extra copy of the user buffer
- * to a (persistent) temporary buffer.
+ * to a persistent intermediate buffer.
  *
  * "<value>" : "0", "1"
  *
@@ -279,13 +279,16 @@ constexpr const char* CCL_SYCL_ALLREDUCE_SCALEOUT_THRESHOLD = "CCL_SYCL_ALLREDUC
  */
 constexpr const char* CCL_SYCL_ALLREDUCE_SCALEOUT = "CCL_SYCL_ALLREDUCE_SCALEOUT";
 
+constexpr const char* CCL_SYCL_ALLREDUCE_ARC = "CCL_SYCL_ALLREDUCE_ARC";
+constexpr const char* CCL_SYCL_ALLREDUCE_LL_THRESHOLD = "CCL_SYCL_ALLREDUCE_LL_THRESHOLD";
+
 /**
- * @brief Enable the use of persistent temporary buffer in reduce_scatter
+ * @brief Enable the use of persistent intermediate buffer in reduce_scatter
  *
- * @details Setting this environment variable to 1 enables the use of a persistent temporary
+ * @details Setting this environment variable to 1 enables the use of a persistent intermediate
  * buffer to perform the reduce_scatter operation. This implementation makes the collective
  * fully asynchronous but adds some additional overhead due to the extra copy of the user
- * buffer to a (persistent) temporary buffer.
+ * buffer to a persistent intermediate buffer.
  *
  * "<value>" : "0", "1"
  *
@@ -332,6 +335,53 @@ constexpr const char* CCL_SYCL_REDUCE_SCATTER_SCALEOUT_THRESHOLD = "CCL_SYCL_RED
  *
  */
 constexpr const char* CCL_SYCL_REDUCE_SCATTER_SCALEOUT = "CCL_SYCL_REDUCE_SCATTER_SCALEOUT";
+
+/**
+ * @brief Specify allgatherv SYCL scale-out algorithm
+ *
+ * @details Set the algorithm string from a list of available algorithms to set
+ * a specific algorithm for scale-out phase.
+ * ALLGATHERV algorithms
+ * - auto           Automatic selection. Default vaue.
+ * - direct         Based on MPI_Iallgatherv
+ * - ring           Ring algorithm
+ *
+ */
+constexpr const char* CCL_SYCL_ALLGATHERV_SCALEOUT = "CCL_SYCL_ALLGATHERV_SCALEOUT";
+
+constexpr const char* CCL_SYCL_ALLGATHERV_LL_THRESHOLD = "CCL_SYCL_ALLGATHERV_LL_THRESHOLD";
+
+/**
+ * @brief Enable the use of persistent temporary buffer in broadcast
+ *
+ * @details Setting this environment variable to 1 enables the use of a persistent temporary
+ * buffer to perform the broadcast operation. This implementation makes the collective
+ * fully asynchronous but adds some additional overhead due to the extra copy of the user
+ * buffer to a persistent temporary buffer.
+ *
+ * "<value>" : "0", "1"
+ *
+ * By-default: "0 (disabled)"
+ */
+constexpr const char* CCL_SYCL_BROADCAST_TMP_BUF = "CCL_SYCL_BROADCAST_TMP_BUF";
+
+/**
+ * @brief Specify the threshold for the small size algorithm in broadcast
+ *
+ * @details Set the threshold in bytes to specify the small size algorithm in the broadcast
+ * collective. Default value is 2097152."<value>"" : ">=0"
+ *
+ */
+constexpr const char* CCL_SYCL_BROADCAST_SMALL_THRESHOLD = "CCL_SYCL_BROADCAST_SMALL_THRESHOLD";
+
+/**
+ * @brief Specify the threshold for the Sycl scaleout algorithm in broadcast
+ *
+ * @details Set the threshold in bytes to specify the Sycl scaleout algorithm in the broadcast
+ * collective. Default value is 2097152. "<value>"" : ">=0"
+ *
+ */
+constexpr const char* CCL_SYCL_BROADCAST_SCALEOUT_THRESHOLD = "CCL_SYCL_BROADCAST_SCALEOUT_THRESHOLD";
 /** @} */
 /** @} */
 
@@ -349,6 +399,7 @@ constexpr const char* CCL_SYCL_CCL_BARRIER = "CCL_SYCL_CCL_BARRIER";
 constexpr const char* CCL_SYCL_KERNEL_SYNC = "CCL_SYCL_KERNEL_SYNC";
 constexpr const char* CCL_SYCL_SINGLE_NODE_ALGORITHM = "CCL_SYCL_SINGLE_NODE_ALGORITHM";
 constexpr const char* CCL_SYCL_AUTO_USE_TMP_BUF = "CCL_SYCL_AUTO_USE_TMP_BUF";
+constexpr const char* CCL_SYCL_FORCE_USE_TMP_BUF_SCALEOUT = "CCL_SYCL_FORCE_USE_TMP_BUF_SCALEOUT";
 constexpr const char* CCL_SYCL_COPY_ENGINE = "CCL_SYCL_COPY_ENGINE";
 constexpr const char* CCL_SYCL_KERNEL_COPY = "CCL_SYCL_KERNEL_COPY";
 constexpr const char* CCL_SYCL_ESIMD = "CCL_SYCL_ESIMD";
@@ -363,11 +414,27 @@ constexpr const char* CCL_SYCL_ESIMD = "CCL_SYCL_ESIMD";
  * By-default: "1 (enabled)"
  */
 constexpr const char* CCL_SYCL_FULL_VECTOR = "CCL_SYCL_FULL_VECTOR";
+
+/*
+ * @brief Specify whether to force the usage of the path used for sycl_graph recording
+ *
+ * @details When client software records oneCCL collective on sycl graph, the recording
+ * is detected and a specific path inside oneCCL is taken. This environment forces the usage
+ * of this path without recording a collective. This can be used for debugging
+ * or performance tuning.
+ *
+ * "<value>" : "0", "1"
+ *
+ * By-default: "0 (disabled)"
+ */
+constexpr const char* CCL_SYCL_FORCE_RECORDING_PATH = "CCL_SYCL_FORCE_RECORDING_PATH";
 constexpr const char* CCL_SYCL_TMP_BUF_SIZE = "CCL_SYCL_TMP_BUF_SIZE";
 constexpr const char* CCL_SYCL_SCALEOUT_HOST_BUF_SIZE = "CCL_SYCL_SCALEOUT_HOST_BUF_SIZE";
 constexpr const char* CCL_SYCL_SCALEOUT_DEVICE_BUF_SIZE = "CCL_SYCL_SCALEOUT_DEVICE_BUF_SIZE";
 constexpr const char* CCL_SYCL_KERNELS_LINE_SIZE = "CCL_SYCL_KERNELS_LINE_SIZE";
 constexpr const char* CCL_SYCL_SCALEOUT_BUF_ALLOC_MODE = "CCL_SYCL_SCALEOUT_BUF_ALLOC_MODE";
+constexpr const char* CCL_SYCL_PT2PT_READ = "CCL_SYCL_PT2PT_READ";
+constexpr const char* CCL_SYCL_PT2PT_ENABLE = "CCL_SYCL_PT2PT_ENABLE";
 constexpr const char* CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE = "CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE";
 constexpr const char* CCL_SYCL_PIPELINE_CHUNK_SIZE = "CCL_SYCL_PIPELINE_CHUNK_SIZE";
 constexpr const char* CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA = "CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA";
@@ -382,6 +449,8 @@ constexpr const char* CCL_SYCL_ENABLE_DIRECT_GPU_RDMA = "CCL_SYCL_ENABLE_DIRECT_
  * By-default: "1 (enabled)"
  */
 constexpr const char* CCL_SYCL_SUB_COMMUICATOR = "CCL_SYCL_SUB_COMMUICATOR";
+
+constexpr const char* CCL_SYCL_FORCE_PCIE = "CCL_SYCL_FORCE_PCIE";
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_UMF)
 constexpr const char* CCL_UMF_ENABLE = "CCL_UMF_ENABLE";

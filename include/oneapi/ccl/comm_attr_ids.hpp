@@ -25,6 +25,8 @@ namespace v1 {
 
 enum class comm_attr_id : int {
     version,
+
+    blocking
 };
 
 } // namespace v1

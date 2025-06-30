@@ -430,31 +430,8 @@ namespace v1 {
 /**
  * \ingroup communicator
  * \brief Splits communicators according to attributes.
- *
- * This API is deprecated as of version 2021.15.0. It will be removed in a future release.
- *
  * @param attrs split attributes for local communicators
  * @return vector of communicators
- */
-vector_class<communicator> CCL_API
-split_communicators(const vector_class<pair_class<communicator, comm_split_attr>>& attrs);
-
-/**
- * \ingroup communicator
- * \brief Creates a new sub-communicator from an existing communicator.
- *
- * Creates one or more new communicators from an existing communicator.
- * All ranks providing the same \p color will be placed in the same sub-communicator.
- * Ranks within each sub-communicator are ordered according to the \p key.
- *
- * @param comm existing communicator from which the new subcommunicator(s) will be derived
- * @param color determines which sub-communicator the calling rank is assigned to.
- *              Ranks with the same color will be on the same sub-communicator.
- *              If the color is different, the ranks will be on different sub-communicators.
- * @param key defines the rank ordering within the new sub-communicator.
- *            Ranks in the new communicator are sorted by ascending \p key.
- *
- * @return the newly created sub-communicator
  */
 communicator CCL_API split_communicator(const communicator& comm, int color, int key);
 

@@ -588,6 +588,7 @@ ccl_coll_param ccl_coll_param::create_allreduce_param(const void* send_buf,
     ccl_coll_param param{};
 
     param.ctype = ccl_coll_allreduce;
+    param.count = count;
     param.send_bufs.push_back((void*)send_buf);
     param.send_counts.push_back(count);
     param.recv_bufs.push_back(recv_buf);

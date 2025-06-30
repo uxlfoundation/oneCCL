@@ -29,7 +29,7 @@
 
 namespace ccl {
 
-enum class device_family { unknown, family1, family2, family3 };
+enum class device_family { unknown, family1, family2, family3, family4, family5, family6, family7 };
 
 std::string to_string(device_family family);
 

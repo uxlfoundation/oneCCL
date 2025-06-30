@@ -58,16 +58,23 @@ ccl_comm* ccl_comm::createExt(device_t device,
                               context_t context,
                               int size,
                               int rank,
-                              ccl::shared_ptr_class<ccl::kvs_interface> kvs) {
+                              ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                              ccl::ccl_comm_attr_impl& attr) {
+    // TODO: handle attr in this case
     return new ccl_comm(device, context, {}, true, size, rank, kvs->get_id());
 }
 
-ccl_comm* ccl_comm::createExt(int size, int rank, ccl::shared_ptr_class<ccl::kvs_interface> kvs) {
-    return new ccl_comm(size, rank, get_kvs_wrapper(kvs));
+ccl_comm* ccl_comm::createExt(int size,
+                              int rank,
+                              ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                              ccl::ccl_comm_attr_impl& attr) {
+    return new ccl_comm(size, rank, get_kvs_wrapper(kvs), attr);
 }
 
-ccl_comm* ccl_comm::createExt(int size, ccl::shared_ptr_class<ccl::kvs_interface> kvs) {
-    return new ccl_comm(size, get_kvs_wrapper(kvs));
+ccl_comm* ccl_comm::createExt(int size,
+                              ccl::shared_ptr_class<ccl::kvs_interface> kvs,
+                              ccl::ccl_comm_attr_impl& attr) {
+    return new ccl_comm(size, get_kvs_wrapper(kvs), attr);
 }
 
 void ccl_comm::create_topo_subcommsExt(int size, int rank) {

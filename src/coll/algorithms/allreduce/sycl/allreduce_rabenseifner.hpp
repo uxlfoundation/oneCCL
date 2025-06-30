@@ -125,7 +125,7 @@ sycl::event allreduce_sycl_rabenseifner_blocking(sycl::queue &q,
             ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
 
             // tmp buffers are aligned
-            bool use_full_vector = can_use_full_vector(tmp_buf, recv_buf, 4);
+            bool use_full_vector = can_use_full_vector(tmp_buf, recv_buf, 1, 4);
             if (use_full_vector) {
                 constexpr int vec_size = get_num_elements<T, 8, true>();
                 sycl_e = reduce_invoke.template operator()<vec_size, 16>(
@@ -393,7 +393,7 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
         else {
             sycl_e = gpu_recv_plain(q, tmp_buf, count, rank - 1, tag, dtype, comm, dep_events);
             // tmp buffers are aligned
-            bool use_full_vector = can_use_full_vector(tmp_buf, recv_buf, 4);
+            bool use_full_vector = can_use_full_vector(tmp_buf, recv_buf, 1, 4);
             if (use_full_vector) {
                 constexpr int vec_size = get_num_elements<T, 8, true>();
                 sycl_e = reduce_invoke.template operator()<vec_size, 16>(

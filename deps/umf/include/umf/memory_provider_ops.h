@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2023-2024 Intel Corporation
+ * Copyright (C) 2023-2025 Intel Corporation
  *
  * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -16,21 +16,17 @@
 extern "C" {
 #endif
 
+/// @brief Version of the Memory Provider ops structure.
+/// NOTE: This is equal to the latest UMF version, in which the ops structure
+/// has been modified.
+#define UMF_PROVIDER_OPS_VERSION_CURRENT UMF_MAKE_VERSION(0, 11)
+
 ///
 /// @brief This structure comprises optional function pointers used
 /// by corresponding umfMemoryProvider* calls. A memory provider implementation
 /// can keep them NULL.
 ///
 typedef struct umf_memory_provider_ext_ops_t {
-    ///
-    /// @brief Frees the memory space pointed by \p ptr from the memory \p provider
-    /// @param provider pointer to the memory provider
-    /// @param ptr pointer to the allocated memory to free
-    /// @param size size of the allocation
-    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure
-    ///
-    umf_result_t (*free)(void *provider, void *ptr, size_t size);
-
     ///
     /// @brief Discard physical pages within the virtual memory mapping associated at the given addr
     ///        and \p size. This call is asynchronous and may delay purging the pages indefinitely.
@@ -152,7 +148,7 @@ typedef struct umf_memory_provider_ipc_ops_t {
 ///
 typedef struct umf_memory_provider_ops_t {
     /// Version of the ops structure.
-    /// Should be initialized using UMF_VERSION_CURRENT.
+    /// Should be initialized using UMF_PROVIDER_OPS_VERSION_CURRENT.
     uint32_t version;
 
     ///
@@ -180,6 +176,15 @@ typedef struct umf_memory_provider_ops_t {
     ///
     umf_result_t (*alloc)(void *provider, size_t size, size_t alignment,
                           void **ptr);
+
+    ///
+    /// @brief Frees the memory space pointed by \p ptr from the memory \p provider
+    /// @param provider pointer to the memory provider
+    /// @param ptr pointer to the allocated memory to free
+    /// @param size size of the allocation
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure
+    ///
+    umf_result_t (*free)(void *provider, void *ptr, size_t size);
 
     ///
     /// @brief Retrieve string representation of the underlying provider specific

@@ -26,6 +26,7 @@ static thread_local ccl_kernel_barrier_data thread_kernel_barrier_data;
 constexpr int tmp_bufs_count = 3;
 // tmp_bufs are used as work buf and to copy input/output
 static std::array<void *, tmp_bufs_count> tmp_bufs;
+
 static thread_local std::array<void *, tmp_bufs_count> thread_tmp_bufs;
 
 static thread_local bool is_thread_initial_invocation = true;
@@ -34,6 +35,23 @@ size_t tmp_buf_size_per_rank = 0;
 std::pair<ccl_sched *, ze_handle_exchange_entry *> do_ipc_exchange(ccl_comm *comm,
                                                                    ccl_stream *stream,
                                                                    std::vector<void *> ptrs) {
+    sycl::queue q = stream->get_native_stream();
+    bool host_found = false;
+    for (auto ptr : ptrs) {
+        sycl::usm::alloc alloc_type = sycl::get_pointer_type(ptr, q.get_context());
+        if (alloc_type == sycl::usm::alloc::host) {
+            host_found = true;
+            break;
+        }
+    }
+
+    int cache_status = -1;
+    if (host_found) {
+        cache_status = ccl::global_data::env().enable_ze_cache_get_ipc_handles;
+        ccl::global_data::env().enable_ze_cache_get_ipc_handles = 0;
+        LOG_DEBUG("disabling ZE IPC cache because a host USM buffer was found.");
+    }
+
     ccl_comm *node_comm = comm->get_node_comm().get();
     std::vector<ze_handle_exchange_entry::mem_desc_t> in_buffers;
 
@@ -56,6 +74,12 @@ std::pair<ccl_sched *, ze_handle_exchange_entry *> do_ipc_exchange(ccl_comm *com
     while (!exchange_entry->is_completed()) {
         exchange_entry->update(); //    128us
     }
+
+    if (host_found) {
+        // restore
+        ccl::global_data::env().enable_ze_cache_get_ipc_handles = cache_status;
+    }
+
     return { sched, exchange_entry };
 }
 
@@ -218,10 +242,26 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
         // alloc sync pointers to be used for global comm_barrier across ranks
         constexpr int num_slots = ccl_comm_barrier_data::slots;
         const size_t ptr_count = num_slots * sub_comms.size();
-        size_t *ptrs = sycl::malloc_device<size_t>(ptr_count, q);
-        q.memset(ptrs, 0, ptr_count * sizeof(size_t)).wait();
+        size_t *ptrs0;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            ptrs0 = sycl::malloc_device<size_t>(ptr_count, q);
+        }
+        else {
+            ptrs0 = sycl::malloc_host<size_t>(ptr_count, q);
+        }
+        q.memset(ptrs0, 0, ptr_count * sizeof(size_t)).wait();
 
-        std::vector<void *> ipc_ptrs{ ptrs, ptrs + num_slots, ptrs + 2 * num_slots };
+        size_t *ptrs1;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            ptrs1 = sycl::malloc_device<size_t>(ptr_count, q);
+        }
+        else {
+            ptrs1 = sycl::malloc_host<size_t>(ptr_count, q);
+        }
+        q.memset(ptrs1, 0, ptr_count * sizeof(size_t)).wait();
+
+        std::vector<void *> ipc_ptrs{ ptrs0, ptrs0 + num_slots, ptrs0 + 2 * num_slots,
+                                      ptrs1, ptrs1 + num_slots, ptrs1 + 2 * num_slots };
 
         // do one time initializations
         if (is_initial_invocation) {
@@ -230,7 +270,13 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             create_copy_engine_queues(q);
 
             // allocate sync_ptrs for local kernel barrier
-            size_t *sync_ptrs = sycl::malloc_device<size_t>(ccl_kernel_barrier_data::slots, q);
+            size_t *sync_ptrs;
+            if (node_comm->get_topo_manager().has_p2p_access()) {
+                sync_ptrs = sycl::malloc_device<size_t>(ccl_kernel_barrier_data::slots, q);
+            }
+            else {
+                sync_ptrs = sycl::malloc_host<size_t>(ccl_kernel_barrier_data::slots, q);
+            }
 
             // Initialize memory to zero using memset
             q.memset(sync_ptrs, 0, ccl_kernel_barrier_data::slots * sizeof(size_t)).wait();
@@ -239,6 +285,11 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             get_kernel_barrier_data(comm).set_sync_ptrs(sync_ptrs);
 
             //set up temp buf to be used for large collectives
+            // WA : use smaller tmp buffer for client GPUs
+            if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+                ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
+                ccl::global_data::env().sycl_tmp_buf_size = 3 * 32 * 1024 * 1024;
+            }
             const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
             const size_t tmp_buf_size_per_rank_orig =
                 tmp_buf_size / ccl::global_data::get().get_local_proc_count();
@@ -247,8 +298,15 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             const size_t align_bytes = ccl::global_data::env().kernel_mem_align;
             tmp_buf_size_per_rank = (tmp_buf_size_per_rank_orig / align_bytes) * align_bytes;
 
-            char *tmp_buf = sycl::aligned_alloc_device<char>(
-                CCL_REG_MSG_ALIGNMENT, tmp_buf_size * tmp_bufs_count, q);
+            char *tmp_buf;
+            if (node_comm->get_topo_manager().has_p2p_access()) {
+                tmp_buf = sycl::aligned_alloc_device<char>(
+                    CCL_REG_MSG_ALIGNMENT, tmp_buf_size * tmp_bufs_count, q);
+            }
+            else {
+                tmp_buf = sycl::aligned_alloc_host<char>(
+                    CCL_REG_MSG_ALIGNMENT, tmp_buf_size * tmp_bufs_count, q);
+            }
 
             for (int i = 0; i < tmp_bufs_count; i++) {
                 tmp_bufs[i] = tmp_buf + i * tmp_buf_size;
@@ -261,8 +319,15 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
 
         // set up temp buf to be used for small collectives
         const int small_buf_ipc_idx = ipc_ptrs.size();
-        char *tmp_buf = sycl::aligned_alloc_device<char>(
-            CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        char *tmp_buf;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            tmp_buf = sycl::aligned_alloc_device<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
+        else {
+            tmp_buf = sycl::aligned_alloc_host<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
         for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
             void *tmp_buf_ptr = tmp_buf + i * ccl_tmp_bufs::buf_size;
             node_comm->set_tmp_buf(tmp_buf_ptr, i);
@@ -273,16 +338,50 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
         const int large_buf_ipc_idx = ipc_ptrs.size();
         ipc_ptrs.insert(std::end(ipc_ptrs), std::begin(tmp_bufs), std::end(tmp_bufs));
 
+        const int small_buf_ipc_gpu_idx = ipc_ptrs.size();
+        char *tmp_buf_gpu;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            tmp_buf_gpu = sycl::aligned_alloc_device<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
+        else {
+            // when no p2p, use USM host memory for cross card communication
+            tmp_buf_gpu = sycl::aligned_alloc_host<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
+        for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
+            void *tmp_buf_ptr_gpu = tmp_buf_gpu + i * ccl_tmp_bufs::buf_size;
+            node_comm->set_tmp_buf_gpu(tmp_buf_ptr_gpu, i);
+            ipc_ptrs.push_back(tmp_buf_ptr_gpu);
+        }
+
 #ifdef CCL_ENABLE_UMF
         if (ccl::global_data::env().umf_enable) {
             LOG_DEBUG("|UMF|: umf_ipc_exchange");
             umf_ipc_exchange(comm, global_stream, ipc_ptrs);
 
             // add comm_barrier sync pointers to each communicator
-            for (size_t i = 0; i < sub_comms.size(); i++) {
-                auto remote_ptrs = get_ipc_ptrs<size_t, MAX_NODE_RANKS>(
-                    sub_comms[i], i, ipc_ptrs[i], ipc_handle_map, q_worker, q.get_device(), 1);
-                sub_comms[i]->set_barrier_ptrs(remote_ptrs);
+            size_t sub_comms_size = sub_comms.size();
+            size_t *counter = sycl::malloc_device<size_t>(sub_comms_size, q);
+            q.fill((void *)counter, static_cast<size_t>(num_slots - 1), sub_comms_size).wait();
+            for (size_t i = 0, j = sub_comms_size; i < sub_comms.size(); i++, j++) {
+                size_t ptrs0_idx = i;
+                size_t ptrs1_idx = j;
+                auto remote_ptrs0 = get_ipc_ptrs<size_t, MAX_NODE_RANKS>(sub_comms[i],
+                                                                         ptrs0_idx,
+                                                                         ipc_ptrs[ptrs0_idx],
+                                                                         ipc_handle_map,
+                                                                         q_worker,
+                                                                         q.get_device(),
+                                                                         1);
+                auto remote_ptrs1 = get_ipc_ptrs<size_t, MAX_NODE_RANKS>(sub_comms[i],
+                                                                         ptrs1_idx,
+                                                                         ipc_ptrs[ptrs1_idx],
+                                                                         ipc_handle_map,
+                                                                         q_worker,
+                                                                         q.get_device(),
+                                                                         1);
+                sub_comms[i]->set_barrier_ptrs(remote_ptrs0, remote_ptrs1, counter + i);
             }
 
             // get ipc pointers for small tmp buffers and add them to node_comm
@@ -290,6 +389,11 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
                 auto remote_ptrs = get_ipc_ptrs<void, MAX_NODE_RANKS>(
                     node_comm, j, ipc_ptrs[j], ipc_handle_map, q_worker, q.get_device(), 1);
                 node_comm->set_remote_tmp_bufs(remote_ptrs, i);
+            }
+            for (size_t i = 0, j = small_buf_ipc_gpu_idx; i < ccl_tmp_bufs::buf_count; i++, j++) {
+                auto remote_ptrs = get_ipc_ptrs<void, MAX_NODE_RANKS>(
+                    node_comm, j, ipc_ptrs[j], ipc_handle_map, q_worker, q.get_device(), 1);
+                node_comm->set_remote_tmp_bufs_gpu(remote_ptrs, i);
             }
 
             for (size_t i = 0, j = large_buf_ipc_idx; i < tmp_bufs.size(); i++, j++) {
@@ -310,25 +414,48 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ipc_ptrs);
 
             // add comm_barrier sync pointers to each communicator
-            for (size_t i = 0; i < sub_comms.size(); i++) {
-                auto remote_ptrs = get_ipc_ptrs<size_t, MAX_NODE_RANKS>(
-                    sub_comms[i], i, ipc_ptrs[i], sched, q_worker, 1);
-                sub_comms[i]->set_barrier_ptrs(remote_ptrs);
+            size_t sub_comms_size = sub_comms.size();
+            size_t *counter = sycl::malloc_device<size_t>(sub_comms_size, q);
+            q.fill((void *)counter, static_cast<size_t>(num_slots - 1), sub_comms_size).wait();
+            for (size_t i = 0, j = sub_comms_size; i < sub_comms.size(); i++, j++) {
+                size_t ptrs0_idx = i;
+                size_t ptrs1_idx = j;
+                auto remote_ptrs0 = get_ipc_ptrs<size_t, MAX_NODE_RANKS>(sub_comms[i],
+                                                                         ptrs0_idx,
+                                                                         ipc_ptrs[ptrs0_idx],
+                                                                         sched,
+                                                                         q_worker,
+                                                                         1,
+                                                                         false /* to_cache */);
+                auto remote_ptrs1 = get_ipc_ptrs<size_t, MAX_NODE_RANKS>(sub_comms[i],
+                                                                         ptrs1_idx,
+                                                                         ipc_ptrs[ptrs1_idx],
+                                                                         sched,
+                                                                         q_worker,
+                                                                         1,
+                                                                         false /* to_cache */);
+                sub_comms[i]->set_barrier_ptrs(remote_ptrs0, remote_ptrs1, counter + i);
             }
             // get ipc pointers for small tmp buffers and add them to node_comm
             for (size_t i = 0, j = small_buf_ipc_idx; i < ccl_tmp_bufs::buf_count; i++, j++) {
                 auto remote_ptrs = get_ipc_ptrs<void, MAX_NODE_RANKS>(
-                    node_comm, j, ipc_ptrs[j], sched, q_worker, 1);
+                    node_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
                 node_comm->set_remote_tmp_bufs(remote_ptrs, i);
+            }
+            // get ipc pointers for small tmp gpu buffers and add them to node_comm
+            for (size_t i = 0, j = small_buf_ipc_gpu_idx; i < ccl_tmp_bufs::buf_count; i++, j++) {
+                auto remote_ptrs = get_ipc_ptrs<void, MAX_NODE_RANKS>(
+                    node_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
+                node_comm->set_remote_tmp_bufs_gpu(remote_ptrs, i);
             }
             // get ipc pointers for large tmp_buffers
             for (size_t i = 0, j = large_buf_ipc_idx; i < tmp_bufs.size(); i++, j++) {
                 comm_large_tmp_bufs.remote_tmp_bufs[i] = get_ipc_ptrs<void, MAX_NODE_RANKS>(
-                    node_comm, j, ipc_ptrs[j], sched, q_worker, 1);
-                comm_large_tmp_bufs.remote_even_tmp_bufs[i] =
-                    get_ipc_ptrs<void, MAX_GPUS>(even_comm, j, ipc_ptrs[j], sched, q_worker, 1);
-                comm_large_tmp_bufs.remote_pair_tmp_bufs[i] =
-                    get_ipc_ptrs<void, MAX_TILES>(pair_comm, j, ipc_ptrs[j], sched, q_worker, 1);
+                    node_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
+                comm_large_tmp_bufs.remote_even_tmp_bufs[i] = get_ipc_ptrs<void, MAX_GPUS>(
+                    even_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
+                comm_large_tmp_bufs.remote_pair_tmp_bufs[i] = get_ipc_ptrs<void, MAX_TILES>(
+                    pair_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
             }
 
             q_worker.wait();
@@ -352,7 +479,6 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
 void coll_initExt(ccl_comm *comm,
                   std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> &hash_table,
                   ccl_stream *global_stream) {
-    static bool is_next_invocation[MAX_NODE_RANKS] = { false };
     // TODO: check all pthread_barrier_wait invokes
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
 
@@ -374,12 +500,19 @@ void coll_initExt(ccl_comm *comm,
         // alloc sync pointers to be used for global comm_barrier across ranks
         constexpr int num_slots = ccl_comm_barrier_data::slots;
         const size_t ptr_count = num_slots * sub_comms.size();
-        size_t *ptrs = sycl::malloc_device<size_t>(ptr_count, q);
-        q.memset(ptrs, 0, ptr_count * sizeof(size_t)).wait();
+        size_t *ptrs0 = sycl::malloc_device<size_t>(ptr_count, q);
+        q.memset(ptrs0, 0, ptr_count * sizeof(size_t)).wait();
+
+        size_t *ptrs1 = sycl::malloc_device<size_t>(ptr_count, q);
+        q.memset(ptrs1, 0, ptr_count * sizeof(size_t)).wait();
+
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
-        std::vector<void *> ipc_ptrs{ ptrs, ptrs + num_slots, ptrs + 2 * num_slots };
 
+        std::vector<void *> ipc_ptrs{ ptrs0, ptrs0 + num_slots, ptrs0 + 2 * num_slots,
+                                      ptrs1, ptrs1 + num_slots, ptrs1 + 2 * num_slots
+
+        };
         // do one-time initializations
         if (is_thread_initial_invocation) {
             is_thread_initial_invocation = false;
@@ -394,14 +527,21 @@ void coll_initExt(ccl_comm *comm,
             get_kernel_barrier_data(comm).set_sync_ptrs(sync_ptrs);
 
             //set up temp buf to be used for large collectives
+            // WA : use smaller tmp buffer for client GPUs
+            if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+                ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
+                ccl::global_data::env().sycl_tmp_buf_size = 3 * 32 * 1024 * 1024;
+            }
             const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
             const size_t tmp_buf_size_per_rank_orig =
                 tmp_buf_size / comm->size(); //ccl::global_data::get().get_local_proc_count();
             // adjust tmp_buf_size_per_rank to align in all ranks
             const size_t align_bytes = ccl::global_data::env().kernel_mem_align;
             tmp_buf_size_per_rank = (tmp_buf_size_per_rank_orig / align_bytes) * align_bytes;
+
             char *tmp_buf = sycl::aligned_alloc_device<char>(
                 CCL_REG_MSG_ALIGNMENT, tmp_buf_size * tmp_bufs_count, q);
+
             for (int i = 0; i < tmp_bufs_count; i++) {
                 thread_tmp_bufs[i] = tmp_buf + i * tmp_buf_size;
             }
@@ -430,16 +570,58 @@ void coll_initExt(ccl_comm *comm,
         ipc_ptrs.insert(std::end(ipc_ptrs),
                         std::begin(comm_large_tmp_bufs.tmp_bufs),
                         std::end(comm_large_tmp_bufs.tmp_bufs));
-        ccl::global_data::get().shared_data->do_ipc_exchangeExt(
-            comm, hash_table, global_stream, ipc_ptrs);
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        const int small_buf_ipc_gpu_idx = ipc_ptrs.size();
+        char *tmp_buf_gpu = sycl::aligned_alloc_device<char>(
+            CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
+            void *tmp_buf_ptr_gpu = tmp_buf_gpu + i * ccl_tmp_bufs::buf_size;
+            node_comm->set_tmp_buf_gpu(tmp_buf_ptr_gpu, i);
+            ipc_ptrs.push_back(tmp_buf_ptr_gpu);
+        }
+        pthread_barrier_wait(
+            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+
+        ccl::global_data::get().shared_data->do_ipc_exchangeExt(
+            comm, hash_table, global_stream, ipc_ptrs);
+
         // add comm_barrier sync pointers to each communicator
-        for (size_t i = 0; i < sub_comms.size(); i++) {
-            auto remote_ptrs =
+        size_t sub_comms_size = sub_comms.size();
+        size_t *counter = sycl::malloc_device<size_t>(sub_comms_size, q);
+        q.submit([=](sycl::handler &h) {
+             h.single_task([=]() {
+                 for (int i = 0; i < sub_comms_size; i++) {
+                     counter[i] = num_slots - 1;
+                 }
+             });
+         }).wait();
+        for (size_t i = 0, j = sub_comms_size; i < sub_comms.size(); i++, j++) {
+            size_t ptrs0_idx = i;
+            size_t ptrs1_idx = j;
+            auto remote_ptrs0 =
                 ccl::global_data::get().shared_data->get_ipc_ptrsExt<size_t, MAX_NODE_RANKS>(
-                    sub_comms[i], hash_table, i, i, ipc_ptrs[i], 0, 0, even_comm, pair_comm);
-            sub_comms[i]->set_barrier_ptrs(remote_ptrs);
+                    sub_comms[i],
+                    hash_table,
+                    i,
+                    ptrs0_idx,
+                    ipc_ptrs[ptrs0_idx],
+                    0,
+                    0,
+                    even_comm,
+                    pair_comm);
+            auto remote_ptrs1 =
+                ccl::global_data::get().shared_data->get_ipc_ptrsExt<size_t, MAX_NODE_RANKS>(
+                    sub_comms[i],
+                    hash_table,
+                    i,
+                    ptrs1_idx,
+                    ipc_ptrs[ptrs1_idx],
+                    0,
+                    0,
+                    even_comm,
+                    pair_comm);
+            sub_comms[i]->set_barrier_ptrs(remote_ptrs0, remote_ptrs1, counter + i);
         }
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
@@ -450,6 +632,16 @@ void coll_initExt(ccl_comm *comm,
                     node_comm, hash_table, 0 /*node*/, j, ipc_ptrs[j], 0, 0, even_comm, pair_comm);
             node_comm->set_remote_tmp_bufs(remote_ptrs, i);
         }
+        pthread_barrier_wait(
+            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        // get ipc pointers for small tmp gpu buffers and add them to node_comm
+        for (size_t i = 0, j = small_buf_ipc_gpu_idx; i < ccl_tmp_bufs::buf_count; i++, j++) {
+            auto remote_ptrs =
+                ccl::global_data::get().shared_data->get_ipc_ptrsExt<void, MAX_NODE_RANKS>(
+                    node_comm, hash_table, 0 /*node*/, j, ipc_ptrs[j], 0, 0, even_comm, pair_comm);
+            node_comm->set_remote_tmp_bufs_gpu(remote_ptrs, i); // TODO this crashes
+        }
+
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
         // get ipc pointers for large tmp_buffers
@@ -519,6 +711,7 @@ sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
                            sycl::queue q,
                            const std::vector<sycl::event> &dep_events,
                            bool use_cpu) {
+    bool gpu_increment = use_recording_path(q);
     sycl::event e;
     if (use_cpu) {
         e = q.submit([=](sycl::handler &h) {
@@ -529,13 +722,15 @@ sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
         });
     }
     else {
-        ccl_comm_barrier_data barrier_data = comm->barrier_inc();
+        ccl_comm_barrier_data barrier_data =
+            gpu_increment ? comm->barrier_data() : comm->barrier_inc();
         e = q.submit([=](sycl::handler &h) {
             h.depends_on(dep_events);
             h.parallel_for(
                 sycl::nd_range<1>(MAX_NODE_RANKS, MAX_NODE_RANKS),
-                [=](sycl::nd_item<1> it)
-                    [[sycl::reqd_sub_group_size(16)]] { comm_barrier(barrier_data, it); });
+                [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                    comm_barrier(barrier_data, it, true, gpu_increment);
+                });
         });
     }
     return e;
@@ -588,7 +783,8 @@ sycl::event sycl_average(sycl::queue &q,
                          ccl::datatype dtype,
                          std::vector<sycl::event> &dep_events) {
     auto lambda = [&]<typename T>() {
-        bool use_full_vector = can_use_full_vector(reduce_buf, reduce_buf, reduce_count);
+        const size_t dsize = ccl::global_data::get().dtypes->get(dtype).size();
+        bool use_full_vector = can_use_full_vector(reduce_buf, reduce_buf, reduce_count, dsize);
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8, true>();
             return reduce_average_invoke<T, vec_size, 16>(
@@ -601,4 +797,126 @@ sycl::event sycl_average(sycl::queue &q,
         }
     };
     return invoke_scaleout(lambda, dtype);
+}
+
+sycl::event pt2pt_pre_sync(sycl::queue &q,
+                           const std::vector<sycl::event> &deps,
+                           ccl_comm *comm,
+                           bool do_send,
+                           int peer_rank,
+                           uint64_t tag) {
+    auto init_fn = [=](atl_req_t &req) -> bool {
+        int ep_idx = 0;
+        char data[1] = { 1 };
+        size_t n = sizeof(data);
+        auto atl = comm->get_atl_comm();
+
+        if (do_send) {
+            ATL_CALL_THROW_IF_ERROR(atl->send(ep_idx, data, n, peer_rank, tag, req));
+            LOG_DEBUG("pt2pt pre-sync SEND init, tag=", tag);
+        }
+        else {
+            LOG_DEBUG("pt2pt pre-sync RECV init, tag=", tag);
+            ATL_CALL_THROW_IF_ERROR(atl->recv(ep_idx, data, n, peer_rank, tag, req));
+            if (group_impl::is_group_active) {
+                ATL_CALL_THROW_IF_ERROR(atl->wait(ep_idx, req));
+            }
+        }
+
+        if (!group_impl::is_group_active) {
+            ATL_CALL_THROW_IF_ERROR(atl->check(ep_idx, req));
+            if (!req.is_completed) {
+                ATL_CALL_THROW_IF_ERROR(atl->wait(ep_idx, req));
+            }
+        }
+        return true;
+    };
+
+    // wait_fn: performs the blocking wait
+    auto wait_fn = [=](atl_req_t &req) {
+        if (req.is_completed) {
+            return;
+        }
+        int ep_idx = 0;
+        auto atl = comm->get_atl_comm();
+        ATL_CALL_THROW_IF_ERROR(atl->wait(ep_idx, req));
+        LOG_DEBUG("pt2pt pre-sync wait done, tag=", tag);
+    };
+
+    if (group_impl::is_group_active) {
+        return q.submit([=](sycl::handler &h) {
+            h.depends_on(deps);
+            h.host_task([=]() {
+                atl_req_t req{};
+                init_fn(req);
+            });
+        });
+    }
+
+    atl_req_t req{};
+    sycl::event e = q.submit([&](sycl::handler &h) {
+        h.depends_on(deps);
+        h.host_task([=, &req]() {
+            init_fn(req);
+        });
+    });
+
+    // Wait for the host_task to post the send/recv
+    e.wait();
+    // then do the final blocking wait here
+    wait_fn(req);
+    return e;
+}
+
+sycl::event post_host_task_ack(sycl::queue &q,
+                               const std::vector<sycl::event> &deps,
+                               ccl_comm *comm,
+                               bool do_send,
+                               int peer_rank,
+                               uint64_t ack_tag) {
+    auto ack_driver = [=](atl_req_t &req, bool init) -> bool {
+        int ep_idx = 0;
+        char data[1] = { 1 };
+        size_t n = sizeof(data);
+        auto atl = comm->get_atl_comm();
+        if (req.is_completed) {
+            return true;
+        }
+        if (init) {
+            if (do_send)
+                ATL_CALL_THROW_IF_ERROR(atl->send(ep_idx, data, n, peer_rank, ack_tag, req));
+            else
+                ATL_CALL_THROW_IF_ERROR(atl->recv(ep_idx, data, n, peer_rank, ack_tag, req));
+        }
+
+        ATL_CALL_THROW_IF_ERROR(atl->check(ep_idx, req));
+        if (!req.is_completed) {
+            ATL_CALL_THROW_IF_ERROR(atl->wait(ep_idx, req));
+        }
+
+        LOG_DEBUG("post_host_task_ack: ", (do_send ? "send" : "recv"), ", tag=", ack_tag);
+        return true;
+    };
+    if (group_impl::is_group_active) {
+        group_impl::add_post_processing_step(ack_driver);
+        group_impl::set_sycl_queue(q);
+    }
+
+    sycl::event e;
+    if (!group_impl::is_group_active) {
+        atl_req_t req{};
+        e = q.submit([&](sycl::handler &h) {
+            h.depends_on(deps);
+            h.host_task([=, &req]() {
+                ack_driver(req, /*init=*/true);
+            });
+        });
+        e.wait();
+        ack_driver(req, /*init=*/false);
+    }
+    else {
+        e = submit_wait_on_events(q, deps);
+        e.wait();
+    }
+    return e;
 }

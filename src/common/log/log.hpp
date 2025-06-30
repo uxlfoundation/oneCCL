@@ -295,6 +295,21 @@ private:
         } \
     }
 
+#if defined(CCL_ENABLE_PROFILING)
+#define LOG_INFO_PROFILED(...) \
+    { \
+        if (is_profile_mode && ccl::global_data::env().enable_profiling) { \
+            ccl_logger::get_instance().info("|Profiling_env| ", ##__VA_ARGS__); \
+        } \
+        else if (!is_profile_mode) { \
+            LOG_INFO(__VA_ARGS__); \
+        } \
+    }
+#else
+#define LOG_INFO_PROFILED(...) \
+    { LOG_INFO(__VA_ARGS__); }
+#endif
+
 // Only output log info on root
 #define LOG_INFO_ROOT(...) \
     { \

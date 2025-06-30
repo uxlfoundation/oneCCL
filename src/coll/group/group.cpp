@@ -21,6 +21,10 @@ thread_local bool group_impl::is_group_active = false;
 thread_local bool group_impl::first_group_op = false;
 thread_local std::vector<std::pair<ccl_coll_type, std::function<ccl::event()>>>
     group_impl::operation_storage;
+thread_local std::vector<std::function<bool(atl_req_t&, bool)>> group_impl::post_processing_steps;
+#ifdef CCL_ENABLE_SYCL
+thread_local sycl::queue group_impl::sycl_queue;
+#endif // CCL_ENABLE_SYCL
 std::mutex group_impl::group_mutex;
 
 void group_impl::start() {
@@ -36,8 +40,10 @@ void group_impl::end() {
     if (is_group_active) {
 #ifdef CCL_ENABLE_SYCL
         auto store_ze_pt2pt_read = ccl::global_data::env().ze_pt2pt_read;
-        // currently for group API only ze_pt2pt_read = 1 is supported
+        auto store_sycl_pt2pt_read = ccl::global_data::env().sycl_pt2pt_read;
+        // currently for group API only pt2pt read strategy is supported
         ccl::global_data::env().ze_pt2pt_read = 1;
+        ccl::global_data::env().sycl_pt2pt_read = 1;
 #endif // CCL_ENABLE_SYCL
         first_group_op = true;
         ccl::event event;
@@ -48,8 +54,32 @@ void group_impl::end() {
         first_group_op = false; // needed in case operation_storage is empty
         // wait() is needed to avoid oneCCL destruction prior to device tasks completion
         event.wait();
+        if (post_processing_steps.size()) {
+#ifdef CCL_ENABLE_SYCL
+            sycl_queue.submit([=](sycl::handler& h) {
+                h.host_task([=]() {
+#endif // CCL_ENABLE_SYCL
+                    std::vector<atl_req_t> ack_reqs(post_processing_steps.size());
+                    bool post_processing_steps_done = false;
+                    bool init = true;
+                    while (!post_processing_steps_done) {
+                        post_processing_steps_done = true;
+                        for (size_t i = 0; i < post_processing_steps.size(); i++) {
+                            auto& step = post_processing_steps[i];
+                            if (!step(ack_reqs[i], init)) {
+                                post_processing_steps_done = false;
+                            }
+                        }
+                        init = false;
+                    }
+#ifdef CCL_ENABLE_SYCL
+                });
+            });
+#endif // CCL_ENABLE_SYCL
+        }
 #ifdef CCL_ENABLE_SYCL
         ccl::global_data::env().ze_pt2pt_read = store_ze_pt2pt_read;
+        ccl::global_data::env().sycl_pt2pt_read = store_sycl_pt2pt_read;
 #endif // CCL_ENABLE_SYCL
     }
     ccl::restore_pt2pt_fallback_table();
@@ -63,6 +93,26 @@ void group_impl::add_operation(ccl_coll_type ctype, std::function<ccl::event()> 
         operation_storage.push_back(std::make_pair(ctype, std::move(operation)));
     }
     else {
-        CCL_THROW("group_impl is not actived");
+        CCL_THROW("group API is not active");
     }
 }
+
+void group_impl::add_post_processing_step(std::function<bool(atl_req_t&, bool)> step) {
+    if (is_group_active) {
+        post_processing_steps.push_back(std::move(step));
+    }
+    else {
+        CCL_THROW("group API is not active");
+    }
+}
+
+#ifdef CCL_ENABLE_SYCL
+void group_impl::set_sycl_queue(sycl::queue q) {
+    if (is_group_active) {
+        sycl_queue = q;
+    }
+    else {
+        CCL_THROW("group API is not active");
+    }
+}
+#endif // CCL_ENABLE_SYCL

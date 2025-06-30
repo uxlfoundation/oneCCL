@@ -25,7 +25,7 @@ author = 'Intel'
 # release = '2022'
 
 rst_prolog = """
-.. |product_full| replace:: Intel\ |reg|\  oneAPI Collective Communications Library
+.. |product_full| replace:: oneAPI Collective Communications Library (oneCCL)
 .. |product_short| replace:: oneCCL
 .. |mpi| replace:: Intel\ |reg|\  MPI Library
 .. |reg| unicode:: U+000AE
@@ -41,8 +41,7 @@ rst_prolog = """
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = [
-]
+extensions = []
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -76,6 +75,8 @@ html_static_path = ['_static']
 
 import sys
 import os
+import subprocess
+
 # on_rtd is whether we are on readthedocs.org, this line of code grabbed from docs.readthedocs.org
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
@@ -84,8 +85,8 @@ extensions = [
     'breathe',
 #    'exhale',
     'sphinx-prompt',
-    'sphinx_tabs.tabs'
-]
+    'sphinx_design',
+    ]
 
 breathe_projects = {
     "oneccl":"../../doxygen/xml"
@@ -112,6 +113,22 @@ html_theme = 'sphinx_book_theme'
 html_logo = '_static/oneAPI-rgb-rev-100.png'
 html_favicon = '_static/favicons.png'
 
+def get_git_last_updated_date():
+    try:
+        result = subprocess.check_output(
+            ['git', 'log', '-1', '--date=format:%d %B, %Y', '--format=%cd'],
+            stderr=subprocess.STDOUT,
+            encoding='utf-8'
+        )
+        return result.strip()
+    except Exception as e:
+        print(f"Error fetching last updated date: {e}")
+        return "Unknown"
+
+# Example usage
+last_updated = get_git_last_updated_date()
+print("Last updated:", last_updated)
+
 # Theme options
 html_theme_options = {
     'repository_url': 'https://github.com/oneapi-src/oneCCL',
@@ -119,5 +136,8 @@ html_theme_options = {
     'use_issues_button': True,
     'use_edit_page_button': True,
     'repository_branch': 'master',
-    'extra_footer': '<p align="right"><a href="https://www.intel.com/content/www/us/en/privacy/intel-cookie-notice.html">Cookies</a></p>'
+    'extra_footer': '<p align="right"><a href="https://www.intel.com/content/www/us/en/privacy/intel-cookie-notice.html">Cookies</a></p><br><div>Last updated: ' + last_updated + '</div>'
 }
+
+html_theme_options["logo"] = {"text": "oneCCL Documentation 2021.16"}
+

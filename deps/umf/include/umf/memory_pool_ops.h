@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2023 Intel Corporation
+ * Copyright (C) 2023-2025 Intel Corporation
  *
  * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -17,6 +17,11 @@
 extern "C" {
 #endif
 
+/// @brief Version of the Memory Pool ops structure.
+/// NOTE: This is equal to the latest UMF version, in which the ops structure
+/// has been modified.
+#define UMF_POOL_OPS_VERSION_CURRENT UMF_MAKE_VERSION(0, 11)
+
 ///
 /// @brief This structure comprises function pointers used by corresponding umfPool*
 /// calls. Each memory pool implementation should initialize all function
@@ -24,7 +29,7 @@ extern "C" {
 ///
 typedef struct umf_memory_pool_ops_t {
     /// Version of the ops structure.
-    /// Should be initialized using UMF_VERSION_CURRENT.
+    /// Should be initialized using UMF_POOL_OPS_VERSION_CURRENT.
     uint32_t version;
 
     ///

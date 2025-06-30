@@ -259,9 +259,6 @@ public:
 
     communicator split_communicator(const communicator& comm, int color, int key) const;
 
-    vector_class<communicator> split_communicators(
-        const vector_class<pair_class<communicator, comm_split_attr>>& attrs) const;
-
 private:
     environment();
 

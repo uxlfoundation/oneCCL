@@ -234,11 +234,8 @@ inline sycl::event allgatherv_scaleout_sycl_ring(sycl::queue& q,
                                                  ccl_comm* comm,
                                                  const ccl::vector_class<ccl::event>& deps,
                                                  bool original_deps,
+                                                 sycl_allgatherv_tune_attr& tune_attr,
                                                  bool& done) {
-    // TODO: move tuning to upper level
-    size_t auto_pipeline_chunk_size = allgatherv_select_chunk_size();
-    sycl_allgatherv_tune_attr tune_attr = { allgatherv_scaleout_algo::ring, auto_pipeline_chunk_size };
-
     auto lambda = [&]<typename T>() {
         if (ccl::global_data::env().enable_op_sync) {
             return allgatherv_ring_blocking<T>(

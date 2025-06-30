@@ -44,13 +44,17 @@ void init_reduce_scatter_small(ccl::datatype dtype,
 }
 
 #define SWITCH_RUN_TYPE(TYPE, ccl_type) \
-    case ccl_type: e = rs_small_##TYPE.reduce_scatter(queue, send_buf, recv_buf, dtype, recv_count, done); break;
+    case ccl_type: \
+        e = rs_small_##TYPE.reduce_scatter(queue, send_buf, recv_buf, dtype, recv_count, reduction, deps, done); \
+        break;
 
 ccl::event run_reduce_scatter_small(ccl::datatype dtype,
                                     sycl::queue& queue,
                                     const void* send_buf,
                                     void* recv_buf,
                                     size_t recv_count,
+                                    ccl::reduction reduction,
+                                    const ccl::vector_class<ccl::event>& deps,
                                     bool& done) {
     ccl::event e;
     switch (dtype) {
@@ -74,8 +78,14 @@ ccl::event reduce_scatter_small(const void* send_buf,
                                 ccl_comm* comm,
                                 ccl_stream* global_stream,
                                 const ccl::vector_class<ccl::event>& deps) {
-    LOG_DEBUG("invoking reduce_scatter_small");
-    coll_init(comm, global_stream);
+    if (comm->is_multi_thread_instance() == true) {
+        LOG_DEBUG("|MT|: invoking reduce_scatter_small");
+        coll_initExt(comm, ccl::global_data::get().shared_data->hash_table, global_stream);
+    }
+    else {
+        LOG_DEBUG("invoking reduce_scatter_small");
+        coll_init(comm, global_stream);
+    }
 
     auto lambda = [&]<typename T, int NE, int NP>() {
         return reduce_scatter_small_impl<T, NE, NP>(

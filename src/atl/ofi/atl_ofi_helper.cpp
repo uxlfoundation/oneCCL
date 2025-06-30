@@ -1407,8 +1407,8 @@ atl_status_t atl_ofi_parse_mnic_name(atl_ofi_ctx_t& ctx, std::string str_to_pars
             ret = ATL_STATUS_FAILURE;
         }
 
-        for (auto include_name : include_names) {
-            for (auto exclude_name : exclude_names) {
+        for (auto& include_name : include_names) {
+            for (auto& exclude_name : exclude_names) {
                 std::string& larger_name =
                     (include_name.size() > exclude_name.size()) ? include_name : exclude_name;
                 std::string& smaller_name =
@@ -1448,14 +1448,14 @@ int atl_ofi_is_allowed_nic_name(atl_ofi_ctx_t& ctx, struct fi_info* info) {
         should_include = 1;
     }
 
-    for (auto name : include_names) {
+    for (auto& name : include_names) {
         if (nic_name.substr(0, name.size()) == name) {
             should_include = 1;
             break;
         }
     }
 
-    for (auto name : exclude_names) {
+    for (auto& name : exclude_names) {
         if (nic_name.substr(0, name.size()) == name) {
             should_exclude = 1;
             break;
@@ -1667,7 +1667,13 @@ void atl_ofi_init_req(atl_req_t& req, atl_ofi_prov_ep_t* prov_ep, struct fid_ep*
 std::string get_shm_filename(std::string filename) {
     uid_t uid = getuid();
     std::stringstream ss;
-    ss << filename << "-" << getenv("PALS_APID") << "-" << std::to_string(uid);
+    const char* pals_apid = getenv("PALS_APID");
+    if (!pals_apid) {
+        LOG_WARN("PALS_APID is not set, using default value");
+        pals_apid = "default";
+    }
+
+    ss << filename << "-" << pals_apid << "-" << std::to_string(uid);
     return ss.str();
 }
 

@@ -1,9 +1,11 @@
 /*
- * Copyright (C) 2022-2024 Intel Corporation
+ *
+ * Copyright (C) 2022-2025 Intel Corporation
  *
  * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-*/
+ *
+ */
 
 #ifndef UMF_OS_MEMORY_PROVIDER_H
 #define UMF_OS_MEMORY_PROVIDER_H
@@ -23,7 +25,7 @@ extern "C" {
 /// Not every mode is supported on every system.
 typedef enum umf_numa_mode_t {
     /// Default binding mode. Actual binding policy is system-specific. On
-    /// linux this corresponds to MPOL_DEFAULT. If this mode is specified,
+    /// Linux this corresponds to MPOL_DEFAULT. If this mode is specified,
     /// nodemask must be NULL and maxnode must be 0.
     UMF_NUMA_MODE_DEFAULT,
 

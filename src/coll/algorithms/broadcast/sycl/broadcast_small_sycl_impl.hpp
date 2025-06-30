@@ -63,6 +63,7 @@ ccl::event broadcast_small_impl(const void* send_buf,
                                 const ccl::vector_class<ccl::event>& deps) {
     constexpr int N = NE * NP;
     sycl::queue q = global_stream->get_native_stream();
+    bool is_recording = use_recording_path(q);
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
@@ -72,16 +73,20 @@ ccl::event broadcast_small_impl(const void* send_buf,
     const int comm_rank = node_comm->rank();
 
     // use full vector (>= 8 bytes) if buffers and data size are 4 byte aligned
-    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, count * dsize);
+    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, count, dsize);
     const bool use_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
 
     const bool inplace = send_buf == recv_buf;
 
-    auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
+    auto [local_tmp_buf, remote_ptrs] =
+        is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
-
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(
+            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
     // VS : vec_size, SGS : sub_group_size
     auto broadcast_invoke = [=, &q]<int VS, int SGS>(std::vector<sycl::event>& sycl_deps) {
         constexpr int use_block = 1;
@@ -108,16 +113,22 @@ ccl::event broadcast_small_impl(const void* send_buf,
             sycl_deps.push_back(std::move(local_event));
         }
         sycl::event barrier_event = invoke_barrier(node_comm, q, sycl_deps, use_cpu_barrier);
-        if (comm_rank != root || comm_rank == root && !inplace) {
+        sycl::event end_event{};
+        if (comm_rank != root || !inplace) {
             sycl::event copy_event = q.submit([=](sycl::handler& h) {
                 h.depends_on(dep_events);
                 h.memcpy(recv_buf, local_tmp_buf, dsize * count);
             });
-            return copy_event;
+            end_event = copy_event;
         }
         else {
-            return barrier_event;
+            end_event = barrier_event;
         }
+        if (is_recording) {
+            end_event = invoke_barrier(node_comm, q, { end_event }, use_cpu_barrier);
+        }
+
+        return end_event;
     };
 
     if (use_full_vector) {
@@ -128,6 +139,9 @@ ccl::event broadcast_small_impl(const void* send_buf,
         // for unaligned data use vector size of 1
         kernel_event = broadcast_memcpy.template operator()<1>(dep_events);
     }
-
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(
+            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
     return ccl::event::create_from_native(kernel_event);
 }

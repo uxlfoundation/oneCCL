@@ -180,7 +180,8 @@ inline sycl::event reduce_scatter_ring_blocking_impl(sycl::queue &q,
 
         char *send_offset_ptr = (char *)send_buf + r * main_block_size;
         bool use_full_vector =
-            can_use_full_vector(send_offset_ptr, recv_ptr, recv_block_size) && (uintptr_t)out_ptr % 4 == 0;
+            can_use_full_vector(send_offset_ptr, recv_ptr, recv_block_count, ccl_dtype.size()) &&
+            (uintptr_t)out_ptr % 4 == 0;
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8, true>();
             sycl_e = reduce_invoke.template operator()<vec_size, 16>(
@@ -392,7 +393,8 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
         // sycl kernel or MPI_Reduce_local
         char *send_offset_ptr = (char *)send_buf + r * main_block_size;
         bool use_full_vector =
-            can_use_full_vector(send_offset_ptr, recv_ptr, recv_block_size) && (uintptr_t)out_ptr % 4 == 0;
+            can_use_full_vector(send_offset_ptr, recv_ptr, recv_block_count, ccl_dtype.size()) &&
+            (uintptr_t)out_ptr % 4 == 0;
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8, true>();
             sycl_e = reduce_invoke.template operator()<vec_size, 16>(

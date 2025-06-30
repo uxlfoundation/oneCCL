@@ -23,6 +23,7 @@
 #include "comm/comm.hpp"
 #include "coll/selection/selector.hpp"
 #include "coll/selection/selector_impl.hpp"
+#include "coll/coll_util.hpp"
 #include <omp.h>
 
 #define CCL_MAX_OPENMP_THREADS 64
@@ -127,8 +128,54 @@ void allreduce_impl(const void* send_buf,
     return;
 }
 
+void allgatherv_impl(const void* send_buf,
+                     size_t send_len,
+                     void* recv_buf,
+                     const size_t* recv_lens,
+                     const size_t* offsets,
+                     const ccl_coll_attr& attr,
+                     ccl_comm* comm,
+                     const ccl_stream* stream,
+                     const std::vector<ccl::event>& deps) {
+    ccl::mpi_lib_ops_t local_mpi_lib_ops = ccl::get_mpi_lib_ops();
+    MPI_Comm mpi_comm = comm->get_atl_comm()->get_mpi_comm();
+    int comm_size, rank;
+    local_mpi_lib_ops.MPI_Comm_size_ptr(mpi_comm, &comm_size);
+    local_mpi_lib_ops.MPI_Comm_rank_ptr(mpi_comm, &rank);
+    // set up recv_lens_size_t, recv_conv_lens and recv_conv_offsets
+    std::vector<size_t> recv_lens_size_t(comm_size, 0);
+    std::vector<Compat_MPI_Count_t> recv_conv_lens(comm_size);
+    std::vector<Compat_MPI_Aint_t> recv_conv_offsets(comm_size);
+    for (int i = 0; i < comm_size; ++i) {
+        recv_lens_size_t[i] = recv_lens[i];
+        recv_conv_lens[i] = static_cast<Compat_MPI_Count_t>(recv_lens[i]);
+        recv_conv_offsets[i] = static_cast<Compat_MPI_Aint_t>(offsets[i]);
+    }
+    bool inplace = ccl::is_allgatherv_inplace(send_buf,
+                                              send_len,
+                                              recv_buf,
+                                              recv_lens_size_t.data(),
+                                              1 /*dtype_size*/, // size of MPI_CHAR dtype is 1
+                                              rank,
+                                              comm_size);
+
+    // currently, only use one thread
+    local_mpi_lib_ops.MPI_Allgatherv_c_ptr(inplace ? MPI_IN_PLACE : send_buf,
+                                           send_len,
+                                           MPI_CHAR,
+                                           recv_buf,
+                                           recv_conv_lens.data(),
+                                           recv_conv_offsets.data(),
+                                           MPI_CHAR,
+                                           mpi_comm);
+}
+
 extern "C" CCL_API void* ccl_openmp_allreduce() {
     return reinterpret_cast<void*>(&allreduce_impl);
+}
+
+extern "C" CCL_API void* ccl_openmp_allgatherv() {
+    return reinterpret_cast<void*>(&allgatherv_impl);
 }
 
 extern "C" CCL_API void* ccl_openmp_thread_num() {

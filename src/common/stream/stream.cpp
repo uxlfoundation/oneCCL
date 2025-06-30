@@ -30,6 +30,10 @@ std::string to_string(device_family family) {
         case device_family::family1: return "family1";
         case device_family::family2: return "family2";
         case device_family::family3: return "family3";
+        case device_family::family4: return "family4";
+        case device_family::family5: return "family5";
+        case device_family::family6: return "family6";
+        case device_family::family7: return "family7";
         default: return "unknown";
     }
 }

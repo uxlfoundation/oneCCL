@@ -38,7 +38,30 @@ public:
         return version;
     }
 
+    /**
+     * `blocking` operations
+     */
+    using blocking_traits_t =
+        detail::ccl_api_type_attr_traits<comm_attr_id, comm_attr_id::blocking>;
+
+    const typename blocking_traits_t::return_type& get_attribute_value(
+        const blocking_traits_t& id) const {
+        return blocking;
+    }
+
+    typename blocking_traits_t::return_type set_attribute_value(
+        typename blocking_traits_t::type val,
+        const blocking_traits_t& t) {
+        auto old = blocking;
+        std::swap(blocking, val);
+        return old;
+    }
+
     ccl_comm_attr_impl(const typename version_traits_t::return_type& version) : version(version) {}
+    ccl_comm_attr_impl(const ccl::comm_attr& attr) {
+        version = attr.get<ccl::comm_attr_id::version>();
+        blocking = attr.get<ccl::comm_attr_id::blocking>();
+    }
 
     template <comm_attr_id attr_id>
     bool is_valid() const noexcept {
@@ -47,6 +70,15 @@ public:
 
 protected:
     typename version_traits_t::return_type version;
+
+public:
+    /**
+     * Indicate the collectives in a communicator is blocking or non-blocking
+     * Currently, only works for MPI transport.
+     * Default value is -1, which means unspecified, blocking or not depends on CCL_ATL_SYNC_COLL.
+     * 0 means non-blocking and 1 means blocking, has higher priority than CCL_ATL_SYNC_COLL.
+     */
+    int blocking = -1;
 };
 
 } // namespace ccl

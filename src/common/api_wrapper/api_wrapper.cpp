@@ -156,9 +156,7 @@ void print_error(int error, lib_info_t& info) {
                  " - path contains invalid characters");
     }
     else if (error == CCL_LOAD_LB_DLOPEN_ERROR) {
-        // Log as `info`, because in some cases we have to test multiple paths
-        // and we do not want to write excess information into users screen
-        LOG_INFO("could not open the library: ", info.path.c_str(), " - ", dlerror());
+        LOG_WARN("could not open the library: ", info.path.c_str(), " - ", dlerror());
     }
 }
 

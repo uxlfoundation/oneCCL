@@ -34,6 +34,15 @@ typedef struct openmp_lib_ops {
                       ccl_comm* comm,
                       const ccl_stream* stream,
                       const std::vector<ccl::event>& deps);
+    void (*allgatherv)(const void* send_buf,
+                       size_t send_len,
+                       void* recv_buf,
+                       const size_t* recv_lens,
+                       const size_t* offsets,
+                       const ccl_coll_attr& attr,
+                       ccl_comm* comm,
+                       const ccl_stream* stream,
+                       const std::vector<ccl::event>& deps);
     int (*thread_num)();
 } openmp_lib_ops_t;
 
@@ -43,6 +52,7 @@ static std::vector<std::string> openmp_fn_names = {
     // Please see ccl.map for more details.
     "ccl_openmp_init",
     "ccl_openmp_allreduce",
+    "ccl_openmp_allgatherv",
     "ccl_openmp_thread_num"
 };
 

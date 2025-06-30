@@ -27,6 +27,7 @@ struct impl_dispatch {
 struct sycl_ptrs_type {
     void *mdfi_ptr_rd{ nullptr }, *mdfi_ptr_wr{ nullptr };
     std::array<void *, MAX_GPUS> xelink_ptrs_rd, xelink_ptrs_wr;
+    std::array<void *, MAX_NODE_RANKS> node_ptrs_rd, node_ptrs_wr;
 };
 
 template <typename T,
@@ -93,7 +94,8 @@ inline void kernel_barrier(size_t *sync_ptr, const sycl::nd_item<1> it) {
 // communication barrier across ranks (gpus)
 inline void comm_barrier(ccl_comm_barrier_data barrier_data,
                          const sycl::nd_item<1> it,
-                         const bool use_gpu = true) {
+                         const bool use_gpu = true,
+                         const bool gpu_counter_increase = false) {
     if (!use_gpu)
         return;
 
@@ -103,9 +105,22 @@ inline void comm_barrier(ccl_comm_barrier_data barrier_data,
 
     const int comm_rank = barrier_data.rank();
     const int comm_size = barrier_data.size();
-    const size_t barrier_count = barrier_data.count();
-    const int buffer_idx = barrier_data.slot();
-    std::array<size_t *, MAX_NODE_RANKS> sync_remote_ptrs = barrier_data.remote_ptrs();
+
+    if (gpu_counter_increase) {
+        if (idx == 0) {
+            barrier_data.inc_gpu(1);
+        }
+        // this works because there is only a single workgroup
+        // the barrier does not work between workgroups
+        // and multiple workgroups yield incorrect results
+        it.barrier();
+    }
+
+    const size_t barrier_count =
+        gpu_counter_increase ? barrier_data.count_gpu() : barrier_data.count();
+    const int buffer_idx = gpu_counter_increase ? barrier_data.slot_gpu() : barrier_data.slot();
+    std::array<size_t *, MAX_NODE_RANKS> sync_remote_ptrs =
+        gpu_counter_increase ? barrier_data.remote_ptrs_gpu() : barrier_data.remote_ptrs();
 
     // increment count in all remote ranks
     if (idx < (size_t)comm_size) {

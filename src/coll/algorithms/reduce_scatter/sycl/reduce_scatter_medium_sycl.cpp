@@ -45,7 +45,7 @@ void init_reduce_scatter_medium(ccl::datatype dtype,
 
 #define SWITCH_RUN_TYPE(TYPE, ccl_type) \
     case ccl_type: \
-        e = rs_medium_##TYPE.reduce_scatter(queue, send_buf, recv_buf, recv_count, 1, false, done); \
+        e = rs_medium_##TYPE.reduce_scatter(queue, send_buf, recv_buf, dtype, recv_count, reduction, deps, done); \
         break;
 
 ccl::event run_reduce_scatter_medium(ccl::datatype dtype,
@@ -53,6 +53,8 @@ ccl::event run_reduce_scatter_medium(ccl::datatype dtype,
                                      const void *send_buf,
                                      void *recv_buf,
                                      size_t recv_count,
+                                     ccl::reduction reduction,
+                                     const ccl::vector_class<ccl::event> &deps,
                                      bool &done) {
     ccl::event e;
     switch (dtype) {

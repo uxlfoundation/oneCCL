@@ -397,11 +397,19 @@ device_family get_device_family(ze_device_handle_t device) {
         case static_cast<enum_t>(device_id::id1): return device_family::family1;
         case static_cast<enum_t>(device_id::id2): return device_family::family2;
         case static_cast<enum_t>(device_id::id3): return device_family::family3;
-        default: return device_family::unknown;
+        case static_cast<enum_t>(device_id::id4): return device_family::family4;
+        case static_cast<enum_t>(device_id::id5): return device_family::family5;
+        case static_cast<enum_t>(device_id::id6): return device_family::family6;
+        case static_cast<enum_t>(device_id::id7): return device_family::family7;
+        default: {
+            LOG_DEBUG("get_device_family returns unknown device_family: ", id);
+            return device_family::unknown;
+        }
     }
 }
 
-bool is_same_pci_addr(const zes_pci_address_t& addr1, const zes_pci_address_t& addr2) {
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+bool is_same_pci_addr(const ze_pci_address_ext_t& addr1, const ze_pci_address_ext_t& addr2) {
     bool result = true;
     if (!(addr1.domain == addr2.domain && addr1.bus == addr2.bus && addr1.device == addr2.device &&
           addr1.function == addr2.function)) {
@@ -414,6 +422,7 @@ bool is_same_pci_addr(const zes_pci_address_t& addr1, const zes_pci_address_t& a
     }
     return result;
 }
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
 
 bool is_same_dev_uuid(const ze_device_uuid_t& uuid1, const ze_device_uuid_t& uuid2) {
     bool result = true;
@@ -443,8 +452,9 @@ bool is_same_fabric_port(const zes_fabric_port_id_t& port1, const zes_fabric_por
     return result;
 }
 
-bool pci_address_comparator::operator()(const zes_pci_address_t& a,
-                                        const zes_pci_address_t& b) const {
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+bool pci_address_comparator::operator()(const ze_pci_address_ext_t& a,
+                                        const ze_pci_address_ext_t& b) const {
     if (a.domain == b.domain) {
         if (a.bus == b.bus) {
             if (a.device == b.device) {
@@ -467,6 +477,7 @@ bool pci_address_comparator::operator()(const zes_pci_address_t& a,
         return (a.domain < b.domain);
     }
 }
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
 
 bool fabric_port_comparator::operator()(const zes_fabric_port_id_t& a,
                                         const zes_fabric_port_id_t& b) const {
@@ -651,12 +662,14 @@ std::string to_string(const ze_command_queue_group_properties_t& props) {
     return ss.str();
 }
 
-std::string to_string(const zes_pci_address_t& addr) {
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+std::string to_string(const ze_pci_address_ext_t& addr) {
     std::stringstream ss;
     ss << "{ " << addr.domain << ", " << addr.bus << ", " << addr.device << ", " << addr.function
        << " }";
     return ss.str();
 }
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
 
 std::string to_string(const ze_device_uuid_t& uuid) {
     std::string str{};
@@ -724,6 +737,63 @@ std::string to_string(const zes_fabric_port_state_t& state) {
     ss << " }";
 
     return ss.str();
+}
+
+bool is_arc_card(device_family family) {
+    return family == ccl::device_family::family4 || family == ccl::device_family::family5 ||
+           family == ccl::device_family::family6 || family == ccl::device_family::family7 ||
+           ccl::global_data::env().sycl_force_pcie;
+}
+
+bool should_disable_rdma(const ze_device_handle_t& device) {
+    static bool checked = false;
+    static bool disable_rdma = false;
+
+    // If we've already made a determination, return the cached result
+    if (checked) {
+        return disable_rdma;
+    }
+
+    ze_device_properties_t dev_props = ccl::ze::default_device_props;
+    ZE_CALL(zeDeviceGetProperties, (device, &dev_props));
+    LOG_DEBUG("Device ID: 0x", std::hex, dev_props.deviceId, std::dec);
+
+    switch (dev_props.deviceId) {
+        // Disable RDMA for some B-series cards
+        case 0xE20B: // DT6
+        case 0xE20C: // DT7
+        case 0xE20D: // DT8
+        case 0xE210: // DT6+
+        case 0xE212: // WKS-B93
+        case 0xE220: // DT1+
+        case 0xE221: // DT2
+        case 0xE223: // DT1+ WKS
+            LOG_DEBUG("Disabling RDMA for device ID: 0x", std::hex, dev_props.deviceId, std::dec);
+            disable_rdma = true;
+            break;
+
+        // Don't disable RDMA for these devices
+        case 0xE211: // DT6-
+        case 0xE216: // NEX2
+        case 0xE222: // DT3-
+            LOG_DEBUG(
+                "Not disabling RDMA for device ID: 0x", std::hex, dev_props.deviceId, std::dec);
+            disable_rdma = false;
+            break;
+
+        default:
+            // For unknown device IDs, do not disable RDMA
+            LOG_DEBUG("Unknown device ID: 0x",
+                      std::hex,
+                      dev_props.deviceId,
+                      std::dec,
+                      " - do not disable RDMA");
+            disable_rdma = false;
+            break;
+    }
+
+    checked = true;
+    return disable_rdma;
 }
 
 } // namespace ze

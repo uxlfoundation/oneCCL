@@ -66,13 +66,13 @@ void add_scaleout(ccl_sched* sched,
 bool is_queue_in_order(const ccl_stream* s);
 #endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 
-bool is_allgatherv_inplace(const void* send_buf,
-                           const size_t send_count,
-                           const void* recv_buf,
-                           const size_t* recv_counts,
-                           const size_t dtype_size,
-                           const size_t rank,
-                           const size_t comm_size);
+CCL_API bool is_allgatherv_inplace(const void* send_buf,
+                                   const size_t send_count,
+                                   const void* recv_buf,
+                                   const size_t* recv_counts,
+                                   const size_t dtype_size,
+                                   const size_t rank,
+                                   const size_t comm_size);
 bool is_reduce_scatter_inplace(const void* send_buf,
                                const void* recv_buf,
                                const size_t recv_count,
