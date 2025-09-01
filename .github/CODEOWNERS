@@ -1,10 +1,10 @@
 # Documentation owners and reviewers
-doc/        @Maria1Petrova @ranukund @maciekpac
+doc/        @Maria1Petrova @maciekpac
 *.md        @Maria1Petrova @maciekpac
 man/        @nikitaxgusev @srirajpaul @maciekpac
 
 # TTP files
-third-party*    @Maria1Petrova
+third-party*    @Maria1Petrova @maciekpac
 
 # Tests & examples
 tests/    @nikitaxgusev @srirajpaul
