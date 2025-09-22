@@ -175,7 +175,7 @@ void ccl_comm::init(int comm_id,
     }
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-    for (int i = 0; i < 9; i++)
+    for (int i = 0; i < ARC_MAX_NUM + 1; i++)
         pattern_counter[i] = 0xa770;
 
     if (device_ptr != NULL) {

@@ -21,18 +21,18 @@
 #include "coll/algorithms/utils/transmit/transmit.hpp"
 
 template <typename T,
-          int NRanks,
           template <typename, int>
           class Proto,
-          template <typename, int, template <typename, int> class, int>
+          template <typename, template <typename, int> class, int>
           class Transmit,
           int SubGroupSize = 16>
-struct AllReduce : public Transmit<T, NRanks, Proto, SubGroupSize> {
-    using Super = Transmit<T, NRanks, Proto, SubGroupSize>;
+struct AllReduce : public Transmit<T, Proto, SubGroupSize> {
+    using Super = Transmit<T, Proto, SubGroupSize>;
     using message_t = typename Super::message_t;
     constexpr static int wireCapacity = Super::wireCapacity;
 
-    AllReduce(T* input,
+    AllReduce(int nranks,
+              T* input,
               size_t nelems,
               int rank,
               uint32_t seqNo,
@@ -41,16 +41,17 @@ struct AllReduce : public Transmit<T, NRanks, Proto, SubGroupSize> {
               T* const peerBuf0[],
               T* const peerBuf1[],
               bool p2p)
-            : Transmit<T, NRanks, Proto, SubGroupSize>(input,
-                                                       scatterBuf,
-                                                       gatherBuf,
-                                                       peerBuf0,
-                                                       peerBuf1,
-                                                       calcWorkSize(input, nelems * sizeof(T)),
-                                                       rank,
-                                                       seqNo,
-                                                       p2p),
-              workSize(calcWorkSize(input, nelems * sizeof(T))) {}
+            : Transmit<T, Proto, SubGroupSize>(nranks,
+                                               input,
+                                               scatterBuf,
+                                               gatherBuf,
+                                               peerBuf0,
+                                               peerBuf1,
+                                               calcWorkSize(input, nelems * sizeof(T), nranks),
+                                               rank,
+                                               seqNo,
+                                               p2p),
+              workSize(calcWorkSize(input, nelems * sizeof(T), nranks)) {}
 
     static int scatterVerify(uint32_t* host, int rank, uint32_t flag, size_t nWorkElemsInInt);
     static int stage2Verify(T* host, int rank, uint32_t flag, size_t nWorkElemsInInt);
@@ -80,7 +81,8 @@ struct AllReduce : public Transmit<T, NRanks, Proto, SubGroupSize> {
         return sycl::nd_range<1>(actualSS * wirePerSS * w * SubGroupSize, nThreads * SubGroupSize);
     }
 
-    static sycl::event launch(T* input,
+    static sycl::event launch(int nranks,
+                              T* input,
                               T* ipcbuf0,
                               T* ipcbuf1,
                               T* const peerbuf0[],
@@ -92,7 +94,8 @@ struct AllReduce : public Transmit<T, NRanks, Proto, SubGroupSize> {
                               bool p2p,
                               bool& done) {
         sycl::event e;
-        AllReduce offload(input, nelems, rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
+        AllReduce offload(
+            nranks, input, nelems, rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
         if (offload.workSize == 0) {
             done = false;
             return e;
@@ -134,7 +137,7 @@ struct AllReduce : public Transmit<T, NRanks, Proto, SubGroupSize> {
 
 private:
     // TODO: buffer plan and start point calc
-    static size_t calcWorkSize(T* input, size_t size) {
+    static size_t calcWorkSize(T* input, size_t size, int NRanks) {
         // Input must be message size align
         if ((uintptr_t)input % sizeof(message_t) != 0)
             throw std::logic_error("We only support aligned pointer for now");

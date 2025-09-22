@@ -45,7 +45,7 @@ ccl::event recv_ll(const void *recv_buf,
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
 
-    auto lambda = [&]<typename T, int NRanks, template <typename, int> class Proto>() {
+    auto lambda = [&]<typename T, template <typename, int> class Proto>(int NRanks) {
         T *peerbuf0[NRanks];
         T *peerbuf1[NRanks];
         for (int i = 0; i < NRanks; i++) {
@@ -54,18 +54,19 @@ ccl::event recv_ll(const void *recv_buf,
         }
         T *ipcbuf0 = (T *)get_tmp_buf(0, comm);
         T *ipcbuf1 = (T *)get_tmp_buf(1, comm);
-        sycl::event e = Recv<T, NRanks, Proto, RingTransmit>::launch((T *)recv_buf,
-                                                                     ipcbuf0,
-                                                                     ipcbuf1,
-                                                                     peerbuf0,
-                                                                     peerbuf1,
-                                                                     recv_count,
-                                                                     peer_rank - 1,
-                                                                     pattern,
-                                                                     q,
-                                                                     dep_events,
-                                                                     p2p,
-                                                                     done);
+        sycl::event e = Recv<T, Proto, RingTransmit>::launch(NRanks,
+                                                             (T *)recv_buf,
+                                                             ipcbuf0,
+                                                             ipcbuf1,
+                                                             peerbuf0,
+                                                             peerbuf1,
+                                                             recv_count,
+                                                             peer_rank - 1,
+                                                             pattern,
+                                                             q,
+                                                             dep_events,
+                                                             p2p,
+                                                             done);
         // update pattern
         comm->update_rt_pattern(pattern_type::recv, peer_rank, pattern);
         return e;
@@ -73,11 +74,11 @@ ccl::event recv_ll(const void *recv_buf,
 
     if (recv_size <= ccl::global_data::env().sycl_allgatherv_ll_threshold) {
         // small ring with LL
-        sycl_e = invoke_pcie<Rt64_PCIE>(lambda, comm, dtype);
+        sycl_e = invoke_pcie_type<Rt64_PCIE>(lambda, comm_size, dtype);
     }
     else {
         // simple ring with LL256
-        sycl_e = invoke_pcie<Rt64_128_PCIE>(lambda, comm, dtype);
+        sycl_e = invoke_pcie_type<Rt64_128_PCIE>(lambda, comm_size, dtype);
     }
 
     return ccl::event::create_from_native(sycl_e);

@@ -21,19 +21,19 @@
 #include "coll/algorithms/utils/transmit/transmit.hpp"
 
 template <typename T,
-          int NRanks,
           template <typename, int>
           class Proto,
-          template <typename, int, template <typename, int> class, int>
+          template <typename, template <typename, int> class, int>
           class Transmit,
           int SubGroupSize = 16>
-struct AllGather : public Transmit<T, NRanks, Proto, SubGroupSize> {
-    using Super = Transmit<T, NRanks, Proto, SubGroupSize>;
+struct AllGather : public Transmit<T, Proto, SubGroupSize> {
+    using Super = Transmit<T, Proto, SubGroupSize>;
     using message_t = typename Super::message_t;
     constexpr static int wireCapacity = Super::wireCapacity;
     using Super::runAllgather;
 
-    AllGather(T* input,
+    AllGather(int nranks,
+              T* input,
               T* output,
               size_t nelems,
               int rank,
@@ -43,16 +43,17 @@ struct AllGather : public Transmit<T, NRanks, Proto, SubGroupSize> {
               T* const peerBuf0[],
               T* const peerBuf1[],
               bool p2p)
-            : Transmit<T, NRanks, Proto, SubGroupSize>(input,
-                                                       output,
-                                                       scatterBuf,
-                                                       gatherBuf,
-                                                       peerBuf0,
-                                                       peerBuf1,
-                                                       calcWorkSize(input, output, nelems * sizeof(T)),
-                                                       rank,
-                                                       seqNo,
-                                                       p2p),
+            : Transmit<T, Proto, SubGroupSize>(nranks,
+                                               input,
+                                               output,
+                                               scatterBuf,
+                                               gatherBuf,
+                                               peerBuf0,
+                                               peerBuf1,
+                                               calcWorkSize(input, output, nelems * sizeof(T)),
+                                               rank,
+                                               seqNo,
+                                               p2p),
               workSize(calcWorkSize(input, output, nelems * sizeof(T))) {}
 
     sycl::nd_range<1> getLaunchParam(uint32_t& updateSeqNo) const {
@@ -79,7 +80,8 @@ struct AllGather : public Transmit<T, NRanks, Proto, SubGroupSize> {
         return sycl::nd_range<1>(actualSS * wirePerSS * w * SubGroupSize, nThreads * SubGroupSize);
     }
 
-    static sycl::event launch(T* input,
+    static sycl::event launch(int nranks,
+                              T* input,
                               T* output,
                               T* ipcbuf0,
                               T* ipcbuf1,
@@ -92,7 +94,7 @@ struct AllGather : public Transmit<T, NRanks, Proto, SubGroupSize> {
                               bool p2p,
                               bool& done) {
         sycl::event e;
-        AllGather offload(input, output, nelems, rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
+        AllGather offload(nranks, input, output, nelems, rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
         if (offload.workSize == 0) {
             done = false;
             return e;

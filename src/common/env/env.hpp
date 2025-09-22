@@ -246,6 +246,8 @@ public:
     size_t sycl_allgatherv_scaleout_threshold;
     size_t sycl_allgatherv_ll_threshold;
 
+    bool sycl_enable_arc_alltoall_ll;
+
     bool enable_sycl_kernels;
 
     bool sycl_ccl_barrier;
@@ -264,6 +266,7 @@ public:
     ssize_t sycl_pipeline_chunk_size;
     bool sycl_enable_pipeline_gpu_rdma;
     bool sycl_enable_direct_gpu_rdma;
+    int sycl_pipeline_gpu_rdma;
     bool sycl_sub_communicator;
     bool sycl_force_pcie;
     ccl::utils::alloc_mode sycl_scaleout_buf_alloc_mode;

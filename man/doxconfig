@@ -1,5 +1,5 @@
 PROJECT_NAME           = "Intel® oneAPI Collective Communications Library"
-PROJECT_NUMBER         = "2021.15.4"
+PROJECT_NUMBER         = "2021.15.5"
 
 INPUT = ../src/common/env/vars.hpp ../src/common/env/vars_experimental.hpp
 

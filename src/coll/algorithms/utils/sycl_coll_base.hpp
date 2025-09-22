@@ -640,16 +640,16 @@ auto invoke_esimd_function(L lambda, int world) {
 }
 
 // PCIe LL256 algorithms
-template <int NRanks, template <typename, int> class Proto, typename L>
-sycl::event invoke_pcie_type(L lambda, ccl::datatype dtype) {
+template <template <typename, int> class Proto, typename L>
+sycl::event invoke_pcie_type(L lambda, int NRanks, ccl::datatype dtype) {
     sycl::event e;
     switch (dtype) {
-        case ccl::datatype::int8: e = lambda.template operator()<int8_t, NRanks, Proto>(); break;
-        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t, NRanks, Proto>(); break;
-        case ccl::datatype::int16: e = lambda.template operator()<short, NRanks, Proto>(); break;
+        case ccl::datatype::int8: e = lambda.template operator()<int8_t, Proto>(NRanks); break;
+        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t, Proto>(NRanks); break;
+        case ccl::datatype::int16: e = lambda.template operator()<short, Proto>(NRanks); break;
         case ccl::datatype::float16:
 #ifdef CCL_SYCL_VEC_SUPPORT_FP16
-            e = lambda.template operator()<sycl::half, NRanks, Proto>();
+            e = lambda.template operator()<sycl::half, Proto>(NRanks);
 #else
             CCL_THROW(
                 "The Sycl compilers do not support Sycl::vec kernels with float16, please switch to ESIMD kernels, or build oneCCL with the latest version of cmake and oneAPI compiler");
@@ -657,38 +657,19 @@ sycl::event invoke_pcie_type(L lambda, ccl::datatype dtype) {
             break;
         case ccl::datatype::bfloat16:
 #ifdef CCL_SYCL_VEC_SUPPORT_BF16
-            e = lambda.template operator()<sycl::ext::oneapi::bfloat16, NRanks, Proto>();
+            e = lambda.template operator()<sycl::ext::oneapi::bfloat16, Proto>(NRanks);
 #else
             CCL_THROW(
                 "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
 #endif
             break;
-        case ccl::datatype::float32: e = lambda.template operator()<float, NRanks, Proto>(); break;
-        case ccl::datatype::int32: e = lambda.template operator()<int, NRanks, Proto>(); break;
-        case ccl::datatype::uint32:
-            e = lambda.template operator()<uint32_t, NRanks, Proto>();
-            break;
-        case ccl::datatype::int64: e = lambda.template operator()<int64_t, NRanks, Proto>(); break;
-        case ccl::datatype::uint64:
-            e = lambda.template operator()<uint64_t, NRanks, Proto>();
-            break;
-        case ccl::datatype::float64: e = lambda.template operator()<double, NRanks, Proto>(); break;
+        case ccl::datatype::float32: e = lambda.template operator()<float, Proto>(NRanks); break;
+        case ccl::datatype::int32: e = lambda.template operator()<int, Proto>(NRanks); break;
+        case ccl::datatype::uint32: e = lambda.template operator()<uint32_t, Proto>(NRanks); break;
+        case ccl::datatype::int64: e = lambda.template operator()<int64_t, Proto>(NRanks); break;
+        case ccl::datatype::uint64: e = lambda.template operator()<uint64_t, Proto>(NRanks); break;
+        case ccl::datatype::float64: e = lambda.template operator()<double, Proto>(NRanks); break;
         default: CCL_THROW("unsupported datatype ", dtype); break;
-    }
-    return e;
-}
-
-template <template <typename, int> class Proto, typename L>
-sycl::event invoke_pcie(L lambda, ccl_comm *comm, ccl::datatype dtype) {
-    sycl::event e;
-    switch (comm->size()) {
-        case 1: e = invoke_pcie_type<1, Proto>(lambda, dtype); break;
-        case 2: e = invoke_pcie_type<2, Proto>(lambda, dtype); break;
-        case 3: e = invoke_pcie_type<3, Proto>(lambda, dtype); break;
-        case 4: e = invoke_pcie_type<4, Proto>(lambda, dtype); break;
-        case 6: e = invoke_pcie_type<6, Proto>(lambda, dtype); break;
-        case 8: e = invoke_pcie_type<8, Proto>(lambda, dtype); break;
-        default: CCL_THROW("unsupported comm size ", comm->size()); break;
     }
     return e;
 }
@@ -764,6 +745,8 @@ sycl::event sycl_average(sycl::queue &q,
                          const size_t total_ranks,
                          ccl::datatype dtype,
                          std::vector<sycl::event> &dep_events);
+
+bool check_mpi_supports_rdma();
 
 sycl::event pt2pt_pre_sync(sycl::queue &q,
                            const std::vector<sycl::event> &deps,

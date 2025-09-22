@@ -79,13 +79,10 @@ ccl::event reduce_scatter_scaleout_sycl_simple(sycl::queue& q,
         });
     }
     else if (!is_cpu_buffers) {
-        // TODO: check if I_MPI_OFFLOAD is set, then let the scaleout allreduce go through.
-        // LOG_WARN("copy_to_host=false with a GPU buffer. "
-        //          "TODO: make sure I_MPI_OFFLOAD is set or GPU RDMA is enabled");
-        // TODO: determine whether we want to fallback or not. For now, no.
-        // done = false;
-        // ccl::event e;
-        // return e;
+        if (!check_mpi_supports_rdma()) {
+            LOG_WARN("copy_to_host=false with a GPU buffer. "
+                     "make sure MPI GPU RDMA is enabled");
+        }
     }
 
 #ifdef PRINT_TIMING

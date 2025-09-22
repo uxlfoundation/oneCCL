@@ -45,6 +45,8 @@
 #include "topology/topo_manager.hpp"
 #include "unordered_coll/unordered_coll.hpp"
 
+#define ARC_MAX_NUM (32)
+
 enum class pattern_type { collective, send, recv };
 
 // index = local_rank, value = global_rank
@@ -707,25 +709,31 @@ public:
     // YYY: is the source rank of the pt2pt
     uint32_t get_rt_pattern(pattern_type type, int peer_rank) {
         uint16_t counter;
+        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+        const int mask = (1 << (16 - 1 - pof2)) - 1;
         if (type == pattern_type::collective) {
-            counter = pattern_counter[8];
-            counter = counter & 0x0FFF | 0x8000;
+            counter = pattern_counter[ARC_MAX_NUM];
+            counter = counter & mask | 0x8000;
         }
         else if (type == pattern_type::send || type == pattern_type::recv) {
+            CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
             counter = pattern_counter[peer_rank];
             int src_rank = type == pattern_type::send ? comm_rank : peer_rank;
-            counter = counter & 0x0FFF | src_rank << 12;
+            counter = counter & mask | src_rank << (16 - 1 - pof2);
         }
 
         return global_current_id << 16 | counter;
     }
 
     void update_rt_pattern(pattern_type type, int peer_rank, uint32_t pattern) {
-        uint16_t counter = pattern & 0x0FFF;
+        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+        const int mask = (1 << (16 - 1 - pof2)) - 1;
+        uint16_t counter = pattern & mask;
         if (type == pattern_type::collective) {
-            pattern_counter[8] = counter;
+            pattern_counter[ARC_MAX_NUM] = counter;
         }
         else if (type == pattern_type::send || type == pattern_type::recv) {
+            CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
             pattern_counter[peer_rank] = counter;
         }
     }
@@ -780,7 +788,7 @@ private:
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     std::shared_ptr<ccl::ze::fd_manager> fd_manager;
     void init_ipc_exchange_mode(std::shared_ptr<ccl_comm> comm);
-    uint16_t pattern_counter[9];
+    uint16_t pattern_counter[ARC_MAX_NUM + 1];
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     ccl_sched_id_t next_sched_id_internal{};

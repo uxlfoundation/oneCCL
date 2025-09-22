@@ -13,10 +13,12 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#include "atl/mpi/atl_mpi_ctx.hpp"
 #include "coll/coll_util.hpp"
 #include "comm/comm.hpp"
 #include "sched/entry/factory/entry_factory.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/utils/transmit/transmit.hpp"
 
 // sync_ptrs is used for counting in local kernel_barrier
 static ccl_kernel_barrier_data kernel_barrier_data;
@@ -277,7 +279,16 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             // WA : use smaller tmp buffer for client GPUs
             if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
                 ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
-                ccl::global_data::env().sycl_tmp_buf_size = 3 * 16 * 1024 * 1024;
+                // ringSize is RingTransmit's  static variable
+                // the ringSize is  regardless of protocol, and
+                // ringSize is per peer rank, and it is rounded up to 2MB
+                ccl::global_data::env().sycl_tmp_buf_size =
+                    3 * ((ccl::global_data::get().get_local_proc_count() *
+                              RingTransmit<int, Rt64_128_PCIE>::ringSize +
+                          2097152 - 1) /
+                         2097152 * 2097152);
+                LOG_DEBUG("Allocate LL ring buffer of size: ",
+                          ccl::global_data::env().sycl_tmp_buf_size);
             }
             const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
             const size_t tmp_buf_size_per_rank_orig =
@@ -419,7 +430,7 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             for (int i = 0; i < pair_comm->size(); i++) {
                 comm_large_tmp_bufs.remote_pair_tmp_bufs[1][i] =
                     (char *)(comm_large_tmp_bufs.remote_pair_tmp_bufs[0][i]) + tmp_buf_size;
-                comm_large_tmp_bufs.remote_even_tmp_bufs[2][i] =
+                comm_large_tmp_bufs.remote_pair_tmp_bufs[2][i] =
                     (char *)comm_large_tmp_bufs.remote_pair_tmp_bufs[1][i] + tmp_buf_size;
             }
 
@@ -489,7 +500,11 @@ void coll_initExt(ccl_comm *comm,
             // WA : use smaller tmp buffer for client GPUs
             if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
                 ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
-                ccl::global_data::env().sycl_tmp_buf_size = 3 * 16 * 1024 * 1024;
+                ccl::global_data::env().sycl_tmp_buf_size =
+                    3 * ((ccl::global_data::get().get_local_proc_count() *
+                              RingTransmit<int, Rt64_128_PCIE>::ringSize +
+                          2097152 - 1) /
+                         2097152 * 2097152);
             }
             const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
             const size_t tmp_buf_size_per_rank_orig =
@@ -698,6 +713,40 @@ sycl::event sycl_average(sycl::queue &q,
         }
     };
     return invoke_scaleout(lambda, dtype);
+}
+
+bool check_mpi_supports_rdma() {
+    auto lib_attr = atl_mpi_ctx::get_lib_attr();
+    if (lib_attr.type == atl_mpi_ctx::ATL_MPI_LIB_IMPI && lib_attr.hmem == 1) {
+        const char *env_val = getenv("I_MPI_OFFLOAD");
+        int offload = 0;
+        if (env_val != nullptr)
+            offload = atoi(env_val);
+
+        if (offload == 0) {
+            LOG_INFO("Intel MPI does not support GPU RDMA");
+            return false;
+        }
+        return true;
+    }
+    else if (lib_attr.type == atl_mpi_ctx::ATL_MPI_LIB_MPICH && lib_attr.hmem == 1) {
+        const char *env_val = getenv("MPIR_CVAR_CH4_OFI_ENABLE_HMEM");
+        int gpu_rdma = 0;
+        if (env_val != nullptr)
+            gpu_rdma = atoi(env_val);
+
+        env_val = getenv("MPIR_CVAR_CH4_OFI_ENABLE_GPU_PIPELINE");
+        int gpu_pipeline = 0;
+        if (env_val != nullptr)
+            gpu_pipeline = atoi(env_val);
+
+        if (!gpu_rdma && !gpu_pipeline) {
+            LOG_INFO("MPICH does not support GPU RDMA");
+            return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 sycl::event pt2pt_pre_sync(sycl::queue &q,

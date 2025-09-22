@@ -21,19 +21,19 @@
 #include "coll/algorithms/utils/transmit/transmit.hpp"
 
 template <typename T,
-          int NRanks,
           template <typename, int>
           class Proto,
-          template <typename, int, template <typename, int> class, int>
+          template <typename, template <typename, int> class, int>
           class Transmit,
           int SubGroupSize = 16>
-struct Send : public Transmit<T, NRanks, Proto, SubGroupSize> {
-    using Super = Transmit<T, NRanks, Proto, SubGroupSize>;
+struct Send : public Transmit<T, Proto, SubGroupSize> {
+    using Super = Transmit<T, Proto, SubGroupSize>;
     using message_t = typename Super::message_t;
     constexpr static int wireCapacity = Super::wireCapacity;
     using Super::runSend;
 
-    Send(T* input,
+    Send(int nranks,
+         T* input,
          size_t nelems,
          int rank,
          uint32_t seqNo,
@@ -42,15 +42,16 @@ struct Send : public Transmit<T, NRanks, Proto, SubGroupSize> {
          T* const peerBuf0[],
          T* const peerBuf1[],
          bool p2p)
-            : Transmit<T, NRanks, Proto, SubGroupSize>(input,
-                                                       scatterBuf,
-                                                       gatherBuf,
-                                                       peerBuf0,
-                                                       peerBuf1,
-                                                       calcWorkSize(input, nelems * sizeof(T)),
-                                                       rank,
-                                                       seqNo,
-                                                       p2p),
+            : Transmit<T, Proto, SubGroupSize>(nranks,
+                                               input,
+                                               scatterBuf,
+                                               gatherBuf,
+                                               peerBuf0,
+                                               peerBuf1,
+                                               calcWorkSize(input, nelems * sizeof(T)),
+                                               rank,
+                                               seqNo,
+                                               p2p),
               workSize(calcWorkSize(input, nelems * sizeof(T))) {}
 
     sycl::nd_range<1> getLaunchParam(uint32_t& updateSeqNo) const {
@@ -77,7 +78,8 @@ struct Send : public Transmit<T, NRanks, Proto, SubGroupSize> {
         return sycl::nd_range<1>(actualSS * wirePerSS * w * SubGroupSize, nThreads * SubGroupSize);
     }
 
-    static sycl::event launch(T* input,
+    static sycl::event launch(int nranks,
+                              T* input,
                               T* ipcbuf0,
                               T* ipcbuf1,
                               T* const peerbuf0[],
@@ -90,7 +92,8 @@ struct Send : public Transmit<T, NRanks, Proto, SubGroupSize> {
                               bool p2p,
                               bool& done) {
         sycl::event e;
-        Send offload(input, nelems, peer_rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
+        Send offload(
+            nranks, input, nelems, peer_rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
         if (offload.workSize == 0) {
             done = false;
             return e;

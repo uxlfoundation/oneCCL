@@ -87,6 +87,7 @@ static inline void recv_reduce_send(sycl::sub_group &sg,
 }
 
 static inline void recv_reduce_copy_send(sycl::sub_group &sg,
+                                         char *sendbuf,
                                          char *dst,
                                          char *next,
                                          char *src,
@@ -100,8 +101,8 @@ static inline void recv_reduce_copy_send(sycl::sub_group &sg,
 
     ll256_recv_data(data, src + lid * sz, sg, lid, pattern);
 
-    message_t *dst_buf = (message_t *)dst;
-    data = sum_kernel(dst_buf[lid], data, dtype);
+    message_t *send_buf = (message_t *)sendbuf;
+    data = sum_kernel(send_buf[lid], data, dtype);
 
     if (lid < req_workitems) {
         LscStoreUnCached(dst + lid * sz, data);
@@ -132,9 +133,6 @@ sycl::event arc_ll256_allreduce(const void *src,
     size_t dt_sz = ccl_dtype.size();
     char *recv_buf = static_cast<char *>(dst);
     char *send_buf = static_cast<char *>(const_cast<void *>(src));
-
-    if (send_buf != recv_buf)
-        q.memcpy(recv_buf, send_buf, dt_sz * count);
 
     /*
      * Intel(R) Arc(TM) A770 Graphics:
@@ -185,7 +183,7 @@ sycl::event arc_ll256_allreduce(const void *src,
 
         int next_rank = (local_world_rank + 1) % local_world_size;
 
-        char *local_peer_bufs[ARC_NUM];
+        char *local_peer_bufs[ARC_MAX_NUM];
 #if 0
         auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
         for (int i = 0; i < local_world_size; i++) {
@@ -328,7 +326,7 @@ sycl::event arc_ll256_allreduce(const void *src,
                             offset_with_pattern = base_with_pattern + idx * chunk_with_pattern;
 
                             recv_reduce_send(sg,
-                                             recv_buf + offset,
+                                             send_buf + offset,
                                              next + offset_with_pattern,
                                              local_tmp_buf + offset_with_pattern,
                                              sg_lid,
@@ -344,6 +342,7 @@ sycl::event arc_ll256_allreduce(const void *src,
                             offset_with_pattern = base_with_pattern + idx * chunk_with_pattern;
 
                             recv_reduce_copy_send(sg,
+                                                  send_buf + offset,
                                                   recv_buf + offset,
                                                   next + GATHER_BUF_OFFSET + offset_with_pattern,
                                                   local_tmp_buf + offset_with_pattern,

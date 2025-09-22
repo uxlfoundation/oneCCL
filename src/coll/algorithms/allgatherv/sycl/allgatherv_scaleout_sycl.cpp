@@ -72,47 +72,9 @@ ccl::event allgatherv_scaleout_sycl_direct(sycl::queue& q,
         sycl_deps.push_back(ev);
     }
     else if (!is_cpu_buffers) {
-        auto lib_attr = atl_mpi_ctx::get_lib_attr();
-        if (lib_attr.type == atl_mpi_ctx::ATL_MPI_LIB_IMPI && lib_attr.hmem == 1) {
-            const char* env_val = getenv("I_MPI_OFFLOAD");
-            int offload = 0;
-            if (env_val != nullptr)
-                offload = atoi(env_val);
-
-            if (offload == 0) {
-                LOG_INFO("copy_to_host=false with a GPU buffer. "
-                         "make sure I_MPI_OFFLOAD is set or GPU RDMA is enabled");
-                done = false;
-                ccl::event e;
-                return e;
-            }
-        }
-        else if (lib_attr.type == atl_mpi_ctx::ATL_MPI_LIB_MPICH && lib_attr.hmem == 1) {
-            const char* env_val = getenv("MPIR_CVAR_CH4_OFI_ENABLE_HMEM");
-            int gpu_rdma = 0;
-            if (env_val != nullptr)
-                gpu_rdma = atoi(env_val);
-
-            env_val = getenv("MPIR_CVAR_CH4_OFI_ENABLE_GPU_PIPELINE");
-            int gpu_pipeline = 0;
-            if (env_val != nullptr)
-                gpu_pipeline = atoi(env_val);
-
-            if (!gpu_rdma && !gpu_pipeline) {
-                LOG_INFO(
-                    "copy_to_host=false with a GPU buffer. "
-                    "make sure MPIR_CVAR_CH4_OFI_ENABLE_HMEM or MPIR_CVAR_CH4_OFI_ENABLE_GPU_PIPELINE are set or GPU RDMA is enabled");
-                done = false;
-                ccl::event e;
-                return e;
-            }
-        }
-        else {
+        if (!check_mpi_supports_rdma()) {
             LOG_INFO("copy_to_host=false with a GPU buffer. "
-                     "no transport with GPU RDMA enabled was detected");
-            done = false;
-            ccl::event e;
-            return e;
+                     "make sure MPI GPU RDMA is enabled");
         }
     }
 

@@ -36,7 +36,7 @@ static inline void sbarrier_wait_compat(bool p2p) {
 #endif
 }
 
-template <typename T, int NRanks, template <typename, int> class Proto, int SubGroupSize = 16>
+template <typename T, template <typename, int> class Proto, int SubGroupSize = 16>
 class RingTransmit : public Proto<T, SubGroupSize> {
 protected:
     static constexpr int parallel_sg = 1;
@@ -71,7 +71,8 @@ public:
     typedef T (*ringPtr)[nSlot][maxLaunch][wireTransElems];
 
 public:
-    RingTransmit(T* input,
+    RingTransmit(int nranks,
+                 T* input,
                  T* scatterBuf,
                  T* gatherBuf,
                  T* const peerBuf0[],
@@ -80,7 +81,8 @@ public:
                  int rank,
                  uint32_t seqNo, // Serve as flag for checking
                  bool p2p)
-            : workElems(workSize / sizeof(T)),
+            : NRanks(nranks),
+              workElems(workSize / sizeof(T)),
               rank(rank),
               seqNo(seqNo),
               p2p(p2p) {
@@ -95,7 +97,8 @@ public:
         localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
     }
 
-    RingTransmit(T* input,
+    RingTransmit(int nranks,
+                 T* input,
                  T* output,
                  T* scatterBuf,
                  T* gatherBuf,
@@ -105,7 +108,8 @@ public:
                  int rank,
                  uint32_t seqNo, // Serve as flag for checking
                  bool p2p)
-            : workElems(workSize / sizeof(T)),
+            : NRanks(nranks),
+              workElems(workSize / sizeof(T)),
               rank(rank),
               seqNo(seqNo),
               p2p(p2p) {
@@ -483,6 +487,7 @@ protected:
     T* ingress;
     T* egress;
 
+    int NRanks;
     ssize_t workElems;
     int rank;
     uint32_t seqNo;

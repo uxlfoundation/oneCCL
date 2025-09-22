@@ -44,7 +44,7 @@ ccl::event allreduce_ll_ring(const void *src,
     bool p2p = node_comm->get_topo_manager().has_p2p_access();
     uint32_t pattern = comm->get_rt_pattern(pattern_type::collective, -1);
 
-    auto lambda = [&]<typename T, int NRanks, template <typename, int> class Proto>() {
+    auto lambda = [&]<typename T, template <typename, int> class Proto>(int NRanks) {
         T *peerbuf0[NRanks];
         T *peerbuf1[NRanks];
         for (int i = 0; i < NRanks; i++) {
@@ -53,28 +53,29 @@ ccl::event allreduce_ll_ring(const void *src,
         }
         T *ipcbuf0 = (T *)get_tmp_buf(0, comm);
         T *ipcbuf1 = (T *)get_tmp_buf(1, comm);
-        sycl::event e = AllReduce<T, NRanks, Proto, RingTransmit>::launch((T *)dst,
-                                                                          ipcbuf0,
-                                                                          ipcbuf1,
-                                                                          peerbuf0,
-                                                                          peerbuf1,
-                                                                          count,
-                                                                          comm_rank,
-                                                                          pattern,
-                                                                          q,
-                                                                          p2p,
-                                                                          done);
+        sycl::event e = AllReduce<T, Proto, RingTransmit>::launch(NRanks,
+                                                                  (T *)dst,
+                                                                  ipcbuf0,
+                                                                  ipcbuf1,
+                                                                  peerbuf0,
+                                                                  peerbuf1,
+                                                                  count,
+                                                                  comm_rank,
+                                                                  pattern,
+                                                                  q,
+                                                                  p2p,
+                                                                  done);
         comm->update_rt_pattern(pattern_type::collective, -1, pattern);
         return e;
     };
 
     if (count * dt_sz <= ccl::global_data::env().sycl_allreduce_ll_threshold) {
         // small ring with LL
-        sycl_e = invoke_pcie<Rt64_PCIE>(lambda, comm, dtype);
+        sycl_e = invoke_pcie_type<Rt64_PCIE>(lambda, comm_size, dtype);
     }
     else {
         // simple ring with LL256
-        sycl_e = invoke_pcie<Rt64_128_PCIE>(lambda, comm, dtype);
+        sycl_e = invoke_pcie_type<Rt64_128_PCIE>(lambda, comm_size, dtype);
     }
 
     if (reduction == ccl::reduction::avg) {

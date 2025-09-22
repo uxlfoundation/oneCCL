@@ -53,20 +53,20 @@ static void calculate_chunk_sizes(size_t total_send_size,
                recv_chunk_size <= max_pipeline_chunk_size);
 }
 
-// one-way RDMA
-sycl::event pipe_sendrecv_rdma(sycl::queue& q,
-                               const void* send_buf,
-                               size_t send_count,
-                               int dest,
-                               int sendtag,
-                               void* recv_buf,
-                               size_t recv_count,
-                               int src,
-                               int recvtag,
-                               ccl::datatype dtype,
-                               size_t nchunks,
-                               ccl_comm* comm,
-                               const ccl::vector_class<sycl::event>& deps) {
+// one-way RDMA (send side)
+sycl::event pipe_sendrecv_rdma_oneway_send(sycl::queue& q,
+                                           const void* send_buf,
+                                           size_t send_count,
+                                           int dest,
+                                           int sendtag,
+                                           void* recv_buf,
+                                           size_t recv_count,
+                                           int src,
+                                           int recvtag,
+                                           ccl::datatype dtype,
+                                           size_t nchunks,
+                                           ccl_comm* comm,
+                                           const ccl::vector_class<sycl::event>& deps) {
     sycl::event e;
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
@@ -189,6 +189,186 @@ sycl::event pipe_sendrecv_rdma(sycl::queue& q,
     });
 
     return recv_copy_e;
+}
+
+// one-way RDMA (recv side)
+sycl::event pipe_sendrecv_rdma_oneway_recv(sycl::queue& q,
+                                           const void* send_buf,
+                                           size_t send_count,
+                                           int dest,
+                                           int sendtag,
+                                           void* recv_buf,
+                                           size_t recv_count,
+                                           int src,
+                                           int recvtag,
+                                           ccl::datatype dtype,
+                                           size_t nchunks,
+                                           ccl_comm* comm,
+                                           const ccl::vector_class<sycl::event>& deps) {
+    sycl::event e;
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    size_t total_send_size = send_count * ccl_dtype.size();
+    size_t total_recv_size = recv_count * ccl_dtype.size();
+    size_t send_chunk_size, recv_chunk_size;
+
+    calculate_chunk_sizes(total_send_size,
+                          total_recv_size,
+                          ccl_dtype.size(),
+                          nchunks,
+                          send_chunk_size,
+                          recv_chunk_size);
+
+    // get pipe_chunks
+    void** send_pipe_chunks = comm->get_scaleout_send_pipeline_bufs(num_chunk_buffs);
+
+    sycl::queue q_scopy = q; //get_lce_queue(q, 2);
+    sycl::queue q_rcopy = q; //get_lce_queue(q, 3);
+
+    int ep_idx = 0;
+    sycl::event send_e, recv_e, send_done_e, recv_done_e, send_copy_e;
+
+    // start pipeline
+    int idx = 0;
+    int chunk_index = 0, prev_chunk_index = 0;
+    int next_chunk_index = 1;
+    int send_size = (1 == nchunks ? total_send_size : send_chunk_size);
+    int recv_size = (1 == nchunks ? total_recv_size : recv_chunk_size);
+
+    // copy for send
+    send_copy_e = q_scopy.submit([=](sycl::handler& h) {
+        h.depends_on(deps);
+        h.memcpy(send_pipe_chunks[chunk_index], send_buf, send_size);
+    });
+    // post recv (rdma)
+    recv_e = q.submit([=](sycl::handler& h) {
+        h.depends_on(deps);
+        h.host_task([=]() {
+            atl_req_t& recv_req = comm->get_pipeline_recv_req();
+            ATL_CALL_THROW_IF_ERROR(
+                atl_comm->recv(ep_idx, recv_buf, recv_size, src, recvtag, recv_req));
+        });
+    });
+    // post send (pipe)
+    send_e = q.submit([=](sycl::handler& h) {
+        h.depends_on(send_copy_e);
+        h.host_task([=]() {
+            atl_req_t& send_req = comm->get_pipeline_send_req();
+            ATL_CALL_THROW_IF_ERROR(atl_comm->send(
+                ep_idx, send_pipe_chunks[chunk_index], send_size, dest, sendtag, send_req));
+        });
+    });
+    // start copy next chunk for send
+    if (nchunks > 1) {
+        int next_send_size =
+            (1 == nchunks - 1 ? total_send_size - send_chunk_size : send_chunk_size);
+        send_copy_e = q_scopy.submit([=](sycl::handler& h) {
+            h.depends_on(deps);
+            h.memcpy(send_pipe_chunks[next_chunk_index],
+                     (char*)send_buf + send_chunk_size,
+                     next_send_size);
+        });
+    }
+    recv_done_e = q.submit([=](sycl::handler& h) {
+        h.depends_on({ send_copy_e, recv_e, send_e });
+        h.host_task([=]() {
+            atl_req_t& send_req = comm->get_pipeline_send_req();
+            atl_req_t& recv_req = comm->get_pipeline_recv_req();
+            ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, recv_req));
+            if (!recv_req.is_completed) {
+                ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
+            }
+            ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, send_req));
+            if (!send_req.is_completed) {
+                ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, send_req));
+            }
+        });
+    });
+    for (idx = 1; idx < nchunks - 1; idx++) {
+        send_size =
+            (idx == nchunks - 1 ? total_send_size - send_chunk_size * idx : send_chunk_size);
+        int next_send_size = (idx + 1 == nchunks - 1 ? total_send_size - send_chunk_size * (idx + 1)
+                                                     : send_chunk_size);
+        recv_size =
+            (idx == nchunks - 1 ? total_recv_size - recv_chunk_size * idx : recv_chunk_size);
+
+        chunk_index = idx % num_chunk_buffs;
+        next_chunk_index = (chunk_index + 1) % num_chunk_buffs;
+
+        // post send and recv
+        recv_e = q.submit([=](sycl::handler& h) {
+            h.depends_on(recv_done_e);
+            h.host_task([=]() {
+                atl_req_t& send_req = comm->get_pipeline_send_req();
+                atl_req_t& recv_req = comm->get_pipeline_recv_req();
+                ATL_CALL_THROW_IF_ERROR(atl_comm->send(
+                    ep_idx, send_pipe_chunks[chunk_index], send_size, dest, sendtag, send_req));
+                ATL_CALL_THROW_IF_ERROR(atl_comm->recv(ep_idx,
+                                                       (char*)recv_buf + idx * recv_chunk_size,
+                                                       recv_size,
+                                                       src,
+                                                       recvtag,
+                                                       recv_req));
+            });
+        });
+        // copy for send for next chunk
+        send_copy_e = q_scopy.submit([=](sycl::handler& h) {
+            h.depends_on(recv_done_e);
+            h.memcpy(send_pipe_chunks[next_chunk_index],
+                     (char*)send_buf + (idx + 1) * send_chunk_size,
+                     next_send_size);
+        });
+        // wait for send/recv completion
+        recv_done_e = q.submit([=](sycl::handler& h) {
+            h.depends_on({ recv_e, send_copy_e });
+            h.host_task([=]() {
+                atl_req_t& send_req = comm->get_pipeline_send_req();
+                atl_req_t& recv_req = comm->get_pipeline_recv_req();
+                ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, recv_req));
+                if (!recv_req.is_completed) {
+                    ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
+                }
+                ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, send_req));
+                if (!send_req.is_completed) {
+                    ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, send_req));
+                }
+            });
+        });
+    }
+
+    //  send last chunk
+    if (nchunks > 1) {
+        send_size = total_send_size - send_chunk_size * (nchunks - 1);
+        recv_size = total_recv_size - recv_chunk_size * (nchunks - 1);
+        chunk_index = idx % num_chunk_buffs;
+        // post send and recv
+        recv_done_e = q.submit([=](sycl::handler& h) {
+            h.depends_on(recv_done_e);
+            h.host_task([=]() {
+                atl_req_t& send_req = comm->get_pipeline_send_req();
+                atl_req_t& recv_req = comm->get_pipeline_recv_req();
+                ATL_CALL_THROW_IF_ERROR(
+                    atl_comm->recv(ep_idx,
+                                   (char*)recv_buf + (nchunks - 1) * recv_chunk_size,
+                                   recv_size,
+                                   src,
+                                   recvtag,
+                                   recv_req));
+                ATL_CALL_THROW_IF_ERROR(atl_comm->send(
+                    ep_idx, send_pipe_chunks[chunk_index], send_size, dest, sendtag, send_req));
+                ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, recv_req));
+                if (!recv_req.is_completed) {
+                    ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
+                }
+                ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, send_req));
+                if (!send_req.is_completed) {
+                    ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, send_req));
+                }
+            });
+        });
+    }
+
+    return recv_done_e;
 }
 
 sycl::event pipe_sendrecv_plain(sycl::queue& q,
@@ -432,19 +612,51 @@ sycl::event pipe_sendrecv(sycl::queue& q,
                                    deps);
     }
     else {
-        return pipe_sendrecv_rdma(q,
-                                  send_buf,
-                                  send_count,
-                                  dest,
-                                  sendtag,
-                                  recv_buf,
-                                  recv_count,
-                                  src,
-                                  recvtag,
-                                  dtype,
-                                  nchunks,
-                                  comm,
-                                  deps);
+        int rdma_method = ccl::global_data::env().sycl_pipeline_gpu_rdma;
+        switch (rdma_method) {
+            case 0:
+                return pipe_sendrecv_rdma_oneway_send(q,
+                                                      send_buf,
+                                                      send_count,
+                                                      dest,
+                                                      sendtag,
+                                                      recv_buf,
+                                                      recv_count,
+                                                      src,
+                                                      recvtag,
+                                                      dtype,
+                                                      nchunks,
+                                                      comm,
+                                                      deps);
+            case 1:
+                return pipe_sendrecv_rdma_oneway_recv(q,
+                                                      send_buf,
+                                                      send_count,
+                                                      dest,
+                                                      sendtag,
+                                                      recv_buf,
+                                                      recv_count,
+                                                      src,
+                                                      recvtag,
+                                                      dtype,
+                                                      nchunks,
+                                                      comm,
+                                                      deps);
+            case 2: // two way
+                return sendrecv_rdma(q,
+                                     send_buf,
+                                     send_count,
+                                     dest,
+                                     sendtag,
+                                     recv_buf,
+                                     recv_count,
+                                     src,
+                                     recvtag,
+                                     dtype,
+                                     comm,
+                                     deps);
+            default: CCL_THROW("Invalid GPU RDMA method"); return sycl::event();
+        }
     }
 }
 

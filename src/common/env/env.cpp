@@ -195,6 +195,8 @@ env_data::env_data()
           sycl_allgatherv_scaleout_threshold(1048576),
           sycl_allgatherv_ll_threshold(2048),
 
+          sycl_enable_arc_alltoall_ll(0),
+
           enable_sycl_kernels(1),
 
           sycl_ccl_barrier(0),
@@ -215,6 +217,7 @@ env_data::env_data()
           sycl_pipeline_chunk_size(CCL_ENV_SIZET_NOT_SPECIFIED),
           sycl_enable_pipeline_gpu_rdma(0),
           sycl_enable_direct_gpu_rdma(0),
+          sycl_pipeline_gpu_rdma(0),
           sycl_sub_communicator(1),
           sycl_force_pcie(0),
 #endif // CCL_ENABLE_SYCL
@@ -551,6 +554,8 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_ALLGATHERV_SCALEOUT_THRESHOLD, sycl_allgatherv_scaleout_threshold);
     p.env_2_type(CCL_SYCL_ALLGATHERV_LL_THRESHOLD, sycl_allgatherv_ll_threshold);
 
+    p.env_2_type(CCL_SYCL_ALLTOALL_ARC_LL, sycl_enable_arc_alltoall_ll);
+
     p.env_2_type(CCL_ENABLE_SYCL_KERNELS, enable_sycl_kernels);
 
     p.env_2_type(CCL_SYCL_CCL_BARRIER, sycl_ccl_barrier);
@@ -571,6 +576,7 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_PIPELINE_CHUNK_SIZE, (size_t&)sycl_pipeline_chunk_size);
     p.env_2_type(CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA, sycl_enable_pipeline_gpu_rdma);
     p.env_2_type(CCL_SYCL_ENABLE_DIRECT_GPU_RDMA, sycl_enable_direct_gpu_rdma);
+    p.env_2_type(CCL_SYCL_PIPELINE_GPU_RDMA, sycl_pipeline_gpu_rdma);
     p.env_2_type(CCL_SYCL_SUB_COMMUICATOR, sycl_sub_communicator);
     p.env_2_type(CCL_SYCL_FORCE_PCIE, sycl_force_pcie);
 #endif // CCL_ENABLE_SYCL
@@ -998,6 +1004,8 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_ALLGATHERV_SCALEOUT_THRESHOLD, ": ", sycl_allgatherv_scaleout_threshold);
     LOG_INFO(CCL_SYCL_ALLGATHERV_LL_THRESHOLD, ": ", sycl_allgatherv_ll_threshold);
 
+    LOG_INFO(CCL_SYCL_ALLTOALL_ARC_LL, ": ", sycl_enable_arc_alltoall_ll);
+
     LOG_INFO(CCL_ENABLE_SYCL_KERNELS, ": ", enable_sycl_kernels);
 
     LOG_INFO(CCL_SYCL_CCL_BARRIER, ": ", sycl_ccl_barrier);
@@ -1018,6 +1026,7 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_PIPELINE_CHUNK_SIZE, ": ", (sycl_pipeline_chunk_size != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(sycl_pipeline_chunk_size) : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA, ": ", sycl_enable_pipeline_gpu_rdma);
     LOG_INFO(CCL_SYCL_ENABLE_DIRECT_GPU_RDMA, ": ", sycl_enable_direct_gpu_rdma);
+    LOG_INFO(CCL_SYCL_PIPELINE_GPU_RDMA, ": ", sycl_pipeline_gpu_rdma);
     LOG_INFO(CCL_SYCL_SUB_COMMUICATOR, ": ", sycl_sub_communicator);
     LOG_INFO(CCL_SYCL_FORCE_PCIE, ": ", sycl_force_pcie);
 #endif // CCL_ENABLE_SYCL
