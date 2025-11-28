@@ -1,0 +1,1515 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>API Documentation &#8212; oneAPI Collective Communications Library (C API) 2021.17.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="_static/styles/bootstrap.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+
+  
+  <link href="_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/sphinx-book-theme.css?v=eba8b062" />
+    <link rel="stylesheet" type="text/css" href="_static/custom.css?v=f7f6fd85" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
+  <script src="_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+    <script src="_static/documentation_options.js?v=4408b660"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/scripts/sphinx-book-theme.js?v=887ef09a"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api';</script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Environment Variables" href="env.html" />
+    <link rel="prev" title="How to upgrade from C++ API" href="upgrade.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-primary-sidebar-checkbox"/>
+  <label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-secondary-sidebar-checkbox"/>
+  <label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">oneAPI Collective Communications Library (C API) 2021.17.0 documentation</p>
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+ <script>
+ document.write(`
+   <button class="btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">About</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Getting Started with oneCCL</a></li>
+<li class="toctree-l1"><a class="reference internal" href="examples.html">Example oneCCL app</a></li>
+<li class="toctree-l1"><a class="reference internal" href="plugins.html">New features of oneCCL with C API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="upgrade.html">How to upgrade from C++ API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Developer Reference</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">API Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="env.html">Environment Variables</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="_sources/api.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"></i>
+  </button>
+`);
+</script>
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm pst-navbar-icon search-button search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+  </button>
+`);
+</script>
+<button class="sidebar-toggle secondary-toggle btn btn-sm" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>API Documentation</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#communicator-creation-api">Communicator Creation API</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetVersion"><code class="docutils literal notranslate"><span class="pre">onecclGetVersion()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetUniqueId"><code class="docutils literal notranslate"><span class="pre">onecclGetUniqueId()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclExtractVersionComponents"><code class="docutils literal notranslate"><span class="pre">onecclExtractVersionComponents()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommInitRank"><code class="docutils literal notranslate"><span class="pre">onecclCommInitRank()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommInitRankConfig"><code class="docutils literal notranslate"><span class="pre">onecclCommInitRankConfig()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommInitAll"><code class="docutils literal notranslate"><span class="pre">onecclCommInitAll()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommFinalize"><code class="docutils literal notranslate"><span class="pre">onecclCommFinalize()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommDestroy"><code class="docutils literal notranslate"><span class="pre">onecclCommDestroy()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommAbort"><code class="docutils literal notranslate"><span class="pre">onecclCommAbort()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommSplit"><code class="docutils literal notranslate"><span class="pre">onecclCommSplit()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetErrorString"><code class="docutils literal notranslate"><span class="pre">onecclGetErrorString()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetLastError"><code class="docutils literal notranslate"><span class="pre">onecclGetLastError()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommCount"><code class="docutils literal notranslate"><span class="pre">onecclCommCount()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommDevice"><code class="docutils literal notranslate"><span class="pre">onecclCommDevice()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommUserRank"><code class="docutils literal notranslate"><span class="pre">onecclCommUserRank()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclSetDevice"><code class="docutils literal notranslate"><span class="pre">onecclSetDevice()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommGetAsyncError"><code class="docutils literal notranslate"><span class="pre">onecclCommGetAsyncError()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#collective-functions-api">Collective Functions API</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclReduce"><code class="docutils literal notranslate"><span class="pre">onecclReduce()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclAllReduce"><code class="docutils literal notranslate"><span class="pre">onecclAllReduce()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclBroadcast"><code class="docutils literal notranslate"><span class="pre">onecclBroadcast()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclReduceScatter"><code class="docutils literal notranslate"><span class="pre">onecclReduceScatter()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclAllGather"><code class="docutils literal notranslate"><span class="pre">onecclAllGather()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclAllToAll"><code class="docutils literal notranslate"><span class="pre">onecclAllToAll()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclSend"><code class="docutils literal notranslate"><span class="pre">onecclSend()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRecv"><code class="docutils literal notranslate"><span class="pre">onecclRecv()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGroupStart"><code class="docutils literal notranslate"><span class="pre">onecclGroupStart()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGroupEnd"><code class="docutils literal notranslate"><span class="pre">onecclGroupEnd()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOpCreatePreMulSum"><code class="docutils literal notranslate"><span class="pre">onecclRedOpCreatePreMulSum()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOpDestroy"><code class="docutils literal notranslate"><span class="pre">onecclRedOpDestroy()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#types-api">Types API</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t"><code class="docutils literal notranslate"><span class="pre">onecclResult_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclSuccess"><code class="docutils literal notranslate"><span class="pre">onecclSuccess</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclError"><code class="docutils literal notranslate"><span class="pre">onecclError</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclSystemError"><code class="docutils literal notranslate"><span class="pre">onecclSystemError</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInternalError"><code class="docutils literal notranslate"><span class="pre">onecclInternalError</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInvalidArgument"><code class="docutils literal notranslate"><span class="pre">onecclInvalidArgument</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInvalidUsage"><code class="docutils literal notranslate"><span class="pre">onecclInvalidUsage</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInProgress"><code class="docutils literal notranslate"><span class="pre">onecclInProgress</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclFailureGPU"><code class="docutils literal notranslate"><span class="pre">onecclFailureGPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclFailureCPU"><code class="docutils literal notranslate"><span class="pre">onecclFailureCPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclAllocFailureCPU"><code class="docutils literal notranslate"><span class="pre">onecclAllocFailureCPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclAllocFailureGPU"><code class="docutils literal notranslate"><span class="pre">onecclAllocFailureGPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclPluginException"><code class="docutils literal notranslate"><span class="pre">onecclPluginException</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclNotImplemented"><code class="docutils literal notranslate"><span class="pre">onecclNotImplemented</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t"><code class="docutils literal notranslate"><span class="pre">onecclDataType_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt8"><code class="docutils literal notranslate"><span class="pre">onecclInt8</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclChar"><code class="docutils literal notranslate"><span class="pre">onecclChar</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclUint8"><code class="docutils literal notranslate"><span class="pre">onecclUint8</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt32"><code class="docutils literal notranslate"><span class="pre">onecclInt32</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt"><code class="docutils literal notranslate"><span class="pre">onecclInt</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclUint32"><code class="docutils literal notranslate"><span class="pre">onecclUint32</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt64"><code class="docutils literal notranslate"><span class="pre">onecclInt64</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclUint64"><code class="docutils literal notranslate"><span class="pre">onecclUint64</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat16"><code class="docutils literal notranslate"><span class="pre">onecclFloat16</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclHalf"><code class="docutils literal notranslate"><span class="pre">onecclHalf</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat32"><code class="docutils literal notranslate"><span class="pre">onecclFloat32</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat"><code class="docutils literal notranslate"><span class="pre">onecclFloat</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat64"><code class="docutils literal notranslate"><span class="pre">onecclFloat64</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclDouble"><code class="docutils literal notranslate"><span class="pre">onecclDouble</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclBfloat16"><code class="docutils literal notranslate"><span class="pre">onecclBfloat16</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t"><code class="docutils literal notranslate"><span class="pre">onecclRedOp_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclSum"><code class="docutils literal notranslate"><span class="pre">onecclSum</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclProd"><code class="docutils literal notranslate"><span class="pre">onecclProd</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclMax"><code class="docutils literal notranslate"><span class="pre">onecclMax</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclMin"><code class="docutils literal notranslate"><span class="pre">onecclMin</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclAvg"><code class="docutils literal notranslate"><span class="pre">onecclAvg</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclNumOps"><code class="docutils literal notranslate"><span class="pre">onecclNumOps</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclMaxRedOp"><code class="docutils literal notranslate"><span class="pre">onecclMaxRedOp</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclScalarResidence_t"><code class="docutils literal notranslate"><span class="pre">onecclScalarResidence_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclScalarResidence_t.onecclScalarDevice"><code class="docutils literal notranslate"><span class="pre">onecclScalarDevice</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclScalarResidence_t.onecclScalarHostImmediate"><code class="docutils literal notranslate"><span class="pre">onecclScalarHostImmediate</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t"><code class="docutils literal notranslate"><span class="pre">onecclPluginType_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclPluginAny"><code class="docutils literal notranslate"><span class="pre">onecclPluginAny</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclNull"><code class="docutils literal notranslate"><span class="pre">onecclNull</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclLegacy"><code class="docutils literal notranslate"><span class="pre">onecclLegacy</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclLegacyCPU"><code class="docutils literal notranslate"><span class="pre">onecclLegacyCPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclUserBackend"><code class="docutils literal notranslate"><span class="pre">onecclUserBackend</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId"><code class="docutils literal notranslate"><span class="pre">onecclUniqueId</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.legacy"><code class="docutils literal notranslate"><span class="pre">legacy</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.nccl"><code class="docutils literal notranslate"><span class="pre">nccl</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.any"><code class="docutils literal notranslate"><span class="pre">any</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.data"><code class="docutils literal notranslate"><span class="pre">data</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclConfig"><code class="docutils literal notranslate"><span class="pre">onecclConfig</span></code></a></li>
+</ul>
+</li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="api-documentation">
+<h1>API Documentation<a class="headerlink" href="#api-documentation" title="Link to this heading">#</a></h1>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This document describes the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard. Documentation for the legacy C++ API can be found <a class="reference external" href="../index.html">here</a>.</p>
+</div>
+<section id="communicator-creation-api">
+<h2>Communicator Creation API<a class="headerlink" href="#communicator-creation-api" title="Link to this heading">#</a></h2>
+<p>This section includes functions related to initializing and managing communicators in oneCCL.</p>
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclGetVersion">
+<span class="target" id="group__CommunicatorCreation_1gab111f029761747280959e422355e0a4c"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclGetVersion</span></span></span><span class="sig-paren">(</span><span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">version</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclGetVersion" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to obtain the oneCCL version encoded as an integer. </p>
+<p>This function returns the version number encoded as an integer, which includes the oneCCL major version, oneCCL minor version, and oneCCL patch. The user can use the onecclExtractVersionComponents function to extract the version components.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>version</strong> – <strong>[out]</strong> Pointer to store the version encoded integer </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclGetUniqueId">
+<span class="target" id="group__CommunicatorCreation_1gab7be1a4b22ea75303ed4c941f419a4f8"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclGetUniqueId</span></span></span><span class="sig-paren">(</span><a class="reference internal" href="#c.onecclUniqueId" title="onecclUniqueId"><span class="n"><span class="pre">onecclUniqueId</span></span></a><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">uniqueId</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclGetUniqueId" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to get a unique ID. </p>
+<p>This function generates a unique ID to be used in onecclCommInitRank or onecclCommInitRankConfig. ncclGetUniqueId is called once before creating a communicator. The ID should be sent to all the ranks that are going to participate in the communicator before they call onecclCommInitRank or onecclCommInitRankConfig.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>uniqueId</strong> – <strong>[out]</strong> Pointer to store the unique ID </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclExtractVersionComponents">
+<span class="target" id="group__CommunicatorCreation_1gae2ee2cc86129718860ab95d55a54da24"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclExtractVersionComponents</span></span></span><span class="sig-paren">(</span><span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">versionCode</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">major</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">minor</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">patch</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclExtractVersionComponents" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to extract version components from the version encoded integer. </p>
+<p>This function takes the version encoded integer obtained with oneCCLGetVErsion and returns the oneCCL major version, minor version, and patch.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>versionCode</strong> – <strong>[in]</strong> Encoded version integer </p></li>
+<li><p><strong>major</strong> – <strong>[out]</strong> Pointer to store major version </p></li>
+<li><p><strong>minor</strong> – <strong>[out]</strong> Pointer to store minor version </p></li>
+<li><p><strong>patch</strong> – <strong>[out]</strong> Pointer to store patch version </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommInitRank">
+<span class="target" id="group__CommunicatorCreation_1ga9dc29f0be2547947f4bd2341019f0a8c"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommInitRank</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">comm</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">nranks</span></span>, <a class="reference internal" href="#c.onecclUniqueId" title="onecclUniqueId"><span class="n"><span class="pre">onecclUniqueId</span></span></a><span class="w"> </span><span class="n"><span class="pre">commId</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">rank</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommInitRank" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to create a new communicator. </p>
+<p>This function creates a new communicator with nranks, where rank must be an integer between 0 and nranks-1 and unique in the communicator. commId is the unique ID obtained with onecclGetUniqueId. This is a collective call and needs to be called by all the processes participating in the communicator.</p>
+<p>Before this call, each rank needs to specify the device it is associated with (this can be done with onecclSetDevice(devide-idx), where device-idx is the device index.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[out]</strong> Pointer to store the initialized communicator </p></li>
+<li><p><strong>nranks</strong> – <strong>[in]</strong> Number of ranks </p></li>
+<li><p><strong>commId</strong> – <strong>[in]</strong> Unique ID for the communicator </p></li>
+<li><p><strong>rank</strong> – <strong>[in]</strong> Rank within the communicator </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommInitRankConfig">
+<span class="target" id="group__CommunicatorCreation_1gaf8ff0c1f4ed1fc1b8c32f4d8111f5eab"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommInitRankConfig</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">comm</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">nranks</span></span>, <a class="reference internal" href="#c.onecclUniqueId" title="onecclUniqueId"><span class="n"><span class="pre">onecclUniqueId</span></span></a><span class="w"> </span><span class="n"><span class="pre">commId</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">rank</span></span>, <span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">onecclConfig_t</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">config</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommInitRankConfig" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to create a new communicator using a config argument. </p>
+<p>This function is similar to onecclCommInitRank but it also takes a config argument with additional attributes for the communicator.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[out]</strong> Pointer to store the new communicator </p></li>
+<li><p><strong>nranks</strong> – <strong>[in]</strong> Number of ranks </p></li>
+<li><p><strong>commId</strong> – <strong>[in]</strong> Unique ID for the communicator </p></li>
+<li><p><strong>rank</strong> – <strong>[in]</strong> Rank within the communicator </p></li>
+<li><p><strong>config</strong> – <strong>[in]</strong> Configuration attributes for the communicator </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommInitAll">
+<span class="target" id="group__CommunicatorCreation_1ga5f5abd116898c3a87eb08da10946b3bb"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommInitAll</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">ndev</span></span>, <span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">devlist</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommInitAll" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to create a single-process communicator. </p>
+<p>This API is not implemented yet.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[out]</strong> Pointer to store the initialized communicator </p></li>
+<li><p><strong>ndev</strong> – <strong>[in]</strong> Number of devices </p></li>
+<li><p><strong>devlist</strong> – <strong>[in]</strong> List of devices </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommFinalize">
+<span class="target" id="group__CommunicatorCreation_1ga64e1af35c38dbf291c9cf29f06ad247e"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommFinalize</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommFinalize" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to flush all communication inside the communicator. </p>
+<p>This API is not implemented yet.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to finalize </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommDestroy">
+<span class="target" id="group__CommunicatorCreation_1ga41d52e0482541712011c38b8f9ea2371"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommDestroy</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommDestroy" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to destroy a communicator. </p>
+<p>This function frees the local resources allocated to the communicator object comm</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to destroy </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommAbort">
+<span class="target" id="group__CommunicatorCreation_1ga01474875144b5b05e1d4624156b41fd0"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommAbort</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommAbort" title="Link to this definition">#</a><br /></dt>
+<dd><p>Funtion to abort uncompleted operations and destroy the communicator. </p>
+<p>This API is not implemented yet</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to abort </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommSplit">
+<span class="target" id="group__CommunicatorCreation_1ga8037b2982135442888583a2a8b474ad8"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommSplit</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">color</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">key</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">newcomm</span></span>, <span class="n"><span class="pre">onecclConfig_t</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">config</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommSplit" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to create a set of new communicators from an existing one. </p>
+<p>This functions creates a set of new communicators. Ranks with the same color will be in the same communicator. Ranks with <code class="docutils literal notranslate"><span class="pre">ONECCL_SPLIT_NOCOLOR</span></code> will not be part of any new communicator and will return NULL in the new communicator. The key determines the order in the new communicator, with a smaller key value indicating a smaller rank in the new communicator. Ranks with the same key will be ordered based on order in the orginal communicator. If the communicator needs to have a new configuration, this has to be passed in the config argument. Otherwise, setting config to NULL will make the new communicators inherit the configuration of the original communicator. When calling this function, there should not be any pending operations in the communicator. Otherwise, there could be a deadlock.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Original communicator </p></li>
+<li><p><strong>color</strong> – <strong>[in]</strong> Color identifier for splitting </p></li>
+<li><p><strong>key</strong> – <strong>[in]</strong> Key for ranking within color </p></li>
+<li><p><strong>newcomm</strong> – <strong>[out]</strong> Pointer to store newly created communicator </p></li>
+<li><p><strong>config</strong> – <strong>[out]</strong> Configuration for the new communicator </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclGetErrorString">
+<span class="target" id="group__CommunicatorCreation_1ga2fd36c40781cba22239d1103c3362296"></span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">char</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="sig-name descname"><span class="n"><span class="pre">onecclGetErrorString</span></span></span><span class="sig-paren">(</span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">result</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclGetErrorString" title="Link to this definition">#</a><br /></dt>
+<dd><p>Returns a string for the error code in result. </p>
+<p>Returns a human-readable string corresponding to the error code in result.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>result</strong> – <strong>[in]</strong> Return code to describe </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Description of the return code </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclGetLastError">
+<span class="target" id="group__CommunicatorCreation_1ga9096eaecbc5648b79ff78ce3d5ae300b"></span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">char</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="sig-name descname"><span class="n"><span class="pre">onecclGetLastError</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclGetLastError" title="Link to this definition">#</a><br /></dt>
+<dd><p>Funtion that returns an error message for the last error that occurred in the communicator. </p>
+<p>This function returns a human-readable string corresponding to the last error that occurred in the communicator. Notice that the error message may not be related to the current call, but rather to a previous non-blocking call.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to query for last error </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Description of the last error </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommCount">
+<span class="target" id="group__CommunicatorCreation_1gae92b7470c7eed5c2f06348e8f4029f4d"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommCount</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">size</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommCount" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to obtain communicator size. </p>
+<p>This function returns the number of ranks in the communicator.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to query </p></li>
+<li><p><strong>size</strong> – <strong>[out]</strong> Pointer to store the size </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommDevice">
+<span class="target" id="group__CommunicatorCreation_1gacb036de99141a7aa1c4bb7b6522ef733"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommDevice</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">device</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommDevice" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to get the device used by the communicator. </p>
+<p>This function returns the device associated with the communicator</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to query </p></li>
+<li><p><strong>device</strong> – <strong>[out]</strong> Pointer to store the device index </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommUserRank">
+<span class="target" id="group__CommunicatorCreation_1gac9fc041887c2362d22d77ba42ff2c7c3"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommUserRank</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">rank</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommUserRank" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to get the rank within the communicator. </p>
+<p>This function returns the rank of the caller in the communicator.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to query </p></li>
+<li><p><strong>rank</strong> – <strong>[out]</strong> Pointer to store the rank </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclSetDevice">
+<span class="target" id="group__CommunicatorCreation_1gafc387e28cb4d5859b3d82ab98261d9e7"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclSetDevice</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">uint32_t</span></span><span class="w"> </span><span class="n"><span class="pre">index</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclSetDevice" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to set the device index for the calling rank. </p>
+<p>This function records the device index associated with the calling rank/thread.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>index</strong> – <strong>[in]</strong> Index of device to select </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclCommGetAsyncError">
+<span class="target" id="group__CommunicatorCreation_1ga5d2bb0bbc00bd0631bd7a993a9be6f59"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclCommGetAsyncError</span></span></span><span class="sig-paren">(</span><span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclCommGetAsyncError" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to check for errors of asynchronous oneCCL operations in the communicator. </p>
+<p>This API is not implemented yet</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator to check </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="collective-functions-api">
+<h2>Collective Functions API<a class="headerlink" href="#collective-functions-api" title="Link to this heading">#</a></h2>
+<p>This section includes functions related to collective communication operations.</p>
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclReduce">
+<span class="target" id="group__CollectiveFunctions_1ga70f8b4c0243ba98c91b9e7bf11df9a3c"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclReduce</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">sendbuff</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">recvbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">count</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <a class="reference internal" href="#c.onecclRedOp_t" title="onecclRedOp_t"><span class="n"><span class="pre">onecclRedOp_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">redop</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">root</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclReduce" title="Link to this definition">#</a><br /></dt>
+<dd><p>Functon to perform a Reduce operation. </p>
+<p>Reduce is a collective communication operation that performs a reduction operation redop on count elements in sendbuf and places the result into the recvbuff of the root rank. The recvbuf is only used on the root rank.</p>
+<p>This operation is in-place if sendbuff == recvbuff.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sendbuff</strong> – <strong>[in]</strong> Buffer with the data to send ABCDCACSAC </p></li>
+<li><p><strong>recvbuff</strong> – <strong>[out]</strong> Buffer to receive reduced data </p></li>
+<li><p><strong>count</strong> – <strong>[in]</strong> Number of elements </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>redop</strong> – <strong>[in]</strong> Reduction operation </p></li>
+<li><p><strong>root</strong> – <strong>[in]</strong> Root rank of the operation </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the reduction </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclAllReduce">
+<span class="target" id="group__CollectiveFunctions_1ga4cc019459028640e672b8601ce499cc0"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclAllReduce</span></span></span><span class="sig-paren">(</span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">sendbuff</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">recvbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">count</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <a class="reference internal" href="#c.onecclRedOp_t" title="onecclRedOp_t"><span class="n"><span class="pre">onecclRedOp_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">reduction_op</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclAllReduce" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to perform an AllReduce operation. </p>
+<p>Allreduce is a collective communication operation that performs a reduction operation redop on count elements in sendbuf and places the result into the recvbuff of each rank. recvbuff is equal in all the ranks.</p>
+<p>This operation is in-place if sendbuff == recvbuff.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sendbuff</strong> – <strong>[in]</strong> Buffer with the data to send </p></li>
+<li><p><strong>recvbuff</strong> – <strong>[out]</strong> Buffer to receive reduced data </p></li>
+<li><p><strong>count</strong> – <strong>[in]</strong> Number of elements </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>reduction_op</strong> – <strong>[in]</strong> Reduction operation </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the reduction </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclBroadcast">
+<span class="target" id="group__CollectiveFunctions_1ga72ba34c712aa15e6d891cc31340e2783"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclBroadcast</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">sendbuff</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">recvbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">count</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">root</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclBroadcast" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to performs a Broadcast operation. </p>
+<p>Broadcast is a collective communication operation that copies count elements from the sendbuf in the root rank to the recvbuff of all the ranks. sendbuf is only used in the root rank.</p>
+<p>The operation is in-place if sendbuff == recvbuff.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sendbuff</strong> – <strong>[in]</strong> Buffer with the data to send from root </p></li>
+<li><p><strong>recvbuff</strong> – <strong>[out]</strong> Buffer to receive broadcasted data </p></li>
+<li><p><strong>count</strong> – <strong>[in]</strong> Number of elements </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>root</strong> – <strong>[in]</strong> Root rank of the operation </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the broadcast </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclReduceScatter">
+<span class="target" id="group__CollectiveFunctions_1gac7e2ddd4514724cc14e96678040a174f"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclReduceScatter</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">sendbuff</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">recvbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">recvcount</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <a class="reference internal" href="#c.onecclRedOp_t" title="onecclRedOp_t"><span class="n"><span class="pre">onecclRedOp_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">redop</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclReduceScatter" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to perform a ReduceScatter operation. </p>
+<p>ReduceScatter is a collective communication operation that performs a reduction operation redop on count elements in sendbuf and places the result scattered over the recvbuff of the participating ranks, so that the recvbuff in rank i contains the i-th chunk of the result.</p>
+<p>This operation assumes that send count is equal to nranks*recvcount, that is, the sendbuf has a count of at least nranks*recvcount elements.</p>
+<p>This operation is in-place if recvbuff == sendbuff + rank * recvcount.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sendbuff</strong> – <strong>[in]</strong> Buffer with the data to send </p></li>
+<li><p><strong>recvbuff</strong> – <strong>[out]</strong> Buffer to receive scattered data </p></li>
+<li><p><strong>recvcount</strong> – <strong>[in]</strong> Number of elements to receive </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>redop</strong> – <strong>[in]</strong> Reduction operation </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the scatter </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclAllGather">
+<span class="target" id="group__CollectiveFunctions_1gaca2f5fd93c18989650d3dda653c7d35b"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclAllGather</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">sendbuff</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">recvbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">sendcount</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclAllGather" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to perform an AllGgather operation. </p>
+<p>Allgather is a collective communication operation that gathers sendcount elements from the sendbuf in each rank and places them in the recvbuff of all the participating ranks. The data in the sendbuf in rank i can be found in recvbuf at offset i*sendcount.</p>
+<p>This operation assumes that the receive count is equal to nranks*sendcount, that is, the recvbuff has a count of at least nranks*sendcount elements.</p>
+<p>This operation is in-place if sendbuff == recvbuff + rank * sendcount.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sendbuff</strong> – <strong>[in]</strong> Buffer with the data to send </p></li>
+<li><p><strong>recvbuff</strong> – <strong>[out]</strong> Buffer to receive gathered data </p></li>
+<li><p><strong>sendcount</strong> – <strong>[in]</strong> Number of elements to send </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the gather </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclAllToAll">
+<span class="target" id="group__CollectiveFunctions_1gafeb2764c75518ac547768454811685ad"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclAllToAll</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">sendbuff</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">recvbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">count</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclAllToAll" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to perform an AlltoAll operation. </p>
+<p>Alltoall is a collective communication operation where each rank sends count elements to all other ranks and receives count elements from all other ranks. The data to send to destination rank j is located at sendbuff+j*count and data received from source rank i is placed at recvbuff+i*count.</p>
+<p>This collective assumes that the count in sendbuff and recvbuff is the same and it is equal to nranks*count.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a></p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sendbuff</strong> – <strong>[in]</strong> Buffer with the data to send to each process </p></li>
+<li><p><strong>recvbuff</strong> – <strong>[out]</strong> Buffer to receive data </p></li>
+<li><p><strong>count</strong> – <strong>[in]</strong> Number of elements to send and receive from each process </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the AllToAll operation </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclSend">
+<span class="target" id="group__CollectiveFunctions_1gad89704ec00f275b5853ac387018b89a2"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclSend</span></span></span><span class="sig-paren">(</span><span class="k"><span class="pre">const</span></span><span class="w"> </span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">sendbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">count</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">peer</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclSend" title="Link to this definition">#</a><br /></dt>
+<dd><p>Fun ction to perform a send operation. </p>
+<p>This operation sends count data from sendbuff to peer rank. The peer rank needs to call onecclRecv with the same count and dataype as the calling rank.</p>
+<p>This operation may block the GPU. If multiple onecclSend() and onecclRecv() operations need to progress concurrently in a non-blocking fashion, they need to be placed within the onecclGroupStart() and oneccllGroupEnd() calls.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a></p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>sendbuff</strong> – <strong>[in]</strong> Buffer with the data to send </p></li>
+<li><p><strong>count</strong> – <strong>[in]</strong> Number of elements </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>peer</strong> – <strong>[in]</strong> Rank of the peer </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the send </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclRecv">
+<span class="target" id="group__CollectiveFunctions_1ga21dba9950ca01459b2b5c9fb4c14107a"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclRecv</span></span></span><span class="sig-paren">(</span><span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">recvbuff</span></span>, <span class="n"><span class="pre">size_t</span></span><span class="w"> </span><span class="n"><span class="pre">count</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <span class="kt"><span class="pre">int</span></span><span class="w"> </span><span class="n"><span class="pre">peer</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">stream</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclRecv" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to perform a receive operation. </p>
+<p>This operation receives count data from recvbuff from peer rank. The peer rank needs to call onecclSend with the same count and dataype as the calling rank.</p>
+<p>This operation may block the GPU. If multiple onecclSend() and onecclRecv() operations need to progress concurrently in a non-blocking fashion, they need to be placed within the onecclGroupStart() and oneccllGroupEnd() calls.</p>
+<p>The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a class="reference external" href="./plugins.html">plugin</a></p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>recvbuff</strong> – <strong>[out]</strong> Buffer to receive data </p></li>
+<li><p><strong>count</strong> – <strong>[in]</strong> Number of elements </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of elements </p></li>
+<li><p><strong>peer</strong> – <strong>[in]</strong> Rank of the peer </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+<li><p><strong>stream</strong> – <strong>[in]</strong> Stream for the receive </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclGroupStart">
+<span class="target" id="group__CollectiveFunctions_1gaf8e434b2ba9551af22f66b8c1beff34e"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclGroupStart</span></span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclGroupStart" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to start a group call. </p>
+<p>This function indicates that all the subsequent oneCCL calls until onecclGrouEnd will not block due to CPU synchronization.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclGroupEnd">
+<span class="target" id="group__CollectiveFunctions_1gaa9e55a04046a6edd1d3381b9e14eee18"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclGroupEnd</span></span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclGroupEnd" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to end a group call. </p>
+<p>This operation stars all the oneCCL operations submitted after the most recent onecclGroupStart.</p>
+<p>At the moment, the only operations supported between onecclGroupStart and onecclGroupEnd are collectives and point to point send and receive.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclRedOpCreatePreMulSum">
+<span class="target" id="group__CollectiveFunctions_1ga92c8b81654e8ff89d2e7e4a79415a261"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclRedOpCreatePreMulSum</span></span></span><span class="sig-paren">(</span><a class="reference internal" href="#c.onecclRedOp_t" title="onecclRedOp_t"><span class="n"><span class="pre">onecclRedOp_t</span></span></a><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">redop</span></span>, <span class="kt"><span class="pre">void</span></span><span class="w"> </span><span class="p"><span class="pre">*</span></span><span class="n"><span class="pre">scalar</span></span>, <a class="reference internal" href="#c.onecclDataType_t" title="onecclDataType_t"><span class="n"><span class="pre">onecclDataType_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">datatype</span></span>, <a class="reference internal" href="#c.onecclScalarResidence_t" title="onecclScalarResidence_t"><span class="n"><span class="pre">onecclScalarResidence_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">residence</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclRedOpCreatePreMulSum" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to create a custom reduction operation that performs a pre-multiplied sum. </p>
+<p>This function creates a new reduction operator that pre-mulitplies the input values by the scalar before reducing them with peer values wih a sum.</p>
+<p>The input data and the scalar are of type datatype.</p>
+<p>The residence argument indicates whether the memory pointed by the scalar is in the host or device memory. See <a class="reference external" href="./api.html#c.onecclScalarResidence_t">onecclScalarResidence_t</a>.</p>
+<p>The handle to the new created reduction operation is stored in redop.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>redop</strong> – <strong>[out]</strong> Pointer to store the created reduction operation </p></li>
+<li><p><strong>scalar</strong> – <strong>[in]</strong> Pointer to the scalar value to pre-multiply </p></li>
+<li><p><strong>datatype</strong> – <strong>[in]</strong> Data type of the scalar value </p></li>
+<li><p><strong>residence</strong> – <strong>[in]</strong> Memory residence of the scalar value </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="c function">
+<dt class="sig sig-object c" id="c.onecclRedOpDestroy">
+<span class="target" id="group__CollectiveFunctions_1ga5b4fbed6b0be43fcf4ffbd646cfbef7f"></span><a class="reference internal" href="#c.onecclResult_t" title="onecclResult_t"><span class="n"><span class="pre">onecclResult_t</span></span></a><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclRedOpDestroy</span></span></span><span class="sig-paren">(</span><a class="reference internal" href="#c.onecclRedOp_t" title="onecclRedOp_t"><span class="n"><span class="pre">onecclRedOp_t</span></span></a><span class="w"> </span><span class="n"><span class="pre">redop</span></span>, <span class="n"><span class="pre">onecclComm_t</span></span><span class="w"> </span><span class="n"><span class="pre">comm</span></span><span class="sig-paren">)</span><a class="headerlink" href="#c.onecclRedOpDestroy" title="Link to this definition">#</a><br /></dt>
+<dd><p>Function to destroy a previously created custom reduction operation. </p>
+<p>Destroys the reduction operation redop.</p>
+<p>This API assumes the reduction operation has been created with onecclRedOpCreatePreMul with the communicator comm. An operation can be destroyed when the last oneccl function using that reduction operation returns.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>redop</strong> – <strong>[in]</strong> Previously created reduction operation </p></li>
+<li><p><strong>comm</strong> – <strong>[in]</strong> Communicator for the operation </p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Result of the operation </p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="types-api">
+<h2>Types API<a class="headerlink" href="#types-api" title="Link to this heading">#</a></h2>
+<p>This section includes types and definitions used throughout the oneCCL API.</p>
+<dl class="c enum">
+<dt class="sig sig-object c" id="c.onecclResult_t">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6"></span><span class="k"><span class="pre">enum</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclResult_t</span></span></span><a class="headerlink" href="#c.onecclResult_t" title="Link to this definition">#</a><br /></dt>
+<dd><p>Enum for possible result codes for oneCCL functions. </p>
+<p><em>Values:</em></p>
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclSuccess">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6addf944ffa3c0e7d2a30d78097b90ceab"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclSuccess</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclSuccess" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclError">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a9da9a0ac8db918574e47a2c0d6011307"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclError</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclError" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclSystemError">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a34e5583829462dd2458a29a673d6057f"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclSystemError</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclSystemError" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclInternalError">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a4f812700978b6674551ee6db3204c177"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInternalError</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclInternalError" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclInvalidArgument">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6ae822ca56a5094a81eeaa710bbbda24f2"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInvalidArgument</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclInvalidArgument" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclInvalidUsage">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6aef4ebed627acafda7aad7a119cfadf26"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInvalidUsage</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclInvalidUsage" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclInProgress">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a86ee40e881c037b5c643282183d4b55c"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInProgress</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclInProgress" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclFailureGPU">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a50bd5cd7eae5f6e307a13d49c29db180"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclFailureGPU</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclFailureGPU" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclFailureCPU">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a69acbdee581e167c3fdcaa107a9e7bac"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclFailureCPU</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclFailureCPU" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclAllocFailureCPU">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a9f2981e3e3ca5f359d442ebdac3511d7"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclAllocFailureCPU</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclAllocFailureCPU" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclAllocFailureGPU">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6ad65bf426ede70143c3b9cd989b1115c1"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclAllocFailureGPU</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclAllocFailureGPU" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclPluginException">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a291e48eb1f8571f76fa106caad5e4328"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclPluginException</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclPluginException" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclResult_t.onecclNotImplemented">
+<span class="target" id="group__Types_1gabbc1754cf26f87b01a5dbe272dab6ef6a4094ea61ab8beb981499823d82764f9a"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclNotImplemented</span></span></span><a class="headerlink" href="#c.onecclResult_t.onecclNotImplemented" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="c enum">
+<dt class="sig sig-object c" id="c.onecclDataType_t">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97"></span><span class="k"><span class="pre">enum</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclDataType_t</span></span></span><a class="headerlink" href="#c.onecclDataType_t" title="Link to this definition">#</a><br /></dt>
+<dd><p>Enum for different oneCCL data types. </p>
+<p><em>Values:</em></p>
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclInt8">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a7df4cef4f5b5a8a4aa29922a00dbec27"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInt8</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclInt8" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclChar">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a8776bfa66ddcac63e650d45a08779115"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclChar</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclChar" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclUint8">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a684b71c43196f8356babb731961a86eb"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclUint8</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclUint8" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclInt32">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97adf0afd9c8ce7c3f7f41724f3f1bcd2f0"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInt32</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclInt32" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclInt">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a32d18902e56fb72bc9340beb01224ed9"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInt</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclInt" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclUint32">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a70e8640ba0179c32802456c50588a660"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclUint32</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclUint32" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclInt64">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97af8307eef5401c65b90b816869964e8d1"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclInt64</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclInt64" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclUint64">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a7de797cd3837fb92fba5eb6b126f296e"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclUint64</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclUint64" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclFloat16">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a20fa456e32b1b96c78a000db1d277474"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclFloat16</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclFloat16" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclHalf">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97ade9b750c503d056fabfa9d7c53c78f4d"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclHalf</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclHalf" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclFloat32">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97aafcabbaf3076a4949b6330561995971f"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclFloat32</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclFloat32" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclFloat">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97abdcafeb832c0d7f595320c61d9d9a472"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclFloat</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclFloat" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclFloat64">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a76b1c0adac41161fb37eefc7dfa15ddc"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclFloat64</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclFloat64" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclDouble">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97ab9f9ef3b7978775ed21b4de709a35ffa"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclDouble</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclDouble" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclDataType_t.onecclBfloat16">
+<span class="target" id="group__Types_1ga88a02e847676be9442e0d4a416fbbc97a2cd08a4ea8c75ba6f3e1e18211794d4f"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclBfloat16</span></span></span><a class="headerlink" href="#c.onecclDataType_t.onecclBfloat16" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="c enum">
+<dt class="sig sig-object c" id="c.onecclRedOp_t">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117"></span><span class="k"><span class="pre">enum</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclRedOp_t</span></span></span><a class="headerlink" href="#c.onecclRedOp_t" title="Link to this definition">#</a><br /></dt>
+<dd><p>Enum for reduction operations in oneCCL. </p>
+<p><em>Values:</em></p>
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclRedOp_t.onecclSum">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117ac80b949cb73c6be976d3c30437a29297"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclSum</span></span></span><a class="headerlink" href="#c.onecclRedOp_t.onecclSum" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclRedOp_t.onecclProd">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117a716cccafc9d0e5c1afbbf64736a32f43"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclProd</span></span></span><a class="headerlink" href="#c.onecclRedOp_t.onecclProd" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclRedOp_t.onecclMax">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117a0e868932efa2f2e2345ea13aee8f516f"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclMax</span></span></span><a class="headerlink" href="#c.onecclRedOp_t.onecclMax" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclRedOp_t.onecclMin">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117a236f1bd1e6655992fe3187555d4ca9df"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclMin</span></span></span><a class="headerlink" href="#c.onecclRedOp_t.onecclMin" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclRedOp_t.onecclAvg">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117abbfd80c8d07767d3c1c24cf8474eca46"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclAvg</span></span></span><a class="headerlink" href="#c.onecclRedOp_t.onecclAvg" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclRedOp_t.onecclNumOps">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117a164dfd16a157b4e62af6541875dc332c"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclNumOps</span></span></span><a class="headerlink" href="#c.onecclRedOp_t.onecclNumOps" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclRedOp_t.onecclMaxRedOp">
+<span class="target" id="group__Types_1gab614f5600dd3aba18e80c872f148a117af4c385f9e558a201b30cadb1b5d5fc9a"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclMaxRedOp</span></span></span><a class="headerlink" href="#c.onecclRedOp_t.onecclMaxRedOp" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="c enum">
+<dt class="sig sig-object c" id="c.onecclScalarResidence_t">
+<span class="target" id="group__Types_1gaf50d66b3547efdfa77a39d5a7f1d2f68"></span><span class="k"><span class="pre">enum</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclScalarResidence_t</span></span></span><a class="headerlink" href="#c.onecclScalarResidence_t" title="Link to this definition">#</a><br /></dt>
+<dd><p>Scalar residence for user-defined operations. </p>
+<p><em>Values:</em></p>
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclScalarResidence_t.onecclScalarDevice">
+<span class="target" id="group__Types_1gaf50d66b3547efdfa77a39d5a7f1d2f68aa925224242e5110a5da8ffa6fc750bc6"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclScalarDevice</span></span></span><a class="headerlink" href="#c.onecclScalarResidence_t.onecclScalarDevice" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclScalarResidence_t.onecclScalarHostImmediate">
+<span class="target" id="group__Types_1gaf50d66b3547efdfa77a39d5a7f1d2f68ae1fce516536f535cbdcc5fed2b7f7a7d"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclScalarHostImmediate</span></span></span><a class="headerlink" href="#c.onecclScalarResidence_t.onecclScalarHostImmediate" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="c enum">
+<dt class="sig sig-object c" id="c.onecclPluginType_t">
+<span class="target" id="group__Types_1ga84cbba801ca495552e666ca6ab120a88"></span><span class="k"><span class="pre">enum</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclPluginType_t</span></span></span><a class="headerlink" href="#c.onecclPluginType_t" title="Link to this definition">#</a><br /></dt>
+<dd><p>Enum to specify plugin types. </p>
+<p><em>Values:</em></p>
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclPluginType_t.onecclPluginAny">
+<span class="target" id="group__Types_1ga84cbba801ca495552e666ca6ab120a88ab782e2691845d25f31477524e9e75465"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclPluginAny</span></span></span><a class="headerlink" href="#c.onecclPluginType_t.onecclPluginAny" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclPluginType_t.onecclNull">
+<span class="target" id="group__Types_1ga84cbba801ca495552e666ca6ab120a88a1318494906f14d4f1a87a65f75098679"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclNull</span></span></span><a class="headerlink" href="#c.onecclPluginType_t.onecclNull" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclPluginType_t.onecclLegacy">
+<span class="target" id="group__Types_1ga84cbba801ca495552e666ca6ab120a88a0c6839a6fd64edbc75fb3a8571ce7323"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclLegacy</span></span></span><a class="headerlink" href="#c.onecclPluginType_t.onecclLegacy" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclPluginType_t.onecclLegacyCPU">
+<span class="target" id="group__Types_1ga84cbba801ca495552e666ca6ab120a88a512a3a2937708448eab1dbdbe6736c5e"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclLegacyCPU</span></span></span><a class="headerlink" href="#c.onecclPluginType_t.onecclLegacyCPU" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c enumerator">
+<dt class="sig sig-object c" id="c.onecclPluginType_t.onecclUserBackend">
+<span class="target" id="group__Types_1ga84cbba801ca495552e666ca6ab120a88a6bbff19eea3e0cb64a687f565f66ace2"></span><span class="k"><span class="pre">enumerator</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclUserBackend</span></span></span><a class="headerlink" href="#c.onecclPluginType_t.onecclUserBackend" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="c struct">
+<dt class="sig sig-object c" id="c.onecclUniqueId">
+<span class="target" id="structonecclUniqueId"></span><span class="k"><span class="pre">struct</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclUniqueId</span></span></span><a class="headerlink" href="#c.onecclUniqueId" title="Link to this definition">#</a><br /></dt>
+<dd><p>Structure to store unique communicator identifier details. </p>
+<div class="breathe-sectiondef docutils container">
+<p class="breathe-sectiondef-title rubric" id="breathe-section-title-public-members">Public Members</p>
+<dl class="c var">
+<dt class="sig sig-object c" id="c.onecclUniqueId.legacy">
+<span class="target" id="structonecclUniqueId_1a5c7cf6b3864ce6c62bed9b0f6f7a30fa"></span><span class="kt"><span class="pre">char</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">legacy</span></span></span><span class="p"><span class="pre">[</span></span><span class="m"><span class="pre">512</span></span><span class="p"><span class="pre">]</span></span><a class="headerlink" href="#c.onecclUniqueId.legacy" title="Link to this definition">#</a><br /></dt>
+<dd><p>Legacy identifier. </p>
+</dd></dl>
+
+<dl class="c var">
+<dt class="sig sig-object c" id="c.onecclUniqueId.nccl">
+<span class="target" id="structonecclUniqueId_1a051908d50b9af28602c0076226a3c68d"></span><span class="kt"><span class="pre">char</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">nccl</span></span></span><span class="p"><span class="pre">[</span></span><span class="m"><span class="pre">512</span></span><span class="p"><span class="pre">]</span></span><a class="headerlink" href="#c.onecclUniqueId.nccl" title="Link to this definition">#</a><br /></dt>
+<dd><p>NCCL identifier. </p>
+</dd></dl>
+
+<dl class="c var">
+<dt class="sig sig-object c" id="c.onecclUniqueId.any">
+<span class="target" id="structonecclUniqueId_1a01ee059c309d22c16c58cce0dc7878cf"></span><span class="kt"><span class="pre">char</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">any</span></span></span><span class="p"><span class="pre">[</span></span><span class="m"><span class="pre">2048</span></span><span class="p"><span class="pre">]</span></span><a class="headerlink" href="#c.onecclUniqueId.any" title="Link to this definition">#</a><br /></dt>
+<dd><p>Additional space for any identifier. </p>
+</dd></dl>
+
+<dl class="c var">
+<dt class="sig sig-object c" id="c.onecclUniqueId.data">
+<span class="target" id="structonecclUniqueId_1aa36ee4794335487b83ab2d168f684851"></span><span class="kt"><span class="pre">char</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">data</span></span></span><span class="p"><span class="pre">[</span></span><span class="m"><span class="pre">4096</span></span><span class="p"><span class="pre">]</span></span><a class="headerlink" href="#c.onecclUniqueId.data" title="Link to this definition">#</a><br /></dt>
+<dd></dd></dl>
+
+<dl class="c var">
+<dt class="sig sig-object c">
+<span class="target" id="structonecclUniqueId_1aea23e0427c346de3cb7cc270a4a01f22"></span><span class="sig-name descname"><span class="pre">union</span> <span class="pre">onecclUniqueId</span></span></dt>
+<dd></dd></dl>
+
+</div>
+</dd></dl>
+
+<dl class="c struct">
+<dt class="sig sig-object c" id="c.onecclConfig">
+<span class="target" id="structonecclConfig"></span><span class="k"><span class="pre">struct</span></span><span class="w"> </span><span class="sig-name descname"><span class="n"><span class="pre">onecclConfig</span></span></span><a class="headerlink" href="#c.onecclConfig" title="Link to this definition">#</a><br /></dt>
+<dd><p>Configuration structure for oneCCL communicators. </p>
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="upgrade.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">How to upgrade from C++ API</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="env.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Environment Variables</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+  <div class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav class="bd-toc-nav page-toc">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#communicator-creation-api">Communicator Creation API</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetVersion"><code class="docutils literal notranslate"><span class="pre">onecclGetVersion()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetUniqueId"><code class="docutils literal notranslate"><span class="pre">onecclGetUniqueId()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclExtractVersionComponents"><code class="docutils literal notranslate"><span class="pre">onecclExtractVersionComponents()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommInitRank"><code class="docutils literal notranslate"><span class="pre">onecclCommInitRank()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommInitRankConfig"><code class="docutils literal notranslate"><span class="pre">onecclCommInitRankConfig()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommInitAll"><code class="docutils literal notranslate"><span class="pre">onecclCommInitAll()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommFinalize"><code class="docutils literal notranslate"><span class="pre">onecclCommFinalize()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommDestroy"><code class="docutils literal notranslate"><span class="pre">onecclCommDestroy()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommAbort"><code class="docutils literal notranslate"><span class="pre">onecclCommAbort()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommSplit"><code class="docutils literal notranslate"><span class="pre">onecclCommSplit()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetErrorString"><code class="docutils literal notranslate"><span class="pre">onecclGetErrorString()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGetLastError"><code class="docutils literal notranslate"><span class="pre">onecclGetLastError()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommCount"><code class="docutils literal notranslate"><span class="pre">onecclCommCount()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommDevice"><code class="docutils literal notranslate"><span class="pre">onecclCommDevice()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommUserRank"><code class="docutils literal notranslate"><span class="pre">onecclCommUserRank()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclSetDevice"><code class="docutils literal notranslate"><span class="pre">onecclSetDevice()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclCommGetAsyncError"><code class="docutils literal notranslate"><span class="pre">onecclCommGetAsyncError()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#collective-functions-api">Collective Functions API</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclReduce"><code class="docutils literal notranslate"><span class="pre">onecclReduce()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclAllReduce"><code class="docutils literal notranslate"><span class="pre">onecclAllReduce()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclBroadcast"><code class="docutils literal notranslate"><span class="pre">onecclBroadcast()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclReduceScatter"><code class="docutils literal notranslate"><span class="pre">onecclReduceScatter()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclAllGather"><code class="docutils literal notranslate"><span class="pre">onecclAllGather()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclAllToAll"><code class="docutils literal notranslate"><span class="pre">onecclAllToAll()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclSend"><code class="docutils literal notranslate"><span class="pre">onecclSend()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRecv"><code class="docutils literal notranslate"><span class="pre">onecclRecv()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGroupStart"><code class="docutils literal notranslate"><span class="pre">onecclGroupStart()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclGroupEnd"><code class="docutils literal notranslate"><span class="pre">onecclGroupEnd()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOpCreatePreMulSum"><code class="docutils literal notranslate"><span class="pre">onecclRedOpCreatePreMulSum()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOpDestroy"><code class="docutils literal notranslate"><span class="pre">onecclRedOpDestroy()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#types-api">Types API</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t"><code class="docutils literal notranslate"><span class="pre">onecclResult_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclSuccess"><code class="docutils literal notranslate"><span class="pre">onecclSuccess</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclError"><code class="docutils literal notranslate"><span class="pre">onecclError</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclSystemError"><code class="docutils literal notranslate"><span class="pre">onecclSystemError</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInternalError"><code class="docutils literal notranslate"><span class="pre">onecclInternalError</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInvalidArgument"><code class="docutils literal notranslate"><span class="pre">onecclInvalidArgument</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInvalidUsage"><code class="docutils literal notranslate"><span class="pre">onecclInvalidUsage</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclInProgress"><code class="docutils literal notranslate"><span class="pre">onecclInProgress</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclFailureGPU"><code class="docutils literal notranslate"><span class="pre">onecclFailureGPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclFailureCPU"><code class="docutils literal notranslate"><span class="pre">onecclFailureCPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclAllocFailureCPU"><code class="docutils literal notranslate"><span class="pre">onecclAllocFailureCPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclAllocFailureGPU"><code class="docutils literal notranslate"><span class="pre">onecclAllocFailureGPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclPluginException"><code class="docutils literal notranslate"><span class="pre">onecclPluginException</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclResult_t.onecclNotImplemented"><code class="docutils literal notranslate"><span class="pre">onecclNotImplemented</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t"><code class="docutils literal notranslate"><span class="pre">onecclDataType_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt8"><code class="docutils literal notranslate"><span class="pre">onecclInt8</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclChar"><code class="docutils literal notranslate"><span class="pre">onecclChar</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclUint8"><code class="docutils literal notranslate"><span class="pre">onecclUint8</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt32"><code class="docutils literal notranslate"><span class="pre">onecclInt32</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt"><code class="docutils literal notranslate"><span class="pre">onecclInt</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclUint32"><code class="docutils literal notranslate"><span class="pre">onecclUint32</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclInt64"><code class="docutils literal notranslate"><span class="pre">onecclInt64</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclUint64"><code class="docutils literal notranslate"><span class="pre">onecclUint64</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat16"><code class="docutils literal notranslate"><span class="pre">onecclFloat16</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclHalf"><code class="docutils literal notranslate"><span class="pre">onecclHalf</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat32"><code class="docutils literal notranslate"><span class="pre">onecclFloat32</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat"><code class="docutils literal notranslate"><span class="pre">onecclFloat</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclFloat64"><code class="docutils literal notranslate"><span class="pre">onecclFloat64</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclDouble"><code class="docutils literal notranslate"><span class="pre">onecclDouble</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclDataType_t.onecclBfloat16"><code class="docutils literal notranslate"><span class="pre">onecclBfloat16</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t"><code class="docutils literal notranslate"><span class="pre">onecclRedOp_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclSum"><code class="docutils literal notranslate"><span class="pre">onecclSum</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclProd"><code class="docutils literal notranslate"><span class="pre">onecclProd</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclMax"><code class="docutils literal notranslate"><span class="pre">onecclMax</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclMin"><code class="docutils literal notranslate"><span class="pre">onecclMin</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclAvg"><code class="docutils literal notranslate"><span class="pre">onecclAvg</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclNumOps"><code class="docutils literal notranslate"><span class="pre">onecclNumOps</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclRedOp_t.onecclMaxRedOp"><code class="docutils literal notranslate"><span class="pre">onecclMaxRedOp</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclScalarResidence_t"><code class="docutils literal notranslate"><span class="pre">onecclScalarResidence_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclScalarResidence_t.onecclScalarDevice"><code class="docutils literal notranslate"><span class="pre">onecclScalarDevice</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclScalarResidence_t.onecclScalarHostImmediate"><code class="docutils literal notranslate"><span class="pre">onecclScalarHostImmediate</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t"><code class="docutils literal notranslate"><span class="pre">onecclPluginType_t</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclPluginAny"><code class="docutils literal notranslate"><span class="pre">onecclPluginAny</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclNull"><code class="docutils literal notranslate"><span class="pre">onecclNull</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclLegacy"><code class="docutils literal notranslate"><span class="pre">onecclLegacy</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclLegacyCPU"><code class="docutils literal notranslate"><span class="pre">onecclLegacyCPU</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclPluginType_t.onecclUserBackend"><code class="docutils literal notranslate"><span class="pre">onecclUserBackend</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId"><code class="docutils literal notranslate"><span class="pre">onecclUniqueId</span></code></a><ul class="visible nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.legacy"><code class="docutils literal notranslate"><span class="pre">legacy</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.nccl"><code class="docutils literal notranslate"><span class="pre">nccl</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.any"><code class="docutils literal notranslate"><span class="pre">any</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclUniqueId.data"><code class="docutils literal notranslate"><span class="pre">data</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c.onecclConfig"><code class="docutils literal notranslate"><span class="pre">onecclConfig</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By Intel
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023-2025, Intel.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b"></script>
+<script src="_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

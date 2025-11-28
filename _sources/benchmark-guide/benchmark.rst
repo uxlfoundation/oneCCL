@@ -9,7 +9,7 @@ The oneCCL benchmark provides performance measurements for the collective operat
 * ``allgatherv``
 * ``alltoall``
 * ``alltoallv``
-* ``reduce-scatter``
+* ``reduce_scatter``
 * ``broadcast``
 
 The benchmark is distributed with the oneCCL package. You can find it in the examples directory within the oneCCL installation path.
@@ -159,7 +159,7 @@ The benchmark accepts the following arguments:
      - Specify the type of the SYCL queue. The possible values are ``in_order`` and ``out_order``.
      - ``out_order``
    * - ``-l``, ``--coll``
-     - Specify the collective to run. Accept a comma-separated list, without whitespace characters, of collectives to run. The available collectives are ``allreduce``, ``reduce``, ``alltoallv``, ``alltoall``, ``allgatherv``, ``reduce-scatter``, ``broadcast``.
+     - Specify the collective to run. Accept a comma-separated list, without whitespace characters, of collectives to run. The available collectives are ``allreduce``, ``reduce``, ``alltoallv``, ``alltoall``, ``allgatherv``, ``reduce_scatter``, ``broadcast``.
      - ``allreduce``
    * - ``-d``, ``--dtype``
      - Specify the datatype. Accept a comma-separated list, without whitespace characters, of datatypes to benchmark. The available types are ``int8``, ``int32``, ``int64``, ``uint64``, ``float16``, ``float32``, and ``bfloat16``.

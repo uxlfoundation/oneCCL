@@ -1,0 +1,523 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Index &#8212; oneAPI Collective Communications Library (C API) 2021.17.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="_static/styles/bootstrap.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+
+  
+  <link href="_static/vendor/fontawesome/6.5.2/css/all.min.css?digest=dfe6caa3a7d634c4db9b" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="_static/vendor/fontawesome/6.5.2/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/sphinx-book-theme.css?v=eba8b062" />
+    <link rel="stylesheet" type="text/css" href="_static/custom.css?v=f7f6fd85" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b" />
+  <script src="_static/vendor/fontawesome/6.5.2/js/all.min.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+    <script src="_static/documentation_options.js?v=4408b660"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/scripts/sphinx-book-theme.js?v=887ef09a"></script>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/mermaid@11.2.0/dist/mermaid.esm.min.mjs"></script>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.1.4/dist/mermaid-layout-elk.esm.min.mjs"></script>
+    <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.2.0/dist/mermaid.esm.min.mjs";import elkLayouts from "https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.1.4/dist/mermaid-layout-elk.esm.min.mjs";mermaid.registerLayoutLoaders(elkLayouts);mermaid.initialize({startOnLoad:false});</script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+    <script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.2.0/dist/mermaid.esm.min.mjs";
+window.addEventListener("load", () => mermaid.run());
+</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'genindex';</script>
+    <link rel="index" title="Index" href="#" />
+    <link rel="search" title="Search" href="search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-primary-sidebar-checkbox"/>
+  <label class="overlay overlay-primary" for="pst-primary-sidebar-checkbox"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          id="pst-secondary-sidebar-checkbox"/>
+  <label class="overlay overlay-secondary" for="pst-secondary-sidebar-checkbox"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">oneAPI Collective Communications Library (C API) 2021.17.0 documentation</p>
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+ <script>
+ document.write(`
+   <button class="btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">About</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Get Started</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Getting Started with oneCCL</a></li>
+<li class="toctree-l1"><a class="reference internal" href="examples.html">Example oneCCL app</a></li>
+<li class="toctree-l1"><a class="reference internal" href="plugins.html">New features of oneCCL with C API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="upgrade.html">How to upgrade from C++ API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Developer Reference</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Documentation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="env.html">Environment Variables</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="theme-switch fa-solid fa-sun fa-lg" data-mode="light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg" data-mode="dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"></i>
+  </button>
+`);
+</script>
+
+
+<script>
+document.write(`
+  <button class="btn btn-sm pst-navbar-icon search-button search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+  </button>
+`);
+</script>
+
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1></h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+
+<h1 id="index">Index</h1>
+
+<div class="genindex-jumpbox">
+ <a href="#O"><strong>O</strong></a>
+ 
+</div>
+<h2 id="O">O</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#c.onecclAllGather">onecclAllGather (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclAllReduce">onecclAllReduce (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclAllToAll">onecclAllToAll (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclBroadcast">onecclBroadcast (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommAbort">onecclCommAbort (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommCount">onecclCommCount (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommDestroy">onecclCommDestroy (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommDevice">onecclCommDevice (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommFinalize">onecclCommFinalize (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommGetAsyncError">onecclCommGetAsyncError (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommInitAll">onecclCommInitAll (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommInitRank">onecclCommInitRank (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommInitRankConfig">onecclCommInitRankConfig (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommSplit">onecclCommSplit (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclCommUserRank">onecclCommUserRank (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclConfig">onecclConfig (C struct)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t">onecclDataType_t (C enum)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclBfloat16">onecclDataType_t.onecclBfloat16 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclChar">onecclDataType_t.onecclChar (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclDouble">onecclDataType_t.onecclDouble (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclFloat">onecclDataType_t.onecclFloat (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclFloat16">onecclDataType_t.onecclFloat16 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclFloat32">onecclDataType_t.onecclFloat32 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclFloat64">onecclDataType_t.onecclFloat64 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclHalf">onecclDataType_t.onecclHalf (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclInt">onecclDataType_t.onecclInt (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclInt32">onecclDataType_t.onecclInt32 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclInt64">onecclDataType_t.onecclInt64 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclInt8">onecclDataType_t.onecclInt8 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclUint32">onecclDataType_t.onecclUint32 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclUint64">onecclDataType_t.onecclUint64 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclDataType_t.onecclUint8">onecclDataType_t.onecclUint8 (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclExtractVersionComponents">onecclExtractVersionComponents (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclGetErrorString">onecclGetErrorString (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclGetLastError">onecclGetLastError (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclGetUniqueId">onecclGetUniqueId (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclGetVersion">onecclGetVersion (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclGroupEnd">onecclGroupEnd (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclGroupStart">onecclGroupStart (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclPluginType_t">onecclPluginType_t (C enum)</a>
+</li>
+      <li><a href="api.html#c.onecclPluginType_t.onecclLegacy">onecclPluginType_t.onecclLegacy (C enumerator)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#c.onecclPluginType_t.onecclLegacyCPU">onecclPluginType_t.onecclLegacyCPU (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclPluginType_t.onecclNull">onecclPluginType_t.onecclNull (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclPluginType_t.onecclPluginAny">onecclPluginType_t.onecclPluginAny (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclPluginType_t.onecclUserBackend">onecclPluginType_t.onecclUserBackend (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRecv">onecclRecv (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t">onecclRedOp_t (C enum)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t.onecclAvg">onecclRedOp_t.onecclAvg (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t.onecclMax">onecclRedOp_t.onecclMax (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t.onecclMaxRedOp">onecclRedOp_t.onecclMaxRedOp (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t.onecclMin">onecclRedOp_t.onecclMin (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t.onecclNumOps">onecclRedOp_t.onecclNumOps (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t.onecclProd">onecclRedOp_t.onecclProd (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOp_t.onecclSum">onecclRedOp_t.onecclSum (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOpCreatePreMulSum">onecclRedOpCreatePreMulSum (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclRedOpDestroy">onecclRedOpDestroy (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclReduce">onecclReduce (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclReduceScatter">onecclReduceScatter (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t">onecclResult_t (C enum)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclAllocFailureCPU">onecclResult_t.onecclAllocFailureCPU (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclAllocFailureGPU">onecclResult_t.onecclAllocFailureGPU (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclError">onecclResult_t.onecclError (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclFailureCPU">onecclResult_t.onecclFailureCPU (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclFailureGPU">onecclResult_t.onecclFailureGPU (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclInProgress">onecclResult_t.onecclInProgress (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclInternalError">onecclResult_t.onecclInternalError (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclInvalidArgument">onecclResult_t.onecclInvalidArgument (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclInvalidUsage">onecclResult_t.onecclInvalidUsage (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclNotImplemented">onecclResult_t.onecclNotImplemented (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclPluginException">onecclResult_t.onecclPluginException (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclSuccess">onecclResult_t.onecclSuccess (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclResult_t.onecclSystemError">onecclResult_t.onecclSystemError (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclScalarResidence_t">onecclScalarResidence_t (C enum)</a>
+</li>
+      <li><a href="api.html#c.onecclScalarResidence_t.onecclScalarDevice">onecclScalarResidence_t.onecclScalarDevice (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclScalarResidence_t.onecclScalarHostImmediate">onecclScalarResidence_t.onecclScalarHostImmediate (C enumerator)</a>
+</li>
+      <li><a href="api.html#c.onecclSend">onecclSend (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclSetDevice">onecclSetDevice (C function)</a>
+</li>
+      <li><a href="api.html#c.onecclUniqueId">onecclUniqueId (C struct)</a>
+</li>
+      <li><a href="api.html#c.onecclUniqueId.any">onecclUniqueId.any (C var)</a>
+</li>
+      <li><a href="api.html#c.onecclUniqueId.data">onecclUniqueId.data (C var)</a>
+</li>
+      <li><a href="api.html#c.onecclUniqueId.legacy">onecclUniqueId.legacy (C var)</a>
+</li>
+      <li><a href="api.html#c.onecclUniqueId.nccl">onecclUniqueId.nccl (C var)</a>
+</li>
+  </ul></td>
+</tr></table>
+
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By Intel
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023-2025, Intel.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="_static/scripts/bootstrap.js?digest=dfe6caa3a7d634c4db9b"></script>
+<script src="_static/scripts/pydata-sphinx-theme.js?digest=dfe6caa3a7d634c4db9b"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
