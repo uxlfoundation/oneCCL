@@ -155,7 +155,7 @@
     <script>document.write(`<img src="../_static/oneAPI-rgb-rev-100.png" class="logo__image only-dark" alt=""/>`);</script>
   
   
-    <p class="title logo__title">oneCCL Documentation 2021.16</p>
+    <p class="title logo__title">oneCCL Documentation 2021.17.0</p>
   
 </a></div>
         <div class="sidebar-primary-item">
@@ -457,23 +457,13 @@ document.write(`
                   
   <section id="build-a-sample-application">
 <h1>Build a Sample Application<a class="headerlink" href="#build-a-sample-application" title="Link to this heading">#</a></h1>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>In oneCCL version 2021.17 included with the 2025.3 oneAPI release, oneCCL has added support for a new <strong>C API</strong> that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. Details about the new API, instructions on how to build, and run an example can be found <a class="reference external" href="../v2/index.html">here</a>.</p>
+<p>The existing <strong>C++ API</strong> will remain the default API for the 2021.17 release.</p>
+</div>
 <p>The sample code below shows how to use oneCCL API to perform allreduce communication for SYCL USM memory.</p>
-<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cm">/*</span>
-<span class="cm"> Copyright 2016-2020 Intel Corporation</span>
-<span class="cm"> </span>
-<span class="cm"> Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
-<span class="cm"> you may not use this file except in compliance with the License.</span>
-<span class="cm"> You may obtain a copy of the License at</span>
-<span class="cm"> </span>
-<span class="cm">     http://www.apache.org/licenses/LICENSE-2.0</span>
-<span class="cm"> </span>
-<span class="cm"> Unless required by applicable law or agreed to in writing, software</span>
-<span class="cm"> distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
-<span class="cm"> WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
-<span class="cm"> See the License for the specific language governing permissions and</span>
-<span class="cm"> limitations under the License.</span>
-<span class="cm">*/</span>
-<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
+<div class="highlight-cpp notranslate"><div class="highlight"><pre><span></span><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
 <span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;mpi.h&gt;</span>
 <span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;oneapi/ccl.hpp&quot;</span>
 
@@ -735,7 +725,7 @@ By Intel
   <div class="footer-item">
     
 <div class="extra_footer">
-  <p align="right"><a href="https://www.intel.com/content/www/us/en/privacy/intel-cookie-notice.html">Cookies</a></p><br><div>Last updated: 07 July, 2025</div>
+  <p align="right"><a href="https://www.intel.com/content/www/us/en/privacy/intel-cookie-notice.html">Cookies</a></p><br><div>Last updated: 21 October, 2025</div>
 </div>
   </div>
   
