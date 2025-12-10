@@ -1,0 +1,4 @@
+[submodule "deps/libccl"]
+	path = deps/libccl
+	url = https://github.com/uxlfoundation/oneCCL.git
+	branch = master

@@ -1,0 +1,249 @@
+diff --git a/doc/rst/source/advanced-configuration.rst b/doc/rst/source/advanced-configuration.rst
+index 979563443..452013ef7 100644
+--- a/doc/rst/source/advanced-configuration.rst
++++ b/doc/rst/source/advanced-configuration.rst
+@@ -1,6 +1,11 @@
+ Advanced Configuration
+ ======================
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ .. toctree::
+    :maxdepth: 1
+ 
+diff --git a/doc/rst/source/api.rst b/doc/rst/source/api.rst
+index 16c2080ec..cefa8429f 100644
+--- a/doc/rst/source/api.rst
++++ b/doc/rst/source/api.rst
+@@ -4,6 +4,11 @@
+ oneCCL API
+ ===========
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ .. toctree::
+     :maxdepth: 2
+     :glob:
+diff --git a/doc/rst/source/api/operations/collective-operations.rst b/doc/rst/source/api/operations/collective-operations.rst
+index c83521030..b6cf404e1 100644
+--- a/doc/rst/source/api/operations/collective-operations.rst
++++ b/doc/rst/source/api/operations/collective-operations.rst
+@@ -1,6 +1,11 @@
+ Collective Operations
+ =====================
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ .. toctree::
+     :maxdepth: 1
+     :glob:
+diff --git a/doc/rst/source/api/operations/datatypes.rst b/doc/rst/source/api/operations/datatypes.rst
+index f2c608c35..1a2cd44ea 100644
+--- a/doc/rst/source/api/operations/datatypes.rst
++++ b/doc/rst/source/api/operations/datatypes.rst
+@@ -1,6 +1,11 @@
+ Datatypes
+ ***********************
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ .. doxygengroup:: datatype
+    :project: oneccl
+    :content-only:
+diff --git a/doc/rst/source/api/operations/point-to-point.rst b/doc/rst/source/api/operations/point-to-point.rst
+index a34ff9df4..a61088cf8 100644
+--- a/doc/rst/source/api/operations/point-to-point.rst
++++ b/doc/rst/source/api/operations/point-to-point.rst
+@@ -3,6 +3,11 @@
+ Point-To-Point Operations
+ **************************
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ Point-to-point operations enable direct communication between two specific entities, facilitating data exchange, synchronization, and coordination within a parallel computing environment. 
+ 
+ The following point-to-point operations are available in oneCCL: 
+diff --git a/doc/rst/source/conf.py b/doc/rst/source/conf.py
+index 41470783e..1b215bb6e 100755
+--- a/doc/rst/source/conf.py
++++ b/doc/rst/source/conf.py
+@@ -139,5 +139,5 @@ html_theme_options = {
+     'extra_footer': '<p align="right"><a href="https://www.intel.com/content/www/us/en/privacy/intel-cookie-notice.html">Cookies</a></p><br><div>Last updated: ' + last_updated + '</div>'
+ }
+ 
+-html_theme_options["logo"] = {"text": "oneCCL Documentation 2021.16.2"}
++html_theme_options["logo"] = {"text": "oneCCL Documentation 2021.17.0"}
+ 
+diff --git a/doc/rst/source/env-variables.rst b/doc/rst/source/env-variables.rst
+index 6219e0bd6..65c471bcd 100644
+--- a/doc/rst/source/env-variables.rst
++++ b/doc/rst/source/env-variables.rst
+@@ -2,6 +2,11 @@
+ Environment Variables
+ =====================
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ .. _collective-algorithms-selection:
+ 
+ Collective Algorithms Selection
+diff --git a/doc/rst/source/general-configuration.rst b/doc/rst/source/general-configuration.rst
+index bf2f37c8c..734151f8e 100644
+--- a/doc/rst/source/general-configuration.rst
++++ b/doc/rst/source/general-configuration.rst
+@@ -1,6 +1,11 @@
+ General Configuration
+ =====================
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ .. toctree::
+    :maxdepth: 1
+ 
+diff --git a/doc/rst/source/index.rst b/doc/rst/source/index.rst
+index e664a6600..19afa953f 100644
+--- a/doc/rst/source/index.rst
++++ b/doc/rst/source/index.rst
+@@ -3,7 +3,10 @@
+ |product_full|
+ =======================================================
+    
++.. note::
++   In |product_short| version 2021.17 included with the 2025.3 oneAPI release, oneCCL has added support for a new **C API** that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. Details about the new API, instructions on how to build, and run an example can be found `here <./v2/index.html>`_.
+ 
++   The existing **C++ API** will remain the default API for the 2021.17 release.
+ 
+ .. toctree::
+    :maxdepth: 2
+diff --git a/doc/rst/source/introduction.rst b/doc/rst/source/introduction.rst
+index 1d5ee2379..c2d1046fd 100644
+--- a/doc/rst/source/introduction.rst
++++ b/doc/rst/source/introduction.rst
+@@ -4,6 +4,11 @@
+ Introduction
+ ============
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ |product_full| (|product_short|) provides an efficient implementation of communication patterns used in deep learning. 
+ 
+ |product_short| features include:
+diff --git a/doc/rst/source/introduction/cmake-configuration.rst b/doc/rst/source/introduction/cmake-configuration.rst
+index 39a27773a..a3e6f48f0 100644
+--- a/doc/rst/source/introduction/cmake-configuration.rst
++++ b/doc/rst/source/introduction/cmake-configuration.rst
+@@ -1,6 +1,11 @@
+ Use oneCCL package from CMake
+ =============================
+ 
++.. note::
++   In |product_short| version 2021.17 included with the 2025.3 oneAPI release, oneCCL has added support for a new **C API** that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. Details about the new API, instructions on how to build, and run an example can be found `here <../v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ ``oneCCLConfig.cmake`` and ``oneCCLConfigVersion.cmake`` are included into oneCCL distribution.
+ 
+ With these files, you can integrate oneCCL into a user project with the
+diff --git a/doc/rst/source/introduction/installation.rst b/doc/rst/source/introduction/installation.rst
+index 78081da26..0b58a26dd 100644
+--- a/doc/rst/source/introduction/installation.rst
++++ b/doc/rst/source/introduction/installation.rst
+@@ -8,6 +8,11 @@
+ Install oneCCL from Source
+ ==========================
+ 
++.. note::
++   In |product_short| version 2021.17 included with the 2025.3 oneAPI release, oneCCL has added support for a new **C API** that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. Details about the new API, instructions on how to build, and run an example can be found `here <../v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ Install and configure the |product_full| (|product_short|) on your system.
+ |product_short| supports different installation scenarios using command line interface (CLI).
+ 
+diff --git a/doc/rst/source/introduction/sample.rst b/doc/rst/source/introduction/sample.rst
+index ade685691..d4d4c6a32 100644
+--- a/doc/rst/source/introduction/sample.rst
++++ b/doc/rst/source/introduction/sample.rst
+@@ -2,6 +2,11 @@
+ Build a Sample Application
+ ==========================
+ 
++.. note::
++   In |product_short| version 2021.17 included with the 2025.3 oneAPI release, oneCCL has added support for a new **C API** that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. Details about the new API, instructions on how to build, and run an example can be found `here <../v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ The sample code below shows how to use |product_short| API to perform allreduce communication for SYCL USM memory.
+ 
+ .. literalinclude:: sample.cpp
+diff --git a/doc/rst/source/legal.rst b/doc/rst/source/legal.rst
+index e92d42970..7a0110aec 100644
+--- a/doc/rst/source/legal.rst
++++ b/doc/rst/source/legal.rst
+@@ -2,6 +2,11 @@
+ Notices and Disclaimers
+ =======================
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ Performance varies by use, configuration and other factors. Learn more at www.Intel.com/PerformanceIndex​.
+ 
+ No product or component can be absolutely secure.
+diff --git a/doc/rst/source/programming-model.rst b/doc/rst/source/programming-model.rst
+index f8f7221fa..150915bb1 100644
+--- a/doc/rst/source/programming-model.rst
++++ b/doc/rst/source/programming-model.rst
+@@ -2,6 +2,11 @@
+ Programming Model
+ =================
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ The programming model for oneCCL describes how to:
+ 
+ * Set up distributed computations.
+diff --git a/doc/rst/source/release-notes.rst b/doc/rst/source/release-notes.rst
+index cdb2b709f..cc7f800d2 100644
+--- a/doc/rst/source/release-notes.rst
++++ b/doc/rst/source/release-notes.rst
+@@ -5,4 +5,9 @@
+ Release Notes
+ =============
+ 
++.. note::
++   This document describes the legacy C++ API. Documentation for the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard can be found `here <./v2/index.html>`_.
++
++   The existing **C++ API** will remain the default API for the 2021.17 release.
++
+ Refer to |release_notes|_.
+\ No newline at end of file

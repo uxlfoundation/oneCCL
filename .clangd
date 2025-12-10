@@ -1,0 +1,4 @@
+# Use this file to tune clangd behavior
+CompileFlags:
+  Add: []
+#  Add: ["-DCCL_ENABLE_SYCL 1", "-DCCL_ENABLE_ZE 1" , "-DCCL_ENABLE_UMF 1"]

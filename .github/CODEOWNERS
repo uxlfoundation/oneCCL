@@ -1,0 +1,20 @@
+# Documentation owners and reviewers
+doc/        @Maria1Petrova @ranukund @maciekpac
+*.md        @Maria1Petrova @maciekpac
+man/        @nikitaxgusev @srirajpaul @maciekpac
+
+# TTP files
+third-party*    @Maria1Petrova
+
+# Tests & examples
+tests/    @nikitaxgusev @srirajpaul
+examples/    @nikitaxgusev @srirajpaul
+
+# Infrastructure and tools
+.github/    @Maria1Petrova @nikitaxgusev
+
+# Build & dev infrastructure
+cmake/    @nikitaxgusev @srirajpaul
+
+# C++ code
+src/    @nikitaxgusev @srirajpaul
