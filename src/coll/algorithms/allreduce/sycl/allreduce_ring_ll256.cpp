@@ -71,6 +71,7 @@ static inline void recv_reduce_send(sycl::sub_group &sg,
                                     char *next,
                                     char *src,
                                     int lid,
+                                    size_t valid_bytes,
                                     const ccl_datatype &dtype,
                                     pattern_t pattern) {
 #if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
@@ -79,8 +80,9 @@ static inline void recv_reduce_send(sycl::sub_group &sg,
 
     ll256_recv_data(data, src + lid * sz, sg, lid, pattern);
 
-    message_t *dst_buf = (message_t *)dst;
-    data = sum_kernel(dst_buf[lid], data, dtype);
+    // tail lanes may own fewer than 16 bytes, so load only the valid payload and zero the rest
+    message_t dst_data = ll256_load_message(dst + lid * sz, valid_bytes);
+    data = sum_kernel(dst_data, data, dtype);
 
     ll256_send_data(data, next + lid * sz, pattern);
 #endif
@@ -93,6 +95,7 @@ static inline void recv_reduce_copy_send(sycl::sub_group &sg,
                                          char *src,
                                          int lid,
                                          int req_workitems,
+                                         size_t valid_bytes,
                                          const ccl_datatype &dtype,
                                          pattern_t pattern) {
 #if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
@@ -101,16 +104,38 @@ static inline void recv_reduce_copy_send(sycl::sub_group &sg,
 
     ll256_recv_data(data, src + lid * sz, sg, lid, pattern);
 
-    message_t *send_buf = (message_t *)sendbuf;
-    data = sum_kernel(send_buf[lid], data, dtype);
+    message_t send_data = ll256_load_message(sendbuf + lid * sz, valid_bytes);
+    data = sum_kernel(send_data, data, dtype);
 
-    if (lid < req_workitems) {
-        LscStoreUnCached(dst + lid * sz, data);
-        //dst_buf[lid] = data;
+    // subgroup lanes can fall inside req_workitems yet still have 0 valid bytes; skip the store in that case
+    if (valid_bytes > 0 && lid < req_workitems) {
+        ll256_store_message(dst + lid * sz, data, valid_bytes);
     }
 
     ll256_send_data(data, next + lid * sz, pattern);
 #endif
+}
+
+static inline size_t get_lane_bytes(size_t total_bytes,
+                                    size_t chunk_base,
+                                    int lid,
+                                    int req_workitems) {
+    if (req_workitems <= 0) {
+        return 0;
+    }
+
+    size_t lane_base = chunk_base + static_cast<size_t>(lid) * LS_SZ;
+    size_t chunk_limit = chunk_base + static_cast<size_t>(req_workitems) * LS_SZ;
+
+    if ((lid >= req_workitems) || (lane_base >= chunk_limit) || (lane_base >= total_bytes)) {
+        return 0;
+    }
+
+    size_t bytes_until_chunk_end = chunk_limit - lane_base;
+    size_t bytes_until_total_end = total_bytes - lane_base;
+
+    size_t valid = std::min(bytes_until_chunk_end, bytes_until_total_end);
+    return (valid >= LS_SZ) ? LS_SZ : valid;
 }
 
 sycl::event arc_ll256_allreduce(const void *src,
@@ -131,8 +156,14 @@ sycl::event arc_ll256_allreduce(const void *src,
     sycl::queue q = global_stream->get_native_stream();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t dt_sz = ccl_dtype.size();
+    size_t total_bytes = count * dt_sz;
     char *recv_buf = static_cast<char *>(dst);
     char *send_buf = static_cast<char *>(const_cast<void *>(src));
+
+    if (ccl::global_data::env().sycl_ll_buffer_global) {
+        const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
+        sycl::event barrier_event = invoke_barrier(node_comm, q, {}, is_cpu_barrier);
+    }
 
     /*
      * Intel(R) Arc(TM) A770 Graphics:
@@ -175,9 +206,6 @@ sycl::event arc_ll256_allreduce(const void *src,
     /* To avoid pattern not changed when "iters" is 1 */
     pattern_t pattern_prefix = ++pattern_counter << 16;
 
-    size_t persist_buf_size = ccl::global_data::env().sycl_tmp_buf_size / 3;
-    const int GATHER_BUF_OFFSET = persist_buf_size / 2;
-
     sycl_e = q.submit([&](auto &h) {
         //using namespace sycl::ext::intel::experimental::esimd;
 
@@ -187,19 +215,27 @@ sycl::event arc_ll256_allreduce(const void *src,
         int next_rank = (local_world_rank + 1) % local_world_size;
 
         char *local_peer_bufs[ARC_MAX_NUM];
-#if 0
-        auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
-        for (int i = 0; i < local_world_size; i++) {
-            local_peer_bufs[i] = (char *)remote_ptrs[i];
+        char *local_tmp_buf;
+        int GATHER_BUF_OFFSET;
+        if (ccl::global_data::env().sycl_ll_buffer_global) {
+            // use large kernel persistent buffers
+            for (int i = 0; i < local_world_size; i++) {
+                local_peer_bufs[i] = (char *)get_remote_node_tmp_buf(0, comm)[i];
+            }
+            //char *local_tmp_buf = local_peer_bufs[local_world_rank];
+            local_tmp_buf = (char *)get_tmp_buf(0, comm);
+            size_t persist_buf_size = ccl::global_data::env().sycl_tmp_buf_size / 3;
+            GATHER_BUF_OFFSET = persist_buf_size;
         }
-#else
-        // use large kernel persistent buffers
-        for (int i = 0; i < local_world_size; i++) {
-            local_peer_bufs[i] = (char *)get_remote_node_tmp_buf(0, comm)[i];
+        else {
+            // use small kernel persistent buffers
+            auto [local_small_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
+            for (int i = 0; i < local_world_size; i++) {
+                local_peer_bufs[i] = (char *)remote_ptrs[i];
+            }
+            local_tmp_buf = (char *)local_small_buf;
+            GATHER_BUF_OFFSET = ccl_tmp_bufs::buf_size / 2;
         }
-        //char *local_tmp_buf = local_peer_bufs[local_world_rank];
-        char *local_tmp_buf = (char *)get_tmp_buf(0, comm);
-#endif
 
         /*
          * In a single subgroup:
@@ -315,10 +351,11 @@ sycl::event arc_ll256_allreduce(const void *src,
                             offset_with_pattern =
                                 base_with_pattern + local_world_rank * chunk_with_pattern;
 
-                            size_t left_size = count * dt_sz - offset;
+                            size_t lane_bytes =
+                                get_lane_bytes(total_bytes, offset, sg_lid, req_workitems);
                             ll256_send(send_buf + offset + sg_lid * LS_SZ,
                                        next + offset_with_pattern + sg_lid * LS_SZ,
-                                       sg_lid * LS_SZ < left_size,
+                                       lane_bytes,
                                        pattern);
                         }
 
@@ -327,12 +364,15 @@ sycl::event arc_ll256_allreduce(const void *src,
                             idx = (local_world_rank + local_world_size + 1 - j) % local_world_size;
                             offset = base + idx * chunk_sz;
                             offset_with_pattern = base_with_pattern + idx * chunk_with_pattern;
+                            size_t lane_bytes =
+                                get_lane_bytes(total_bytes, offset, sg_lid, req_workitems);
 
                             recv_reduce_send(sg,
                                              send_buf + offset,
                                              next + offset_with_pattern,
                                              local_tmp_buf + offset_with_pattern,
                                              sg_lid,
+                                             lane_bytes,
                                              ccl_dtype,
                                              pattern);
                         }
@@ -343,6 +383,8 @@ sycl::event arc_ll256_allreduce(const void *src,
                             idx = (local_world_rank + 1) % local_world_size;
                             offset = base + idx * chunk_sz;
                             offset_with_pattern = base_with_pattern + idx * chunk_with_pattern;
+                            size_t lane_bytes =
+                                get_lane_bytes(total_bytes, offset, sg_lid, req_workitems);
 
                             recv_reduce_copy_send(sg,
                                                   send_buf + offset,
@@ -351,6 +393,7 @@ sycl::event arc_ll256_allreduce(const void *src,
                                                   local_tmp_buf + offset_with_pattern,
                                                   sg_lid,
                                                   req_workitems,
+                                                  lane_bytes,
                                                   ccl_dtype,
                                                   pattern);
                         }
@@ -361,6 +404,8 @@ sycl::event arc_ll256_allreduce(const void *src,
                             offset = base + idx * chunk_sz;
                             offset_with_pattern =
                                 GATHER_BUF_OFFSET + base_with_pattern + idx * chunk_with_pattern;
+                            size_t lane_bytes =
+                                get_lane_bytes(total_bytes, offset, sg_lid, req_workitems);
 
                             ll256_forward(local_tmp_buf + offset_with_pattern + sg_lid * LS_SZ,
                                           recv_buf + offset + sg_lid * LS_SZ,
@@ -368,6 +413,7 @@ sycl::event arc_ll256_allreduce(const void *src,
                                           sg,
                                           sg_lid,
                                           req_workitems,
+                                          lane_bytes,
                                           pattern);
                         }
 
@@ -377,12 +423,15 @@ sycl::event arc_ll256_allreduce(const void *src,
                             offset = base + idx * chunk_sz;
                             offset_with_pattern =
                                 GATHER_BUF_OFFSET + base_with_pattern + idx * chunk_with_pattern;
+                            size_t lane_bytes =
+                                get_lane_bytes(total_bytes, offset, sg_lid, req_workitems);
 
                             ll256_recv(recv_buf + offset + sg_lid * LS_SZ,
                                        local_tmp_buf + offset_with_pattern + sg_lid * LS_SZ,
                                        sg,
                                        sg_lid,
                                        req_workitems,
+                                       lane_bytes,
                                        pattern);
                         }
                     }

@@ -242,14 +242,20 @@ static size_t calculate_ll_buf_size(sycl::queue q) {
     size_t mem_used_2 = ccl::global_data::get().get_local_proc_count() *
                         ccl::global_data::get().ze_data->devices[dev_id].total_threads *
                         sizeof(int) * 4; // sizeof message_t
-    mem_used_2 *= 2; // two slots for gather and scatter
+    //mem_used_2 *= 2; // two slots for gather and scatter
     mem_used_2 = roundup_2MB(mem_used_2);
     LOG_DEBUG("Allocate LL ring buffer of total_threads: ",
               ccl::global_data::get().ze_data->devices[dev_id].total_threads,
               ", mem_used_2: ",
               mem_used_2);
 
-    return std::max(mem_used_1, mem_used_2);
+    // Roger's path needs two copies of the buffer
+    if (mem_used_1 > mem_used_2) {
+        return mem_used_1;
+    }
+    else {
+        return mem_used_2;
+    }
 }
 
 void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
@@ -285,6 +291,8 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
 
         std::vector<void *> ipc_ptrs{ ptrs, ptrs + num_slots, ptrs + 2 * num_slots };
 
+        bool is_arc = is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()));
+
         // do one time initializations
         if (is_initial_invocation) {
             is_initial_invocation = false;
@@ -308,8 +316,7 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
 
             //set up temp buf to be used for large collectives
             // WA : use smaller tmp buffer for client GPUs
-            if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
-                ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
+            if (is_arc && ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
                 ccl::global_data::env().sycl_tmp_buf_size =
                     tmp_bufs_count * calculate_ll_buf_size(q);
                 LOG_DEBUG("Allocate LL ring buffer of size: ",
@@ -345,6 +352,16 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
         // set up temp buf to be used for small collectives
         const int small_buf_ipc_idx = ipc_ptrs.size();
         char *tmp_buf;
+        if (is_arc) {
+            size_t arc_size = calculate_ll_buf_size(q) * 2;
+            if (arc_size > ccl_tmp_bufs::buf_size) {
+                ccl_tmp_bufs::buf_size = arc_size;
+            }
+            LOG_DEBUG("Allocate small buffer for LL ring of size: ",
+                      ccl_tmp_bufs::buf_size,
+                      " x ",
+                      ccl_tmp_bufs::buf_count);
+        }
         if (node_comm->get_topo_manager().has_p2p_access()) {
             tmp_buf = sycl::aligned_alloc_device<char>(
                 CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
@@ -353,6 +370,9 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             tmp_buf = sycl::aligned_alloc_host<char>(
                 CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
         }
+
+        node_comm->set_free_queue(q);
+
         for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
             void *tmp_buf_ptr = tmp_buf + i * ccl_tmp_bufs::buf_size;
             node_comm->set_tmp_buf(tmp_buf_ptr, i);
@@ -548,6 +568,8 @@ void coll_initExt(ccl_comm *comm,
         for (int i = 0; i < tmp_bufs_count; i++) {
             comm_large_tmp_bufs.tmp_bufs[i] = thread_tmp_bufs[i];
         }
+
+        node_comm->set_free_queue(q);
 
         // set up temp buf to be used for small collectives
         const int small_buf_ipc_idx = ipc_ptrs.size();

@@ -108,6 +108,7 @@ constexpr size_t MAX_TILES = ccl::topo_manager::max_ranks_per_card;
 constexpr size_t MAX_GPUS = ccl::topo_manager::max_ranks_per_plane;
 constexpr size_t MAX_NODE_RANKS =
     ccl::topo_manager::max_ranks_per_card * ccl::topo_manager::max_ranks_per_plane;
+
 class alignas(CACHELINE_SIZE) ccl_comm_barrier_data {
 private:
     int m_rank;
@@ -181,32 +182,27 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
 class alignas(CACHELINE_SIZE) ccl_tmp_bufs {
 public:
     ccl_tmp_bufs() {
-        for (int i = 0; i < buf_count; i++)
-            tmp_bufs[i] = NULL;
+        set_ptrs_to_null();
     }
 
     ~ccl_tmp_bufs() {
-        if (tmp_bufs[0]) {
-            ZE_CALL(zeMemFree, (context, tmp_bufs[0]));
-            tmp_bufs[0] = NULL;
-        }
+        free_ptr(tmp_bufs[0]);
+        set_ptrs_to_null();
     }
 
     // to avoid data race towards the end of a collective and starting of
     // next collective we use different buffers on consecutive collectives.
     static constexpr int buf_count = 2;
     // use largest threshold among all the small buffers algorithms
-    static constexpr size_t buf_size = 2097152;
+    static size_t buf_size;
 
     void set_tmp_buf(void* ptr, int idx) {
         tmp_bufs[idx] = ptr;
-        if (idx == 0) {
-            ze_device_handle_t dev{};
-            ze_memory_allocation_properties_t mem_alloc_props{};
-            if (!ccl::ze::get_buffer_context_and_device(ptr, &context, &dev, &mem_alloc_props)) {
-                CCL_THROW("unable to get context from ptr\n");
-            }
-        }
+        check_free_queue();
+    }
+
+    void set_free_queue(sycl::queue& q) {
+        this->free_q = std::make_shared<sycl::queue>(q);
     }
 
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
@@ -231,7 +227,29 @@ public:
     }
 
 private:
-    ze_context_handle_t context;
+    void set_ptrs_to_null() {
+        for (int i = 0; i < buf_count; i++) {
+            tmp_bufs[i] = NULL;
+        }
+    }
+
+    void check_free_queue() {
+        if (!free_q) {
+            CCL_THROW("free_queue not set, memory leak might occur\n");
+        }
+    }
+    void free_ptr(void* ptr) {
+        if (free_q) {
+            // sycl::free accepts nullptr, no need to check
+            sycl::free(ptr, *free_q.get());
+        }
+        else {
+            if (ptr) {
+                LOG_WARN("internal error, memory leak occurs");
+            }
+        }
+    }
+    std::shared_ptr<sycl::queue> free_q;
     void* tmp_bufs[buf_count];
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count];
 
@@ -349,6 +367,10 @@ public:
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
         return m_tmp_buf.get_all_tmp_bufs(is_next);
+    }
+
+    void set_free_queue(sycl::queue& q) {
+        m_tmp_buf.set_free_queue(q);
     }
 
     void set_tmp_buf(void* ptr, int idx) {
@@ -672,6 +694,10 @@ public:
         return comm_impl->get_all_tmp_bufs(is_next);
     }
 
+    void set_free_queue(sycl::queue& q) {
+        comm_impl->set_free_queue(q);
+    }
+
     void set_tmp_buf(void* ptr, int idx) {
         comm_impl->set_tmp_buf(ptr, idx);
     }
@@ -728,34 +754,67 @@ public:
     // X: 1 is collective, 0 is pt2pt
     // YYY: is the source rank of the pt2pt
     uint32_t get_rt_pattern(pattern_type type, int peer_rank) {
+        uint32_t pattern;
         uint16_t counter;
-        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
-        const int mask = (1 << (16 - 1 - pof2)) - 1;
         if (type == pattern_type::collective) {
+            const uint32_t mask = (1U << (32 - 1)) - 1;
             counter = pattern_counter[ARC_MAX_NUM];
-            counter = counter & mask | 0x8000;
+            pattern = counter & mask | (1U << (32 - 1));
         }
         else if (type == pattern_type::send || type == pattern_type::recv) {
+            const int pof2 =
+                sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+            const uint32_t mask = (1 << (32 - 1 - pof2)) - 1;
             CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
             counter = pattern_counter[peer_rank];
             int src_rank = type == pattern_type::send ? comm_rank : peer_rank;
-            counter = counter & mask | src_rank << (16 - 1 - pof2);
+            pattern = counter & mask | src_rank << (32 - 1 - pof2);
         }
 
-        return global_current_id << 16 | counter;
+        return pattern;
     }
 
-    void update_rt_pattern(pattern_type type, int peer_rank, uint32_t pattern) {
-        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
-        const int mask = (1 << (16 - 1 - pof2)) - 1;
-        uint16_t counter = pattern & mask;
+    uint32_t increase_rt_pattern(pattern_type type,
+                                 int peer_rank,
+                                 uint32_t pattern,
+                                 size_t inc = 1) {
+        uint32_t counter;
+        uint32_t new_pattern;
         if (type == pattern_type::collective) {
+            const uint32_t mask = (1U << (32 - 1)) - 1;
+            CCL_ASSERT(inc <= mask);
+            counter = pattern & mask;
+            counter = (counter + inc) & mask;
             pattern_counter[ARC_MAX_NUM] = counter;
+            new_pattern = (counter & mask) | (1U << (32 - 1));
         }
         else if (type == pattern_type::send || type == pattern_type::recv) {
-            CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
+            const int pof2 =
+                sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+            const uint32_t mask = (1 << (32 - 1 - pof2)) - 1;
+            CCL_ASSERT(inc <= mask);
+            counter = pattern & mask;
+            counter = (counter + inc) & mask;
+            CCL_THROW_IF_NOT(
+                peer_rank >= 0 && peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
             pattern_counter[peer_rank] = counter;
+            int src_rank = type == pattern_type::send ? comm_rank : peer_rank;
+            new_pattern = counter & mask | src_rank << (32 - 1 - pof2);
+            //const uint32_t high_mask = ((uint32_t)~0) << (32 - 1 - pof2);
+            //new_pattern = (counter & mask) | (pattern & high_mask);
         }
+
+        return new_pattern;
+    }
+
+    void pattern_reset_set_due() {
+        pattern_reset_due = ccl_tmp_bufs::buf_count;
+    }
+    int pattern_reset_is_due() {
+        return pattern_reset_due;
+    }
+    void pattern_reset_performed() {
+        pattern_reset_due--;
     }
 #endif // CCL_ENABLE_SYCL
 
@@ -809,6 +868,7 @@ private:
     std::shared_ptr<ccl::ze::fd_manager> fd_manager;
     void init_ipc_exchange_mode(std::shared_ptr<ccl_comm> comm);
     uint16_t pattern_counter[ARC_MAX_NUM + 1];
+    int pattern_reset_due = 0;
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     ccl_sched_id_t next_sched_id_internal{};

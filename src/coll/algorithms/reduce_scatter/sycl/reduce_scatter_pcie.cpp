@@ -40,17 +40,30 @@ ccl::event reduce_scatter_rt_ring(const void *src,
     size_t dt_sz = ccl_dtype.size();
 
     bool p2p = node_comm->get_topo_manager().has_p2p_access();
-    uint32_t pattern = comm->get_rt_pattern(pattern_type::collective, -1);
+    uint32_t pattern = node_comm->get_rt_pattern(pattern_type::collective, -1);
 
     auto lambda = [&]<typename T, template <typename, int> class Proto>(int NRanks) {
         T *peerbuf0[NRanks];
         T *peerbuf1[NRanks];
-        for (int i = 0; i < NRanks; i++) {
-            peerbuf0[i] = (T *)get_remote_node_tmp_buf(0, comm)[i];
-            peerbuf1[i] = (T *)get_remote_node_tmp_buf(1, comm)[i];
+        T *ipcbuf0;
+        T *ipcbuf1;
+        if (ccl::global_data::env().sycl_ll_buffer_global) {
+            for (int i = 0; i < NRanks; i++) {
+                peerbuf0[i] = (T *)get_remote_node_tmp_buf(0, comm)[i];
+                peerbuf1[i] = (T *)get_remote_node_tmp_buf(1, comm)[i];
+            }
+            ipcbuf0 = (T *)get_tmp_buf(0, comm);
+            ipcbuf1 = (T *)get_tmp_buf(1, comm);
         }
-        T *ipcbuf0 = (T *)get_tmp_buf(0, comm);
-        T *ipcbuf1 = (T *)get_tmp_buf(1, comm);
+        else {
+            auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
+            for (int i = 0; i < NRanks; i++) {
+                peerbuf0[i] = (T *)remote_ptrs[i];
+                peerbuf1[i] = (T *)((char *)remote_ptrs[i] + ccl_tmp_bufs::buf_size / 2);
+            }
+            ipcbuf0 = (T *)local_tmp_buf;
+            ipcbuf1 = (T *)((char *)local_tmp_buf + ccl_tmp_bufs::buf_size / 2);
+        }
         sycl::event e = ReduceScatter<T, Proto, RingTransmit>::launch(NRanks,
                                                                       (T *)src,
                                                                       (T *)dst,
@@ -62,11 +75,16 @@ ccl::event reduce_scatter_rt_ring(const void *src,
                                                                       comm_rank,
                                                                       pattern,
                                                                       q,
+                                                                      node_comm,
                                                                       p2p,
                                                                       done);
-        comm->update_rt_pattern(pattern_type::collective, -1, pattern);
         return e;
     };
+
+    if (ccl::global_data::env().sycl_ll_buffer_global) {
+        const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
+        sycl::event barrier_event = invoke_barrier(node_comm, q, {}, is_cpu_barrier);
+    }
 
     if (recv_count * dt_sz <= ccl::global_data::env().sycl_reduce_scatter_ll_threshold) {
         // small ring with LL

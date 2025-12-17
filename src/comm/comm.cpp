@@ -50,6 +50,10 @@ struct impl_dispatch {
 }; // namespace v1
 }; // namespace ccl
 
+#ifdef CCL_ENABLE_SYCL
+size_t ccl_tmp_bufs::buf_size = 2097152;
+#endif // CCL_ENABLE_SYCL
+
 // ccl_comm_env
 
 ccl_comm_env::ccl_comm_env(std::shared_ptr<ccl::device> device) : device(device) {

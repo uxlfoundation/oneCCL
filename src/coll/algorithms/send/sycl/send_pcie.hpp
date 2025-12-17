@@ -31,11 +31,13 @@ struct Send : public Transmit<T, Proto, SubGroupSize> {
     using message_t = typename Super::message_t;
     constexpr static int wireCapacity = Super::wireCapacity;
     using Super::runSend;
+    using Super::runSendStart;
 
     Send(int nranks,
          T* input,
          size_t nelems,
-         int rank,
+         int my_rank,
+         int peer_rank,
          uint32_t seqNo,
          T* scatterBuf,
          T* gatherBuf,
@@ -49,12 +51,18 @@ struct Send : public Transmit<T, Proto, SubGroupSize> {
                                                peerBuf0,
                                                peerBuf1,
                                                calcWorkSize(input, nelems * sizeof(T)),
-                                               rank,
+                                               peer_rank - 1,
                                                seqNo,
                                                p2p),
-              workSize(calcWorkSize(input, nelems * sizeof(T))) {}
+              workSize(calcWorkSize(input, nelems * sizeof(T))),
+              my_rank(my_rank),
+              peer_rank(peer_rank) {}
 
-    sycl::nd_range<1> getLaunchParam(uint32_t& updateSeqNo) const {
+    sycl::nd_range<1> getLaunchParam(sycl::queue q,
+                                     const std::shared_ptr<ccl_comm> comm,
+                                     T* ipcbuf0,
+                                     T* ipcbuf1,
+                                     uint32_t& updateSeqNo) const {
         constexpr uint32_t nThreads = 64; /* TODO: get EU/thread config */
 #if defined(CCL_SYCL_ENABLE_PVC)
         constexpr size_t maxSS = 64;
@@ -69,7 +77,19 @@ struct Send : public Transmit<T, Proto, SubGroupSize> {
         size_t nSS = divUp(nWire, wirePerSS);
         auto actualSS = std::min(nSS, maxSS);
         auto nSteps = divUp(nWire, actualSS * wirePerSS);
-        updateSeqNo += nSteps;
+        //auto nSlot = Transmit<T, Proto, SubGroupSize>::nSlot;
+        //nSteps = (nSteps + nSlot - 1) / nSlot;
+        auto newSeqNo =
+            comm->increase_rt_pattern(pattern_type::send, peer_rank, updateSeqNo, nSteps);
+        // check for pattern wraparound
+        rt_check_pattern<T>(q,
+                            comm,
+                            updateSeqNo,
+                            newSeqNo,
+                            ipcbuf0,
+                            ipcbuf1,
+                            RingTransmit<int, Rt64_128_PCIE>::ringSize / sizeof(T));
+        updateSeqNo = newSeqNo;
         //
         // XXX: we over updated sequence number. Should be nSteps / nSlot
         // No harm, but not nice.
@@ -85,25 +105,42 @@ struct Send : public Transmit<T, Proto, SubGroupSize> {
                               T* const peerbuf0[],
                               T* const peerbuf1[],
                               size_t nelems,
+                              int my_rank,
                               int peer_rank,
                               uint32_t& step,
                               sycl::queue queue,
+                              const std::shared_ptr<ccl_comm> comm,
                               std::vector<sycl::event>& dep_events,
                               bool p2p,
                               bool& done) {
         sycl::event e;
-        Send offload(
-            nranks, input, nelems, peer_rank, step, ipcbuf0, ipcbuf1, peerbuf0, peerbuf1, p2p);
+        Send offload(nranks,
+                     input,
+                     nelems,
+                     my_rank,
+                     peer_rank,
+                     step,
+                     ipcbuf0,
+                     ipcbuf1,
+                     peerbuf0,
+                     peerbuf1,
+                     p2p);
         if (offload.workSize == 0) {
             done = false;
             return e;
         }
         done = true;
 
+        // peer_rank is actual rank minus 1 because the ringTransmit calculate
+        // next neighbor by rank plus 1
+        const sycl::nd_range<1> ndrange =
+            offload.getLaunchParam(queue, comm, ipcbuf0, ipcbuf1, step);
         e = queue.submit([&](sycl::handler& cgh) {
             cgh.depends_on(dep_events);
-            cgh.parallel_for(offload.getLaunchParam(step), offload);
+            cgh.parallel_for(ndrange, offload);
         });
+        // FIXME: work-around
+        e.wait();
         return e;
     }
     //
@@ -120,6 +157,9 @@ struct Send : public Transmit<T, Proto, SubGroupSize> {
 
         auto loopSize = nWires / Super::parallel_sg * wireCapacity;
 
+        // wait for receiver to be ready
+        const_cast<Send*>(this)->runSendStart(my_rank, peer_rank);
+
         for (size_t gOff = 0, tOff = 0; gOff < workSize; gOff += loopSize, ++tOff) {
             auto wireOff = wireId_x * wireCapacity + gOff;
 
@@ -130,7 +170,7 @@ struct Send : public Transmit<T, Proto, SubGroupSize> {
                 sycl::ext::oneapi::experimental::printf(
                     "wireOff %d, workLeft %ld, wireId %d\n", wireOff, workLeft, wireId_x);
 #endif
-            const_cast<Send*>(this)->runSend(wireOff, tOff, workLeft);
+            const_cast<Send*>(this)->runSend(wireOff, tOff, workLeft, my_rank, peer_rank);
         }
     }
 
@@ -155,4 +195,6 @@ private:
     }
 
     ssize_t workSize;
+    int my_rank;
+    int peer_rank;
 };

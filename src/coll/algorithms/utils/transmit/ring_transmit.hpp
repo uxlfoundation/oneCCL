@@ -448,7 +448,27 @@ public:
         loadRecvReduceWrtback(wireId, peer, offset, flag, slot, nelems);
     }
 
-    inline void runSend(size_t inputOffset, size_t tStep, ssize_t workLeft) {
+    inline void runSendStart(int my_rank, int peer_rank) {
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        auto flag = seqNo;
+        auto slot = seqNo % nSlot;
+
+        message_t v;
+        // wait for receiver to be ready
+        bool retry;
+        do {
+            retry = false;
+            retry |= recvMessages(v, localGatherSink[peer_rank][slot][wireId], flag);
+        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+    }
+
+    inline void runSend(size_t inputOffset,
+                        size_t tStep,
+                        ssize_t workLeft,
+                        int my_rank,
+                        int peer_rank) {
         if (workLeft <= 0)
             return;
 
@@ -460,6 +480,7 @@ public:
         auto slot = (seqNo + tStep) % nSlot;
         auto nelems = workLeft / sizeof(T);
 
+        bool retry;
         message_t v;
 
         auto* ptr = ingress + inputOffInType;
@@ -467,16 +488,29 @@ public:
 
         shuffleData(v);
         insertFlags(v, flag);
-        sendMessages(scatterSink[0][slot][wireId], v);
+        sendMessages(scatterSink[my_rank][slot][wireId], v);
 
-        bool retry;
         do {
             retry = false;
-            retry |= recvMessages(v, localGatherSink[0][slot][wireId], flag);
+            retry |= recvMessages(v, localGatherSink[peer_rank][slot][wireId], flag);
         } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
     }
 
-    inline void runRecv(size_t outputOffset, size_t tStep, ssize_t workLeft) {
+    inline void runRecvStart(int my_rank, int peer_rank) {
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+        auto flag = seqNo;
+        auto slot = seqNo % nSlot;
+        message_t v;
+        insertFlags(v, flag);
+        sendMessages(gatherSink[my_rank][slot][wireId], v);
+    }
+
+    inline void runRecv(size_t outputOffset,
+                        size_t tStep,
+                        ssize_t workLeft,
+                        int my_rank,
+                        int peer_rank) {
         if (workLeft <= 0)
             return;
 
@@ -493,11 +527,11 @@ public:
         bool retry;
         do {
             retry = false;
-            retry |= recvMessages(v, localScatterSink[0][slot][wireId], flag);
+            retry |= recvMessages(v, localScatterSink[peer_rank][slot][wireId], flag);
         } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
 
         insertFlags(v, flag);
-        sendMessages(gatherSink[0][slot][wireId], v);
+        sendMessages(gatherSink[my_rank][slot][wireId], v);
 
         restoreData(v);
 
