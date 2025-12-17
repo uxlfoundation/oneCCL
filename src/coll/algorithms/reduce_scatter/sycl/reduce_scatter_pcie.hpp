@@ -59,7 +59,11 @@ struct ReduceScatter : public Transmit<T, Proto, SubGroupSize> {
     static int scatterVerify(uint32_t* host, int rank, uint32_t flag, size_t nWorkElemsInInt);
     static int stage2Verify(T* host, int rank, uint32_t flag, size_t nWorkElemsInInt);
 
-    sycl::nd_range<1> getLaunchParam(uint32_t& updateSeqNo) const {
+    sycl::nd_range<1> getLaunchParam(sycl::queue q,
+                                     const std::shared_ptr<ccl_comm> comm,
+                                     T* ipcbuf0,
+                                     T* ipcbuf1,
+                                     uint32_t& updateSeqNo) const {
         constexpr uint32_t nThreads = 64; /* TODO: get EU/thread config */
 // TODO: can be queried
 #if defined(CCL_SYCL_ENABLE_PVC)
@@ -75,7 +79,18 @@ struct ReduceScatter : public Transmit<T, Proto, SubGroupSize> {
         size_t nSS = divUp(nWire, wirePerSS);
         auto actualSS = std::min(nSS, maxSS);
         auto nSteps = divUp(nWire, actualSS * wirePerSS);
-        updateSeqNo += nSteps;
+        auto nSlot = Transmit<T, Proto, SubGroupSize>::nSlot;
+        nSteps = (nSteps + nSlot - 1) / nSlot;
+        auto newSeqNo = comm->increase_rt_pattern(pattern_type::collective, -1, updateSeqNo, nSteps);
+        // check for pattern wraparound
+        rt_check_pattern<T>(q,
+                            comm,
+                            updateSeqNo,
+                            newSeqNo,
+                            ipcbuf0,
+                            ipcbuf1,
+                            RingTransmit<int, Rt64_128_PCIE>::ringSize / sizeof(T));
+        updateSeqNo = newSeqNo;
         //
         // XXX: we over updated sequence number. Should be nSteps / nSlot
         // No harm, but not nice.
@@ -95,6 +110,7 @@ struct ReduceScatter : public Transmit<T, Proto, SubGroupSize> {
                               int rank,
                               uint32_t& step,
                               sycl::queue queue,
+                              const std::shared_ptr<ccl_comm> comm,
                               bool p2p,
                               bool& done) {
         sycl::event e;
@@ -106,8 +122,9 @@ struct ReduceScatter : public Transmit<T, Proto, SubGroupSize> {
         }
         done = true;
 
+        const sycl::nd_range<1> ndrange = offload.getLaunchParam(queue, comm, ipcbuf0, ipcbuf1, step);
         e = queue.submit([&](sycl::handler& cgh) {
-            cgh.parallel_for(offload.getLaunchParam(step), offload);
+            cgh.parallel_for(ndrange, offload);
         });
         return e;
     }

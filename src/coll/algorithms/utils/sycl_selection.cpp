@@ -73,17 +73,17 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                     "stub backend is not supported");
 
     RETURN_FALSE_IF(ccl::global_data::env().worker_count != 1, "unsupported count of workers");
+    bool is_arc = is_arc_card(ccl::ze::get_device_family(param.stream->get_ze_device()));
 #ifdef CCL_ENABLE_SYCL
     RETURN_FALSE_IF(param.comm->get_pair_comm()->size() > 2,
                     "unsupported pair_comm size: ",
                     param.comm->get_pair_comm()->size());
     // ARC GPUs are exception
-    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_all_vertices_connected() &&
-                        !is_arc_card(ccl::ze::get_device_family(param.stream->get_ze_device())),
+    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_all_vertices_connected() && !is_arc,
                     "no connection between vertices");
     RETURN_FALSE_IF(!param.comm->get_topo_manager().has_same_ppn(),
                     "ppn is not the same among the nodes");
-    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_same_domains(),
+    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_same_domains() && !is_arc,
                     "processes are not properly distributed among domains");
 
     const ccl::topo_manager& topo_manager = param.comm->get_topo_manager();

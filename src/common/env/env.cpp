@@ -116,6 +116,7 @@ env_data::env_data()
           mnic_type(ATL_MNIC_NONE),
           mnic_count(CCL_ENV_SIZET_NOT_SPECIFIED),
           mnic_offset(ATL_MNIC_OFFSET_NONE),
+          ofi_domain_names(CCL_ENV_STR_NOT_SPECIFIED),
 
           enable_algo_fallback(1),
           enable_unordered_coll(0),
@@ -181,6 +182,7 @@ env_data::env_data()
           sycl_allreduce_scaleout_algo("auto"),
           sycl_enable_arc_allreduce(0),
           sycl_allreduce_ll_threshold(4096),
+          sycl_allreduce_chunking_threshold(0),
 
           sycl_reduce_scatter_tmp_buf(0),
           sycl_reduce_scatter_small_threshold(2097152),
@@ -221,6 +223,7 @@ env_data::env_data()
           sycl_pipeline_gpu_rdma(0),
           sycl_sub_communicator(1),
           sycl_force_pcie(0),
+          sycl_ll_buffer_global(0),
 #endif // CCL_ENABLE_SYCL
 
           allreduce_nreduce_buffering(0),
@@ -431,6 +434,7 @@ void env_data::parse() {
         mnic_count = worker_count;
     }
     p.env_2_enum(CCL_MNIC_OFFSET, mnic_offset_names, mnic_offset);
+    p.env_2_type(CCL_OFI_DOMAIN_NAMES, ofi_domain_names);
 
     p.env_2_type(CCL_ALGO_FALLBACK, enable_algo_fallback);
     // main algorithm selection
@@ -541,6 +545,7 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_ALLREDUCE_SCALEOUT, sycl_allreduce_scaleout_algo);
     p.env_2_type(CCL_SYCL_ALLREDUCE_ARC, sycl_enable_arc_allreduce);
     p.env_2_type(CCL_SYCL_ALLREDUCE_LL_THRESHOLD, sycl_allreduce_ll_threshold);
+    p.env_2_type(CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD, sycl_allreduce_chunking_threshold);
 
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_TMP_BUF, sycl_reduce_scatter_tmp_buf);
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_SMALL_THRESHOLD, sycl_reduce_scatter_small_threshold);
@@ -581,6 +586,7 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_PIPELINE_GPU_RDMA, sycl_pipeline_gpu_rdma);
     p.env_2_type(CCL_SYCL_SUB_COMMUICATOR, sycl_sub_communicator);
     p.env_2_type(CCL_SYCL_FORCE_PCIE, sycl_force_pcie);
+    p.env_2_type(CCL_SYCL_LL_BUFFER_GLOBAL, sycl_ll_buffer_global);
 #endif // CCL_ENABLE_SYCL
 
     p.env_2_type(CCL_ALLREDUCE_NREDUCE_BUFFERING, allreduce_nreduce_buffering);
@@ -874,6 +880,7 @@ void env_data::print(int rank, bool is_mt_enabled) {
         CCL_MNIC_NAME, ": ", (mnic_name_raw.length()) ? mnic_name_raw : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_MNIC_COUNT, ": ", mnic_count);
     LOG_INFO(CCL_MNIC_OFFSET, ": ", str_by_enum(mnic_offset_names, mnic_offset));
+    LOG_INFO(CCL_OFI_DOMAIN_NAMES, ": ", (ofi_domain_names.length()) ? ofi_domain_names : CCL_ENV_STR_NOT_SPECIFIED);
 
     LOG_INFO(CCL_ALGO_FALLBACK, ": ", enable_algo_fallback);
     LOG_INFO(CCL_ALLGATHER,
@@ -992,6 +999,7 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_ALLREDUCE_SCALEOUT, ": ", (!sycl_allreduce_scaleout_algo.empty()) ? sycl_allreduce_scaleout_algo : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_SYCL_ALLREDUCE_ARC, ": ", sycl_enable_arc_allreduce);
     LOG_INFO(CCL_SYCL_ALLREDUCE_LL_THRESHOLD, ": ", sycl_allreduce_ll_threshold);
+    LOG_INFO(CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD, ": ", sycl_allreduce_chunking_threshold);
 
     LOG_INFO(CCL_SYCL_REDUCE_SCATTER_TMP_BUF, ": ", sycl_reduce_scatter_tmp_buf);
     LOG_INFO(CCL_SYCL_REDUCE_SCATTER_SMALL_THRESHOLD, ": ", sycl_reduce_scatter_small_threshold);
@@ -1032,6 +1040,7 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_PIPELINE_GPU_RDMA, ": ", sycl_pipeline_gpu_rdma);
     LOG_INFO(CCL_SYCL_SUB_COMMUICATOR, ": ", sycl_sub_communicator);
     LOG_INFO(CCL_SYCL_FORCE_PCIE, ": ", sycl_force_pcie);
+    LOG_INFO(CCL_SYCL_LL_BUFFER_GLOBAL, ": ", sycl_ll_buffer_global);
 #endif // CCL_ENABLE_SYCL
 
     LOG_INFO(CCL_ALLREDUCE_NREDUCE_BUFFERING, ": ", allreduce_nreduce_buffering);

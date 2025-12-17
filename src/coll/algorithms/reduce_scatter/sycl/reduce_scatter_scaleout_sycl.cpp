@@ -41,7 +41,7 @@ ccl::event reduce_scatter_scaleout_sycl_simple(sycl::queue& q,
                                                bool is_cpu_buffers) {
     sycl::event op_end;
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
-    int count = recv_count * comm->size();
+    size_t count = recv_count * comm->size();
 
     void* scaleout_send_buf = (void*)send_buf;
     void* scaleout_recv_buf = recv_buf;

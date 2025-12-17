@@ -144,6 +144,7 @@ public:
     std::string mnic_name_raw;
     ssize_t mnic_count;
     atl_mnic_offset_t mnic_offset;
+    std::string ofi_domain_names;
 
     /*
        parsing logic can be quite complex
@@ -232,6 +233,7 @@ public:
     std::string sycl_allreduce_scaleout_algo;
     bool sycl_enable_arc_allreduce;
     size_t sycl_allreduce_ll_threshold;
+    size_t sycl_allreduce_chunking_threshold;
 
     bool sycl_reduce_scatter_tmp_buf;
     size_t sycl_reduce_scatter_small_threshold;
@@ -270,6 +272,7 @@ public:
     int sycl_pipeline_gpu_rdma;
     bool sycl_sub_communicator;
     bool sycl_force_pcie;
+    bool sycl_ll_buffer_global;
     ccl::utils::alloc_mode sycl_scaleout_buf_alloc_mode;
     bool sycl_pt2pt_read;
 #endif // CCL_ENABLE_SYCL

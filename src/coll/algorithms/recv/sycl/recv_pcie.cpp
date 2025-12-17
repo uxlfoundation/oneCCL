@@ -41,7 +41,7 @@ ccl::event recv_ll(const void *recv_buf,
     size_t recv_size = recv_count * ccl_dtype.size();
 
     bool p2p = node_comm->get_topo_manager().has_p2p_access();
-    uint32_t pattern = comm->get_rt_pattern(pattern_type::recv, peer_rank);
+    uint32_t pattern = node_comm->get_rt_pattern(pattern_type::recv, peer_rank);
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
 
@@ -61,14 +61,14 @@ ccl::event recv_ll(const void *recv_buf,
                                                              peerbuf0,
                                                              peerbuf1,
                                                              recv_count,
-                                                             peer_rank - 1,
+                                                             comm_rank,
+                                                             peer_rank,
                                                              pattern,
                                                              q,
+                                                             node_comm,
                                                              dep_events,
                                                              p2p,
                                                              done);
-        // update pattern
-        comm->update_rt_pattern(pattern_type::recv, peer_rank, pattern);
         return e;
     };
 

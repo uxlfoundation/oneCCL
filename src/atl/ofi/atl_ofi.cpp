@@ -101,6 +101,46 @@ atl_status_t atl_ofi::init(int* argc,
     base_hints->domain_attr->data_progress = FI_PROGRESS_MANUAL;
     base_hints->caps = FI_TAGGED;
 
+    /*
+     * Domain selection based on local rank index
+     * If CCL_OFI_DOMAIN_NAMES is set, parse the comma-separated list and assign
+     * the domain corresponding to local rank index for better fabric resource utilization
+     */
+    if (ccl::global_data::env().ofi_domain_names != CCL_ENV_STR_NOT_SPECIFIED) {
+        std::string domain_names_str = ccl::global_data::env().ofi_domain_names;
+        std::vector<std::string> domain_list;
+        std::stringstream ss(domain_names_str);
+        std::string domain_name;
+
+        // Parse comma-separated domain names
+        while (std::getline(ss, domain_name, ',')) {
+            // Trim whitespace
+            size_t start = domain_name.find_first_not_of(" \t");
+            size_t end = domain_name.find_last_not_of(" \t");
+            if (start != std::string::npos && end != std::string::npos) {
+                domain_list.push_back(domain_name.substr(start, end - start + 1));
+            }
+        }
+
+        // Select domain based on local rank index
+        int local_idx = coord.local_idx;
+        if (!domain_list.empty() && local_idx < static_cast<int>(domain_list.size())) {
+            base_hints->domain_attr->name = strdup(domain_list[local_idx].c_str());
+            LOG_INFO("Selected OFI domain: ",
+                     base_hints->domain_attr->name,
+                     " for local rank: ",
+                     local_idx,
+                     ", global rank: ",
+                     pmi->get_rank());
+        }
+        else {
+            LOG_WARN("Cannot select domain for local rank: ",
+                     local_idx,
+                     ", available domains: ",
+                     domain_list.size());
+        }
+    }
+
     prov_env = getenv("FI_PROVIDER");
 
     ctx.enable_hmem = 0;

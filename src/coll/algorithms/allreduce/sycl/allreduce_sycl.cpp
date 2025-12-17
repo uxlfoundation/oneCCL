@@ -46,6 +46,7 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
     rank = global_comm->get_node_comm()->rank();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    const int dsize = ccl_dtype.size();
 
     if (world == 1) {
         sycl::event sycl_e;
@@ -78,13 +79,30 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
             done = false;
             return e;
         }
+        const size_t chunk_size = ccl::global_data::env().sycl_allreduce_chunking_threshold;
+        size_t max_pack_count;
         if (!ccl::global_data::env().sycl_enable_arc_allreduce) {
-            LOG_DEBUG("invoking allreduce LL256 kernel allreduce_ll_ring, count:",
-                      count,
-                      " datatype: ",
-                      dtype);
-            e = allreduce_ll_ring(
-                send_buf, recv_buf, count, dtype, reduction, global_comm, global_stream, done);
+            size_t nchunks =
+                calculate_chunking_pack_count(chunk_size, count, dsize, max_pack_count);
+            size_t send_offset = 0;
+            for (size_t iter = 0; iter < nchunks; iter++) {
+                size_t pack_count = (iter < nchunks - 1) ? max_pack_count : count - send_offset;
+                LOG_DEBUG("invoking allreduce LL256 kernel allreduce_ll_ring, count:",
+                          pack_count,
+                          " datatype: ",
+                          dtype);
+                e = allreduce_ll_ring((char*)send_buf + send_offset * dsize,
+                                      (char*)recv_buf + send_offset * dsize,
+                                      pack_count,
+                                      dtype,
+                                      reduction,
+                                      global_comm,
+                                      global_stream,
+                                      done);
+                if (!done)
+                    break;
+                send_offset += pack_count;
+            } // end for
             if (done) {
                 LOG_DEBUG("invoking allreduce LL256 kernel, count:",
                           count,
@@ -94,7 +112,6 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
                 return e;
             }
         }
-        done = true;
         // ARC 770 does not support fp64
         if (ccl::ze::get_device_family(global_stream->get_ze_device()) ==
                 ccl::device_family::family6 &&
@@ -103,10 +120,29 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
             done = false;
             return e;
         }
-        LOG_DEBUG(
-            "invoking allreduce LL256 kernel arc_allreduce, count:", count, " datatype: ", dtype);
-        e = arc_allreduce(send_buf, recv_buf, count, dtype, reduction, global_comm, global_stream);
-        LOG_DEBUG("invoking allreduce LL256 kernel, count:", count, " datatype: ", dtype, " done");
+        done = true;
+        size_t nchunks = calculate_chunking_pack_count(chunk_size, count, dsize, max_pack_count);
+        size_t send_offset = 0;
+        for (size_t iter = 0; iter < nchunks; iter++) {
+            size_t pack_count = (iter < nchunks - 1) ? max_pack_count : count - send_offset;
+            LOG_DEBUG("invoking allreduce LL256 kernel arc_allreduce, count:",
+                      count,
+                      " datatype: ",
+                      dtype);
+            e = arc_allreduce((char*)send_buf + send_offset * dsize,
+                              (char*)recv_buf + send_offset * dsize,
+                              pack_count,
+                              dtype,
+                              reduction,
+                              global_comm,
+                              global_stream);
+            LOG_DEBUG("invoking allreduce LL256 kernel arc_allreduce, count:",
+                      count,
+                      " datatype: ",
+                      dtype,
+                      " done");
+            send_offset += pack_count;
+        }
         return e;
     }
 

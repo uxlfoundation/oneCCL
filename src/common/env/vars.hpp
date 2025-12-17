@@ -205,10 +205,26 @@ constexpr const char* CCL_ATL_SEND_PROXY = "CCL_ATL_SEND_PROXY";
 constexpr const char* CCL_ATL_SYNC_COLL = "CCL_ATL_SYNC_COLL";
 constexpr const char* CCL_ATL_EXTRA_EP = "CCL_ATL_EXTRA_EP";
 constexpr const char* CCL_ATL_CACHE = "CCL_ATL_CACHE";
+
 /**
  * @addtogroup OneCCLvars
  * @{
  */
+/**
+ * @brief Set this environment variable to specify OFI domain names for rank-specific domain selection.
+ *
+ * @details Comma-separated list of OFI domain names to be used for selecting specific
+ * domains based on local rank index. The i-th local rank will use the i-th domain name
+ * from the provided list. This allows for explicit control over which OFI domains
+ * are used by different ranks, enabling optimized fabric resource utilization.
+ *
+ * Example: "mlx5_0,mlx5_1,mlx5_2,mlx5_3" - assigns different InfiniBand devices
+ * to ranks based on their local index.
+ *
+ * By-default: "not-specified"
+ */
+constexpr const char* CCL_OFI_DOMAIN_NAMES = "CCL_OFI_DOMAIN_NAMES";
+
 /**
  * @brief Set this environment variable to enable cache model automatically for synchronous collectives with direct algorithms.
  * @details
