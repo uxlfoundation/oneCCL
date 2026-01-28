@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-include(FetchContent)
 
-FetchContent_Declare(
-  ittapi
-  GIT_REPOSITORY https://github.com/intel/ittapi.git
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  EXCLUDE_FROM_ALL
-)
+# --- ITT API ---
+add_subdirectory(ittapi EXCLUDE_FROM_ALL)
 
-FetchContent_MakeAvailable(ittapi)
+# --- GoogleTest ---
+set(INSTALL_GMOCK OFF CACHE BOOL "Don't install GoogleMock")
+set(INSTALL_GTEST OFF CACHE BOOL "Don't install GoogleTest")
+set(gtest_force_shared_crt OFF CACHE BOOL "Use static runtime for gtest on MSVC")
+
+add_subdirectory(googletest EXCLUDE_FROM_ALL)

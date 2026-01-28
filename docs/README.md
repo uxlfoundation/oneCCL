@@ -5,7 +5,7 @@ To display the proper version of oneCCL in the documentation title, set the `CCL
 
 ```bash
 cd build
-$ CCL_VERSION=<your version, e.g. "2021.17.0"> python ../docs/generate_docs.py
+$ CCL_VERSION=<your version, e.g. "2021.17.2"> python ../docs/generate_docs.py
 ```
 
 Documentation can also be built using the build target 'docs' (see details below).

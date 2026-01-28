@@ -26,8 +26,8 @@ find_package(IntelSYCL REQUIRED)
 # Add SYCL
 add_sycl_to_target(TARGET ccl_legacy SOURCES ccl_legacy.cpp)
 
-# Link pluginA with oneCCL2 shared library and also with oneCCL and MPI libraries
-target_link_libraries(ccl_legacy PRIVATE oneCCL2 ccl MPI::MPI_CXX)
+# Link pluginA with oneCCL2 shared library and also with oneCCL
+target_link_libraries(ccl_legacy PRIVATE oneCCL2 ccl)
 target_link_libraries(ccl_legacy PRIVATE ittnotify)
 
 # Make sure the oneCCL2 headers and oneCCL, MPI headers can be included by the plugin
