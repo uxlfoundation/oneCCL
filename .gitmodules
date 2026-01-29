@@ -2,3 +2,9 @@
 	path = deps/libccl
 	url = https://github.com/uxlfoundation/oneCCL.git
 	branch = master
+[submodule "deps/googletest"]
+	path = deps/googletest
+	url = https://github.com/google/googletest.git
+[submodule "deps/ittapi"]
+	path = deps/ittapi
+	url = https://github.com/intel/ittapi.git

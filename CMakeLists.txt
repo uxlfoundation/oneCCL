@@ -33,6 +33,8 @@ option(ONECCL_ENABLE_COVERAGE "Compile with coverage enabled" OFF)
 option(ONECCL_USE_SYSTEM_LIBCCL "Use system-installed libccl instead of subdirectory" OFF)
 option(ONECCL_BUILD_TESTS "Build tests for oneCCL" ON)
 
+set(ONECCL_LIBSTDCXX_PATH "" CACHE STRING "Specify the path to the custom libstdc++ file")
+
 include(cmake/compat.cmake)
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -49,9 +51,21 @@ check_linker_flag(CXX "-static-intel" COMPILER_SUPPORTS_STATIC_INTEL_LIB)
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag("-fsycl" COMPILER_SUPPORTS_SYCL)
 
+# Check if we can disable stdlib
+check_linker_flag(CXX "-nostdlib++" COMPILER_SUPPORTS_NOSTDLIBXX)
+
 # Build libccl.so.2
 add_subdirectory(deps)
 add_subdirectory(src)
+
+if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
+    message(STATUS "Using specified libstdc++: ${ONECCL_LIBSTDCXX_PATH}")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
+else()
+    if(NOT COMPILER_SUPPORTS_NOSTDLIBXX)
+        message(WARNING "Cannot use custom libstdc++ because -nostdlib++ is not supported by the compiler.")
+    endif()
+endif()
 
 # Setup legacy libccl
 if(NOT WIN32)
@@ -105,8 +119,14 @@ if(NOT WIN32)
                 "-DBUILD_EXAMPLES=OFF"
                 "-DBUILD_FT=OFF"
                 "-DBUILD_REG_TESTS=OFF"
-                "-DCMAKE_SHARED_LINKER_FLAGS=-L${ONECCL2_LIB_DIR} -l:libccl.so.2"
             )
+            set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2")
+
+            if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
+                set(SHARED_LINKER_FLAGS "${SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
+            endif()
+            list(APPEND LIBCCL_CMAKE_ARGS "-DCMAKE_SHARED_LINKER_FLAGS=${SHARED_LINKER_FLAGS}")
+
             if (DEFINED CMAKE_C_COMPILER)
                 list(APPEND LIBCCL_CMAKE_ARGS "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
             endif()
@@ -152,8 +172,14 @@ if(NOT WIN32)
             "-DBUILD_EXAMPLES=OFF"
             "-DBUILD_FT=OFF"
             "-DBUILD_REG_TESTS=OFF"
-            "-DCMAKE_SHARED_LINKER_FLAGS=-L${ONECCL2_LIB_DIR} -l:libccl.so.2 ${STATIC_INTEL_FLAG}"
         )
+        set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2 ${STATIC_INTEL_FLAG}")
+
+        if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
+            set(SHARED_LINKER_FLAGS "${SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
+        endif()
+        list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCMAKE_SHARED_LINKER_FLAGS=${SHARED_LINKER_FLAGS}")
+
         if (DEFINED CMAKE_C_COMPILER)
             list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
         endif()

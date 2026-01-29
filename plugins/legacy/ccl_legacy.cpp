@@ -58,11 +58,14 @@ class CommunicatorLegacy {
     // Constructor using initializer list
     CommunicatorLegacy(int rank, int size, ccl::kvs::address_type address,
                        int device_index, ccl::device in_device,
-                       ccl::context in_context)
+                       ccl::context in_context, bool is_ext)
         : rank(rank), size(size), device_index(device_index),
           device(std::move(in_device)), context(std::move(in_context)),
-          comm(std::move(ccl::create_communicator(size, rank, *device, *context,
-                                                  kvs_for[address]))) {}
+          comm(is_ext ? std::move(ccl::create_communicatorExt(
+                            size, rank, *device, *context, kvs_for[address]))
+                      : std::move(ccl::create_communicator(
+                            size, rank, *device, *context, kvs_for[address]))) {
+    }
 
     // Constructor using initializer list
     CommunicatorLegacy(int rank, int size, ccl::kvs::address_type address)
@@ -72,7 +75,7 @@ class CommunicatorLegacy {
     // Construction using external ccl::communicator, for example as a result of
     // a split
     explicit CommunicatorLegacy(ccl::communicator &&comm)
-        : comm(std::move(comm)) {}
+        : rank(comm.rank()), size(comm.size()), comm(std::move(comm)) {}
 };
 
 onecclResult_t oneccl_destroy_communicator_impl(onecclComm_t comm) {
@@ -570,10 +573,9 @@ onecclResult_t oneccl_reduction_destroy_impl(onecclRedOp_t redop,
     return onecclSuccess;
 }
 
-onecclResult_t
-oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
-                              onecclUniqueId commId, int rank,
-                              const onecclConfig_t * /*config*/) {
+onecclResult_t oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
+                                             onecclUniqueId commId, int rank,
+                                             const onecclConfig_t *config) {
     auto *legacy_id = reinterpret_cast<onecclUniqueIdLegacy *>(&commId.legacy);
 
     if (kvs_for.find(legacy_id->address) == kvs_for.end()) {
@@ -588,10 +590,11 @@ oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
         sycl::device device = *selected_device;
         sycl::context context = *selected_context;
 
+        auto multi_threaded = config->multiThreaded == 1;
         comm_legacy = new CommunicatorLegacy(
             rank, static_cast<int>(nranks), legacy_id->address, device_index,
             std::move(ccl::create_device(device)),
-            std::move(ccl::create_context(context)));
+            std::move(ccl::create_context(context)), multi_threaded);
     } else {
         // CPU only path
         comm_legacy = new CommunicatorLegacy(rank, static_cast<int>(nranks),

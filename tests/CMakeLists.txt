@@ -12,19 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(INSTALL_GMOCK ON CACHE BOOL OFF)
-set(INSTALL_GTEST ON CACHE BOOL OFF)
-
-FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/release-1.12.1.tar.gz
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    EXCLUDE_FROM_ALL
-)
-
-# Make available GoogleTest's CMake targets
-FetchContent_MakeAvailable(googletest)
-
 include(CMakeParseArguments)
 
 function(add_test_internal)
@@ -156,6 +143,23 @@ if(IntelSYCL_FOUND)
         get_property(ENV_MODIFICATION TEST acceptance_sycl PROPERTY ENVIRONMENT_MODIFICATION)
         set(ENV_MODIFICATION "${ENV_MODIFICATION}CCL_KERNEL_PATH=set:${PROJECT_SOURCE_DIR}/deps/libccl/src/kernels/;")
         set_property(TEST acceptance_sycl PROPERTY ENVIRONMENT_MODIFICATION "${ENV_MODIFICATION}")
+    endif()
+
+    add_test_internal(
+        TARGET acceptance_thread_sycl
+        SRCS acceptance_thread_sycl.cpp
+        PLUGIN_TARGETS "ccl_legacy"
+        VALUATIONS ON
+        EXEC_PREFIX "mpiexec -n 1"
+        TIMEOUT 600
+    )
+
+    if(TARGET acceptance_thread_sycl)
+        add_sycl_to_target(TARGET acceptance_thread_sycl SOURCES acceptance_thread_sycl.cpp)
+
+        get_property(ENV_MODIFICATION TEST acceptance_thread_sycl PROPERTY ENVIRONMENT_MODIFICATION)
+        set(ENV_MODIFICATION "${ENV_MODIFICATION}CCL_KERNEL_PATH=set:${PROJECT_SOURCE_DIR}/deps/libccl/src/kernels/;")
+        set_property(TEST acceptance_thread_sycl PROPERTY ENVIRONMENT_MODIFICATION "${ENV_MODIFICATION}")
     endif()
 endif()
 

@@ -199,6 +199,8 @@ typedef struct onecclConfig {
     const char *netName;
     int splitShare;
 
+    int multiThreaded; /**< Is the communicator created for multi-threaded use */
+
     onecclPluginType_t plugin;
 } onecclConfig_t;
 
@@ -218,6 +220,7 @@ typedef struct onecclConfig {
             ONECCL_CONFIG_UNDEF_INT, /*maxCTAs*/                               \
             ONECCL_CONFIG_UNDEF_PTR, /*netName*/                               \
             ONECCL_CONFIG_UNDEF_INT, /*splitShare*/                            \
+            ONECCL_CONFIG_UNDEF_INT, /*multiThreaded*/                         \
             onecclPluginAny,         /* plugin */                              \
     }
 
