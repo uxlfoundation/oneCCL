@@ -683,7 +683,7 @@ inline bool use_recording_path(const ccl_stream *stream) {
 }
 
 inline sycl::event get_last_event(const sycl::queue &q) {
-#if __INTEL_LLVM_COMPILER >= 20250200
+#if __INTEL_LLVM_COMPILER >= 20250200 || __clang_major__ >= 21
     // For Intel LLVM compiler version 2025.2.0 or later
     auto last_event_opt = q.ext_oneapi_get_last_event();
     if (last_event_opt.has_value()) {

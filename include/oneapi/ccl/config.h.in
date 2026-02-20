@@ -37,7 +37,7 @@
 #cmakedefine CCL_PRODUCT_BUILD_DATE "@CCL_PRODUCT_BUILD_DATE@"
 #cmakedefine CCL_PRODUCT_FULL       "@CCL_PRODUCT_FULL@"
 
-#if defined(SYCL_LANGUAGE_VERSION) && defined (__INTEL_LLVM_COMPILER)
+#if defined(SYCL_LANGUAGE_VERSION) && defined(__clang__)
 #define CCL_ENABLE_SYCL
 #define CCL_ENABLE_ZE
 #endif

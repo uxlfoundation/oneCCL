@@ -124,10 +124,12 @@ endfunction(set_lp_env)
 
 function(set_sycl_env)
     set(ICX_SYCL_VEC_BF16_MIN_SUPPORTED "2024.2.0")
+    set(DPCPP_SYCL_VEC_BF16_MIN_SUPPORTED "21.0.0")
 
     if (CCL_ENABLE_SYCL
-    AND ${CMAKE_C_COMPILER_ID} STREQUAL "IntelLLVM"
-    AND NOT ${CMAKE_C_COMPILER_VERSION} VERSION_LESS ${ICX_SYCL_VEC_BF16_MIN_SUPPORTED})
+    AND ((${CMAKE_C_COMPILER_ID} STREQUAL "IntelLLVM"
+    AND NOT ${CMAKE_C_COMPILER_VERSION} VERSION_LESS ${ICX_SYCL_VEC_BF16_MIN_SUPPORTED}) OR (${CMAKE_C_COMPILER_ID} STREQUAL "Clang"
+    AND NOT ${CMAKE_C_COMPILER_VERSION} VERSION_LESS ${DPCPP_SYCL_VEC_BF16_MIN_SUPPORTED})))
         add_definitions(-DCCL_SYCL_VEC_SUPPORT_BF16)
 	set(CCL_SYCL_VEC_SUPPORT_BF16 ON)
     else()
@@ -135,7 +137,8 @@ function(set_sycl_env)
     endif()
 
     if (CCL_ENABLE_SYCL
-    AND ${CMAKE_C_COMPILER_ID} STREQUAL "Clang")
+	AND ${CMAKE_C_COMPILER_ID} STREQUAL "Clang" AND
+	${CMAKE_C_COMPILER_VERSION} VERSION_LESS "21.0.0")
         set(CCL_SYCL_VEC_SUPPORT_FP16 OFF)
     else()
         add_definitions(-DCCL_SYCL_VEC_SUPPORT_FP16)
@@ -332,15 +335,23 @@ function(set_compute_backend COMMON_CMAKE_DIR)
         set(CCL_ENABLE_ZE ON PARENT_SCOPE)
         message(STATUS "Enable CCL Level Zero support")
 
-        set (CMAKE_CXX_FLAGS "-Wno-c++20-extensions" PARENT_SCOPE)
+        set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-c++20-extensions" PARENT_SCOPE)
 
-        execute_process(COMMAND icpx -v
-            OUTPUT_VARIABLE ICPX_VERSION
-            ERROR_VARIABLE ICPX_VERSION
+        execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -v
+            OUTPUT_VARIABLE SYCL_COMPILER_VERSION
+            ERROR_VARIABLE SYCL_COMPILER_VERSION
             OUTPUT_STRIP_TRAILING_WHITESPACE
             ERROR_STRIP_TRAILING_WHITESPACE
         )
-        message(STATUS "DPC++ compiler version:\n" "${ICPX_VERSION}")
+        message(STATUS "DPC++ compiler version:\n" "${SYCL_COMPILER_VERSION}")
+	if(NOT ${CMAKE_CXX_COMPILER} MATCHES ".*icpx")
+	  if(NOT ${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
+	    message(FATAL_ERROR "Only Clang-based SYCL compilers are supported")
+	  endif()
+	  if(NOT "${SYCL_COMPILER_VERSION}" MATCHES "Intel SYCL compiler")
+	    message(WARNING "Unsupported Clang-based SYCL compiler")
+	  endif()
+	endif()
     endif()
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COMPUTE_BACKEND_FLAGS}")
