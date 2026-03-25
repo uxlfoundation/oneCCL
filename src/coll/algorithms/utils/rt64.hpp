@@ -19,7 +19,7 @@ template <typename T, int SubGroupSize>
 struct Rt64_PCIE {
     using message_t = sycl::vec<uint32_t, 4>;
 #if defined(__SYCL_DEVICE_ONLY__)
-    using inner_t = message_t::vector_t;
+    using inner_t = uint32_t __attribute__((ext_vector_type(4)));
 #endif
     constexpr static size_t wireCapacity = SubGroupSize * sizeof(message_t) / 2;
     constexpr static size_t wireTransSize = SubGroupSize * sizeof(message_t);

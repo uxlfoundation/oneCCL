@@ -63,7 +63,8 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
     LOG_DEBUG("|CCL_SYCL| has_all_vertices_connected", has_all_vertices_connected);
 
     // for ARC GPUs to do ring RT256
-    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+        recv_count * world * ccl_dtype.size() <= ccl::global_data::env().sycl_reduce_scatter_simple_threshold) {
         if (!is_aligned(send_buf, recv_buf, recv_count * ccl_dtype.size(), 4) ||
             ccl::global_data::env().sycl_enable_arc_allreduce) {
             done = false;

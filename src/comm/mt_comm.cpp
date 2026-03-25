@@ -41,7 +41,8 @@ ccl_internal_comm::ccl_internal_comm(int comm_id, int rank, int size)
         : m_dtree(size, rank)
 #ifdef CCL_ENABLE_SYCL
           ,
-          m_barrier_data(rank, size)
+          m_barrier_data(rank, size),
+          m_flag_data(rank, size)
 #endif // CCL_ENABLE_SYCL
 {
     reset(rank, size);

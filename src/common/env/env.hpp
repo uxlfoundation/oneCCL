@@ -233,6 +233,8 @@ public:
     std::string sycl_allreduce_scaleout_algo;
     bool sycl_enable_arc_allreduce;
     size_t sycl_allreduce_ll_threshold;
+    size_t sycl_allreduce_simple_threshold;
+    bool sycl_allreduce_simple_read;
     size_t sycl_allreduce_chunking_threshold;
 
     bool sycl_reduce_scatter_tmp_buf;
@@ -241,15 +243,22 @@ public:
     size_t sycl_reduce_scatter_scaleout_threshold;
     std::string sycl_reduce_scatter_scaleout_algo;
     size_t sycl_reduce_scatter_ll_threshold;
+    size_t sycl_reduce_scatter_simple_threshold;
 
     bool sycl_allgatherv_tmp_buf;
     size_t sycl_allgatherv_small_threshold;
     size_t sycl_allgatherv_medium_threshold;
     size_t sycl_allgatherv_scaleout_threshold;
     size_t sycl_allgatherv_ll_threshold;
+    size_t sycl_allgatherv_simple_threshold;
     size_t sycl_allgatherv_chunking_threshold;
 
+    std::string sycl_alltoall_scaleout_algo;
     bool sycl_enable_arc_alltoall_ll;
+    bool sycl_alltoall_tmp_buf;
+    size_t sycl_alltoall_ll_threshold;
+    size_t sycl_alltoall_chunking_threshold;
+    bool sycl_alltoall_single_node_algorithm;
 
     bool enable_sycl_kernels;
 
@@ -267,6 +276,9 @@ public:
     size_t sycl_kernels_line_size;
     size_t sycl_max_pipeline_chunk_size;
     ssize_t sycl_pipeline_chunk_size;
+    size_t sycl_numa_nodes;
+    size_t sycl_numa_nodes_split;
+    bool sycl_split_numa;
     bool sycl_enable_pipeline_gpu_rdma;
     bool sycl_enable_direct_gpu_rdma;
     int sycl_pipeline_gpu_rdma;
@@ -275,6 +287,9 @@ public:
     bool sycl_ll_buffer_global;
     ccl::utils::alloc_mode sycl_scaleout_buf_alloc_mode;
     bool sycl_pt2pt_read;
+    bool sycl_simple_single_kernel;
+    size_t sycl_num_threads;
+    size_t sycl_work_group_size;
 #endif // CCL_ENABLE_SYCL
 
     bool allreduce_nreduce_buffering;

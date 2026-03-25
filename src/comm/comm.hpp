@@ -115,12 +115,18 @@ private:
     int m_size;
     size_t m_count = slots - 1;
     bool m_is_set = false;
+    bool m_use_remote_atomics;
     std::array<size_t*, MAX_NODE_RANKS> m_remote_ptrs{};
 
 public:
     static constexpr int slots = 3;
 
-    ccl_comm_barrier_data(int rank, int size) : m_rank(rank), m_size(size) {}
+    // setting use_remote_atomics is postponed in coll_init
+    // until topo manager is created.
+    ccl_comm_barrier_data(int rank, int size)
+            : m_rank(rank),
+              m_size(size),
+              m_use_remote_atomics(false) {}
 
     int rank() const {
         return m_rank;
@@ -132,6 +138,14 @@ public:
 
     bool is_set() const {
         return m_is_set;
+    }
+
+    bool use_remote_atomics() const {
+        return m_use_remote_atomics;
+    }
+
+    void set_remote_atomics(bool use_remote_atomics) {
+        m_use_remote_atomics = use_remote_atomics;
     }
 
     size_t inc(size_t n) {
@@ -158,6 +172,52 @@ public:
     }
 };
 
+class alignas(CACHELINE_SIZE) ccl_comm_flag_data {
+private:
+    int m_rank;
+    int m_size;
+    size_t* d_count = nullptr;
+    std::array<size_t*, MAX_NODE_RANKS> d_remote_ptrs{};
+
+public:
+    static constexpr int slots = 4;
+
+    ccl_comm_flag_data(int rank, int size) : m_rank(rank), m_size(size) {}
+
+    int rank() const {
+        return m_rank;
+    }
+
+    int size() const {
+        return m_size;
+    }
+
+    size_t inc(size_t n) {
+        *d_count = *d_count + n;
+        return *d_count;
+    }
+
+    size_t count() const {
+        return *d_count / slots;
+    }
+
+    int slot() const {
+        return *d_count % slots;
+    }
+
+    std::array<size_t*, MAX_NODE_RANKS> remote_ptrs() const {
+        return d_remote_ptrs;
+    }
+
+    void set_count(size_t* count) {
+        d_count = count;
+    }
+
+    void set_remote_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs) {
+        d_remote_ptrs = ptrs;
+    }
+};
+
 struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
     // three tmp buffers - 1: work_buf, 2: tmp_send_buf, 3: tmp_recv_buf
     static constexpr int buf_count = 3;
@@ -165,6 +225,7 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
     std::array<void*, buf_count> tmp_bufs;
     // ipc exchanged pointers to remote tmp buffers
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count] = {};
+    std::array<void*, MAX_NODE_RANKS> remote_numa_tmp_bufs[buf_count] = {};
     std::array<void*, MAX_GPUS> remote_even_tmp_bufs[buf_count] = {};
     std::array<void*, MAX_TILES> remote_pair_tmp_bufs[buf_count] = {};
 
@@ -173,6 +234,7 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
         tmp_bufs.fill(nullptr);
         for (int i = 0; i < buf_count; i++) {
             remote_tmp_bufs[i].fill(nullptr);
+            remote_numa_tmp_bufs[i].fill(nullptr);
             remote_even_tmp_bufs[i].fill(nullptr);
             remote_pair_tmp_bufs[i].fill(nullptr);
         }
@@ -352,6 +414,14 @@ public:
     void reset(int rank, int size);
 
 #ifdef CCL_ENABLE_SYCL
+    bool use_remote_atomics() const {
+        return m_barrier_data.use_remote_atomics();
+    }
+
+    void set_remote_atomics(bool use_remote_atomics) {
+        m_barrier_data.set_remote_atomics(use_remote_atomics);
+    }
+
     ccl_comm_barrier_data barrier_data() const {
         return m_barrier_data;
     }
@@ -363,6 +433,15 @@ public:
 
     void set_barrier_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs) {
         m_barrier_data.set_remote_ptrs(ptrs);
+    }
+
+    ccl_comm_flag_data flag_data() const {
+        return m_flag_data;
+    }
+
+    void set_flag_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs, size_t* count) {
+        m_flag_data.set_remote_ptrs(ptrs);
+        m_flag_data.set_count(count);
     }
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
@@ -438,6 +517,7 @@ private:
     ccl_double_tree m_dtree;
 #ifdef CCL_ENABLE_SYCL
     ccl_comm_barrier_data m_barrier_data;
+    ccl_comm_flag_data m_flag_data;
     ccl_tmp_bufs m_tmp_buf;
     ccl_large_tmp_bufs m_large_tmp_buf{};
     ccl_scaleout_host_bufs m_scaleout_host_bufs;
@@ -530,6 +610,9 @@ private:
     void create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm);
     // needed for multithreading (single process multiple devices) approach:
     void create_topo_subcommsExt(int size, int rank);
+    int detect_numa_nodes_from_gpu_topology(std::shared_ptr<ccl_comm> node_comm,
+                                            std::shared_ptr<ccl::device> device_ptr,
+                                            std::shared_ptr<ccl::context> context_ptr);
 
     ccl_comm* get_impl() {
         return this;
@@ -609,6 +692,22 @@ public:
         return node_comm;
     }
 
+    std::shared_ptr<ccl_comm> get_numa_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_numa_comm();
+        }
+        CCL_ASSERT(numa_comm, "no numa_comm");
+        return numa_comm;
+    }
+
+    std::shared_ptr<ccl_comm> get_numa_r2r_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_numa_r2r_comm();
+        }
+        CCL_ASSERT(numa_r2r_comm, "no numa_r2r_comm");
+        return numa_r2r_comm;
+    }
+
     std::shared_ptr<ccl_comm> get_even_comm() const {
         if (parent_comm) {
             return parent_comm->get_even_comm();
@@ -678,6 +777,14 @@ public:
     }
 
 #ifdef CCL_ENABLE_SYCL
+    bool use_remote_atomics() const {
+        return comm_impl->use_remote_atomics();
+    }
+
+    void set_remote_atomics(bool use_remote_atomics) {
+        comm_impl->set_remote_atomics(use_remote_atomics);
+    }
+
     ccl_comm_barrier_data barrier_data() const {
         return comm_impl->barrier_data();
     }
@@ -688,6 +795,14 @@ public:
 
     void set_barrier_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs) {
         comm_impl->set_barrier_ptrs(ptrs);
+    }
+
+    ccl_comm_flag_data flag_data() const {
+        return comm_impl->flag_data();
+    }
+
+    void set_flag_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs, size_t* count) {
+        comm_impl->set_flag_ptrs(ptrs, count);
     }
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
@@ -851,6 +966,8 @@ private:
     // TODO: double check if these can be moved to comm_impl as shared fields
     std::shared_ptr<ccl_comm> r2r_comm;
     std::shared_ptr<ccl_comm> node_comm;
+    std::shared_ptr<ccl_comm> numa_comm;
+    std::shared_ptr<ccl_comm> numa_r2r_comm;
     std::shared_ptr<ccl_comm> even_comm;
     std::shared_ptr<ccl_comm> pair_comm;
 

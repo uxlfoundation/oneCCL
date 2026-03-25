@@ -15,7 +15,8 @@
 */
 #include "coll/algorithms/allgatherv/sycl/allgatherv_large_sycl_impl.hpp"
 
-ccl::event allgatherv_large(const void* send_buf,
+ccl::event allgatherv_large(sycl::queue& q,
+                            const void* send_buf,
                             size_t send_count,
                             void* recv_buf,
                             const ccl::vector_class<size_t>& recv_counts,
@@ -123,12 +124,30 @@ ccl::event allgatherv_large(const void* send_buf,
 
     auto lambda = [&]<typename T, int NE, int NP>() {
         if (use_full_vector) {
-            return allgatherv_large_impl<T, NE, NP, true>(
-                send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
+            return allgatherv_large_impl<T, NE, NP, true>(q,
+                                                          send_buf,
+                                                          send_count,
+                                                          recv_buf,
+                                                          recv_counts,
+                                                          offsets,
+                                                          dtype,
+                                                          comm,
+                                                          global_stream,
+                                                          sycl_ptrs,
+                                                          deps);
         }
         else {
-            return allgatherv_large_impl<T, NE, NP, false>(
-                send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
+            return allgatherv_large_impl<T, NE, NP, false>(q,
+                                                           send_buf,
+                                                           send_count,
+                                                           recv_buf,
+                                                           recv_counts,
+                                                           offsets,
+                                                           dtype,
+                                                           comm,
+                                                           global_stream,
+                                                           sycl_ptrs,
+                                                           deps);
         }
     };
 

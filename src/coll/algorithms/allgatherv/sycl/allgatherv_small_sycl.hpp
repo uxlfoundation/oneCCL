@@ -259,7 +259,7 @@ public:
                                                             cache_hint::none>(local_sync_ptr, ramp, pred);
                             }
                         }
-                        barrier();
+                        idx2.barrier();
                     }
 
                     //once the local level sync is done, atomically write its counter to other remote gpus' atomic counter

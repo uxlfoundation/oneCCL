@@ -32,6 +32,15 @@ bool can_use_sycl_kernels(const ccl_selector_param& param);
 enum class allreduce_scaleout_algo { direct, rabenseifner, ring };
 enum class reduce_scatter_scaleout_algo { direct, ring };
 enum class allgatherv_scaleout_algo { direct, ring };
+enum class alltoall_scaleout_algo {
+    direct,
+    pairwise,
+    gdr_only_pairwise,
+    scatter,
+    numa_gdr_only,
+    numa_gdr_split,
+    fallback
+};
 
 struct sycl_allreduce_tune_attr {
     allreduce_scaleout_algo algo{ allreduce_scaleout_algo::direct };
@@ -46,6 +55,10 @@ struct sycl_reduce_scatter_tune_attr {
 struct sycl_allgatherv_tune_attr {
     allgatherv_scaleout_algo algo{ allgatherv_scaleout_algo::direct };
     size_t pipeline_chunk_size{ 2 * 1024 * 1024 };
+};
+
+struct sycl_alltoall_tune_attr {
+    alltoall_scaleout_algo algo{ alltoall_scaleout_algo::direct };
 };
 
 // alleduce
@@ -64,3 +77,8 @@ size_t reduce_scatter_select_chunk_size(reduce_scatter_scaleout_algo algo,
 
 // allgatherv
 size_t allgatherv_select_chunk_size();
+
+// alltoall
+sycl_alltoall_tune_attr alltoall_select_tune_attr(size_t size,
+                                                  size_t comm_size,
+                                                  ccl_datatype ccl_dtype);

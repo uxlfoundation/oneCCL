@@ -178,6 +178,177 @@ bool ccl_hwloc_wrapper::is_dev_close_by_pci(int domain, int bus, int dev, int fu
     return is_close;
 }
 
+int ccl_hwloc_wrapper::get_numa_node_by_pci(int domain, int bus, int dev, int func) {
+    int numa_node = CCL_HWLOC_INVALID_NUMA_NODE;
+
+    if (!is_initialized()) {
+        LOG_WARN("hwloc is not initialized, cannot get NUMA node for PCI device: [",
+                 domain,
+                 ":",
+                 bus,
+                 ":",
+                 dev,
+                 ":",
+                 func,
+                 "]");
+        return numa_node;
+    }
+
+    hwloc_obj_t io_device = hwloc_get_pcidev_by_busid(topology, domain, bus, dev, func);
+    if (!io_device) {
+        LOG_WARN("failed to get PCI device: [", domain, ":", bus, ":", dev, ":", func, "]");
+        return numa_node;
+    }
+
+    hwloc_obj_t ancestor = hwloc_get_non_io_ancestor_obj(topology, io_device);
+    if (!ancestor) {
+        LOG_WARN(
+            "failed to get ancestor of PCI device: [", domain, ":", bus, ":", dev, ":", func, "]");
+        return numa_node;
+    }
+
+    // The ancestor's cpuset tells us which CPUs can access this PCI device
+    // We need to find which NUMA node has the most overlap with this cpuset
+    if (!ancestor->cpuset || hwloc_bitmap_iszero(ancestor->cpuset)) {
+        LOG_WARN(
+            "Ancestor has no cpuset for PCI device: [", domain, ":", bus, ":", dev, ":", func, "]");
+        return numa_node;
+    }
+
+    LOG_DEBUG("Ancestor type: ", hwloc_obj_type_string(ancestor->type));
+
+    // Find the NUMA node with maximum CPU intersection
+    int best_numa = CCL_HWLOC_INVALID_NUMA_NODE;
+    int max_intersection = 0;
+
+    hwloc_obj_t numa_obj = nullptr;
+    while ((numa_obj = hwloc_get_next_obj_by_type(topology, HWLOC_OBJ_NUMANODE, numa_obj)) !=
+           nullptr) {
+        if (!numa_obj->cpuset || hwloc_bitmap_iszero(numa_obj->cpuset)) {
+            continue;
+        }
+
+        // Calculate intersection between ancestor's cpuset and this NUMA node's cpuset
+        hwloc_bitmap_t intersection = hwloc_bitmap_alloc();
+        if (!intersection) {
+            LOG_WARN("Failed to allocate bitmap");
+            continue;
+        }
+
+        hwloc_bitmap_and(intersection, ancestor->cpuset, numa_obj->cpuset);
+        int intersection_weight = hwloc_bitmap_weight(intersection);
+        hwloc_bitmap_free(intersection);
+
+        LOG_DEBUG("PCI [",
+                  domain,
+                  ":",
+                  bus,
+                  ":",
+                  dev,
+                  ":",
+                  func,
+                  "] - NUMA node ",
+                  numa_obj->os_index,
+                  " CPU intersection: ",
+                  intersection_weight);
+
+        if (intersection_weight > max_intersection) {
+            max_intersection = intersection_weight;
+            best_numa = numa_obj->os_index;
+        }
+    }
+
+    if (best_numa != CCL_HWLOC_INVALID_NUMA_NODE && max_intersection > 0) {
+        numa_node = best_numa;
+        LOG_INFO("PCI device [",
+                 domain,
+                 ":",
+                 bus,
+                 ":",
+                 dev,
+                 ":",
+                 func,
+                 "] is on NUMA node ",
+                 numa_node,
+                 " (CPU intersection: ",
+                 max_intersection,
+                 ")");
+    }
+    else {
+        // Fallback to nodeset method if cpuset intersection didn't work.
+        // This method is less reliable as it may not account for CPU affinity,
+        // but can work when cpuset-based detection fails.
+        LOG_DEBUG("PCI device [",
+                  domain,
+                  ":",
+                  bus,
+                  ":",
+                  dev,
+                  ".",
+                  func,
+                  "] cpuset method failed, attempting nodeset fallback");
+
+        if (!ancestor->nodeset || hwloc_bitmap_iszero(ancestor->nodeset)) {
+            LOG_DEBUG("PCI device [",
+                      domain,
+                      ":",
+                      bus,
+                      ":",
+                      dev,
+                      ".",
+                      func,
+                      "] fallback failed: ancestor has no valid nodeset");
+        }
+        else {
+            int first_numa = hwloc_bitmap_first(ancestor->nodeset);
+            if (first_numa < 0) {
+                LOG_DEBUG("PCI device [",
+                          domain,
+                          ":",
+                          bus,
+                          ":",
+                          dev,
+                          ".",
+                          func,
+                          "] fallback failed: invalid first NUMA index ",
+                          first_numa);
+            }
+            else {
+                hwloc_obj_t numa_obj_fallback =
+                    hwloc_get_numanode_obj_by_os_index(topology, first_numa);
+                if (!numa_obj_fallback) {
+                    LOG_DEBUG("PCI device [",
+                              domain,
+                              ":",
+                              bus,
+                              ":",
+                              dev,
+                              ".",
+                              func,
+                              "] fallback failed: could not get NUMA node object for index ",
+                              first_numa);
+                }
+                else {
+                    numa_node = numa_obj_fallback->os_index;
+                    LOG_DEBUG("PCI device [",
+                              domain,
+                              ":",
+                              bus,
+                              ":",
+                              dev,
+                              ".",
+                              func,
+                              "] assigned to NUMA node ",
+                              numa_node,
+                              " using nodeset fallback method");
+                }
+            }
+        }
+    }
+
+    return numa_node;
+}
+
 void ccl_hwloc_wrapper::membind_thread(int numa_node) {
     if (!is_initialized()) {
         LOG_WARN("hwloc is not initialized, skip thread membind for NUMA node ", numa_node);

@@ -480,7 +480,7 @@ void print_timings(const ccl::communicator& comm,
         if (ncolls == 1) {
             if (options.coll_names.front() == "allgather" ||
                 options.coll_names.front() == "allgatherv" ||
-                options.coll_names.front() == "reduce_scatter" ||
+                //options.coll_names.front() == "reduce_scatter" ||
                 options.coll_names.front() == "alltoall" ||
                 options.coll_names.front() == "alltoallv") {
                 algbw = algbw * nranks;

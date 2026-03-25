@@ -114,35 +114,73 @@ std::vector<sycl::event> alltoall_memcpy_read(sycl::queue &queue,
     return events;
 }
 
+// use copy engine and rank scatter
 template <size_t vec_size, typename DataType, size_t N_RANKS>
-std::vector<sycl::event> alltoall_vec_write_aligned(
+std::vector<sycl::event> alltoall_vec_write_aligned_with_ce(
     sycl::queue &queue,
+    const std::shared_ptr<ccl_comm> node_comm,
     const std::array<DataType *, N_RANKS> &send_bufs,
     std::array<DataType *, N_RANKS> &recv_bufs,
     size_t per_rank_count,
+    std::vector<size_t> &offsets,
+    size_t rank,
+    sycl::event &dep) {
+    sycl::event e;
+    for (int i = 0; i < N_RANKS; i++) {
+        // scatter the ranks
+        int peer = (rank + i) % N_RANKS;
+        e = queue.submit([=](sycl::handler &h) {
+            h.depends_on(dep);
+            h.memcpy(recv_bufs[peer] + offsets[rank],
+                     send_bufs[rank] + offsets[peer],
+                     per_rank_count * sizeof(DataType));
+        });
+    }
+    return { e };
+}
+
+template <size_t vec_size, typename DataType, size_t N_RANKS>
+std::vector<sycl::event> alltoall_vec_write_aligned(
+    sycl::queue &queue,
+    const std::shared_ptr<ccl_comm> node_comm,
+    const std::array<DataType *, N_RANKS> &send_bufs,
+    std::array<DataType *, N_RANKS> &recv_bufs,
+    size_t per_rank_count,
+    std::vector<size_t> &offsets,
     size_t rank,
     sycl::event &dep) {
     CCL_THROW_IF_NOT(vec_size > 0, "vec_size has to be a positive value");
 
-    return { queue.submit([&](sycl::handler &cgh) {
+    bool is_arc = is_arc_card(ccl::global_data::get().ze_data->devices[0].family);
+    // for BMG on PCIe systems
+    //if (is_arc && per_rank_count * sizeof(DataType) * N_RANKS >= 128 * 1024) {
+    if (is_arc) {
+        return alltoall_vec_write_aligned_with_ce<vec_size, DataType, N_RANKS>(
+            queue, node_comm, send_bufs, recv_bufs, per_rank_count, offsets, rank, dep);
+    }
+    sycl::event e = queue.submit([&](sycl::handler &cgh) {
         cgh.depends_on(dep);
         // start and end are properly aligned, the internals are a multiple of sycl_vec size
         // therefore, there is no remainder to handle
         cgh.parallel_for(sycl::range<1>(per_rank_count / vec_size), [=](sycl::id<1> idx) {
             size_t start_idx = idx * vec_size;
 #pragma unroll
-            for (size_t buffer_index = 0; buffer_index < N_RANKS; ++buffer_index) {
+            for (size_t i = 0; i < N_RANKS; ++i) {
+                // scatter the ranks
+                int peer = (rank + i) % N_RANKS;
                 sycl::vec<DataType, vec_size> data = *static_cast<sycl::vec<DataType, vec_size> *>(
-                    (void *)&send_bufs[rank][buffer_index * per_rank_count + start_idx]);
+                    (void *)&send_bufs[rank][peer * per_rank_count + start_idx]);
                 *(sycl::vec<DataType, vec_size> *)static_cast<void *>(
-                    &recv_bufs[buffer_index][rank * per_rank_count + start_idx]) = data;
+                    &recv_bufs[peer][rank * per_rank_count + start_idx]) = data;
             }
         });
-    }) };
+    });
+    return { e };
 }
 
 template <size_t vec_size, typename DataType, size_t N_RANKS>
 std::vector<sycl::event> alltoall_vec_read_aligned(sycl::queue &queue,
+                                                   const std::shared_ptr<ccl_comm> node_comm,
                                                    const std::array<DataType *, N_RANKS> &send_bufs,
                                                    std::array<DataType *, N_RANKS> &recv_bufs,
                                                    size_t per_rank_count,
@@ -244,9 +282,11 @@ bool check_all_aligned(std::array<size_t, N_RANKS> &peel_front_count,
 
 template <size_t vec_size, typename DataType, size_t N_RANKS>
 std::vector<sycl::event> alltoall_vec_write(sycl::queue &queue,
+                                            const std::shared_ptr<ccl_comm> node_comm,
                                             const std::array<DataType *, N_RANKS> &send_bufs,
                                             std::array<DataType *, N_RANKS> &recv_bufs,
                                             size_t per_rank_count,
+                                            std::vector<size_t> &offsets,
                                             size_t rank,
                                             sycl::event &dep) {
     CCL_THROW_IF_NOT(vec_size > 0, "vec_size has to be a positive value");
@@ -277,7 +317,7 @@ std::vector<sycl::event> alltoall_vec_write(sycl::queue &queue,
         // aligned data, no reason to peel
         // fallback to simpler implementation for performance reasons
         return alltoall_vec_write_aligned<vec_size, DataType, N_RANKS>(
-            queue, send_bufs, recv_bufs, per_rank_count, rank, dep);
+            queue, node_comm, send_bufs, recv_bufs, per_rank_count, offsets, rank, dep);
     }
 
     size_t aligned_loop_count = per_rank_count / vec_size;
@@ -365,6 +405,7 @@ std::vector<sycl::event> alltoall_vec_write(sycl::queue &queue,
 
 template <size_t vec_size, typename DataType, size_t N_RANKS>
 std::vector<sycl::event> alltoall_vec_read(sycl::queue &queue,
+                                           const std::shared_ptr<ccl_comm> node_comm,
                                            const std::array<DataType *, N_RANKS> &send_bufs,
                                            std::array<DataType *, N_RANKS> &recv_bufs,
                                            size_t per_rank_count,
@@ -398,7 +439,7 @@ std::vector<sycl::event> alltoall_vec_read(sycl::queue &queue,
         // aligned data, no reason to peel
         // fallback to simpler implementation for performance reasons
         return alltoall_vec_read_aligned<vec_size, DataType, N_RANKS>(
-            queue, send_bufs, recv_bufs, per_rank_count, rank, dep);
+            queue, node_comm, send_bufs, recv_bufs, per_rank_count, rank, dep);
     }
 
     size_t aligned_loop_count = per_rank_count / vec_size;
@@ -488,17 +529,21 @@ std::vector<sycl::event> alltoall_vec_read(sycl::queue &queue,
 template <size_t vec_size, typename DataType, size_t N_RANKS>
 std::vector<sycl::event> alltoall_large_vec_size_impl(
     sycl::queue &queue,
+    const std::shared_ptr<ccl_comm> node_comm,
     const std::array<DataType *, N_RANKS> &send_bufs,
     std::array<DataType *, N_RANKS> &recv_bufs,
     size_t count,
+    std::vector<size_t> &offsets,
     size_t rank,
     sycl::event &dep) {
     switch (ccl::global_data::env().sycl_alltoall_protocol) {
         case ccl_sycl_alltoall_protocol::read: {
-            return alltoall_vec_read<vec_size>(queue, send_bufs, recv_bufs, count, rank, dep);
+            return alltoall_vec_read<vec_size>(
+                queue, node_comm, send_bufs, recv_bufs, count, rank, dep);
         }
         case ccl_sycl_alltoall_protocol::write: {
-            return alltoall_vec_write<vec_size>(queue, send_bufs, recv_bufs, count, rank, dep);
+            return alltoall_vec_write<vec_size>(
+                queue, node_comm, send_bufs, recv_bufs, count, offsets, rank, dep);
         }
         default: {
             CCL_THROW("unknown alltoall protocol type");
@@ -512,6 +557,7 @@ template <typename T, size_t N_RANKS>
 ccl::event alltoall_large_impl(const void *send_buf,
                                void *recv_buf,
                                size_t count,
+                               std::vector<size_t> &offsets,
                                ccl::datatype dtype,
                                ccl_comm *comm,
                                ccl_stream *global_stream,
@@ -535,8 +581,8 @@ ccl::event alltoall_large_impl(const void *send_buf,
     constexpr size_t vec_size =
         std::max(static_cast<size_t>(8 / sizeof(T)), static_cast<size_t>(1));
 
-    std::vector<sycl::event> kernel_events =
-        alltoall_large_vec_size_impl<vec_size>(q, send_pointers, recv_pointers, count, rank, dep);
+    std::vector<sycl::event> kernel_events = alltoall_large_vec_size_impl<vec_size>(
+        q, node_comm, send_pointers, recv_pointers, count, offsets, rank, dep);
 
     sycl::event barrier_event2 = invoke_barrier(node_comm, q, kernel_events, is_cpu_barrier);
 

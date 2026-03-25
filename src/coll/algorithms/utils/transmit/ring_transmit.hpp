@@ -126,11 +126,18 @@ public:
                 offsets[i] = offs[i];
         }
 
-        scatterSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf0[next]);
-        gatherSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf1[next]);
+        if (peerBuf0 == nullptr) {
+            for (int i = 0; i < nranks; i++)
+                gatherSinkArray[i] = reinterpret_cast<ringPtr>((uintptr_t)peerBuf1[i]);
+            localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
+        }
+        else {
+            scatterSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf0[next]);
+            gatherSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf1[next]);
 
-        localScatterSink = reinterpret_cast<ringPtr>((uintptr_t)scatterBuf);
-        localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
+            localScatterSink = reinterpret_cast<ringPtr>((uintptr_t)scatterBuf);
+            localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
+        }
     }
 
     template <int __dummy__>
@@ -539,6 +546,61 @@ public:
         storeOutput(ptr, v, nelems);
     }
 
+    inline void runAllToAll(size_t inputOffset, size_t tStep, ssize_t workLeft) {
+        if (workLeft <= 0) {
+            for (int step = 1; step < nRanks; step++) {
+                sbarrier_signal_compat(p2p);
+                sbarrier_wait_compat(p2p);
+            }
+            return;
+        }
+
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        auto inputOffInType = inputOffset / sizeof(T);
+        auto flag = seqNo + tStep / nSlot;
+        auto slot = (seqNo + tStep) % nSlot;
+        auto nelems = workLeft / sizeof(T);
+
+        message_t v;
+
+        for (int step = 1; step < nRanks; step++) {
+            int send_peer = (rank + step) % nRanks;
+            int recv_peer = (rank + nRanks - step) % nRanks;
+            gatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherSinkArray[send_peer]);
+
+            auto* ptr = ingress + inputOffInType;
+            if (has_offsets)
+                ptr = (T*)((char*)ptr + offsets[send_peer]);
+            else
+                ptr = ptr + send_peer * workElems;
+            loadInput(v, ptr, nelems);
+            shuffleData(v);
+            insertFlags(v, flag);
+            sendMessages(gatherSink[rank][slot][wireId], v);
+
+            sbarrier_signal_compat(p2p);
+
+            // recv data
+            sbarrier_wait_compat(p2p);
+            bool retry;
+            do {
+                retry = false;
+                retry |= recvMessages(v, localGatherSink[recv_peer][slot][wireId], flag);
+            } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+
+            restoreData(v);
+
+            ptr = egress + inputOffInType;
+            if (has_offsets)
+                ptr = (T*)((char*)ptr + offsets[recv_peer]);
+            else
+                ptr = ptr + recv_peer * workElems;
+            storeOutput(ptr, v, nelems);
+        }
+    }
+
 protected:
     T* ingress;
     T* egress;
@@ -556,4 +618,6 @@ protected:
 
     ringPtr localScatterSink;
     ringPtr localGatherSink;
+
+    ringPtr gatherSinkArray[ARC_MAX_NUM];
 };

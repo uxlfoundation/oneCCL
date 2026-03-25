@@ -1409,7 +1409,7 @@ ccl::event ccl_alltoall(const void* send_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::alltoall_attr>();
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = ccl::alltoall_sycl(q,
                                                       send_buf,
