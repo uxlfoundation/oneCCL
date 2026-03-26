@@ -757,7 +757,6 @@ bool should_disable_rdma(const ze_device_handle_t& device) {
         case 0xE20B: // DT6
         case 0xE20C: // DT7
         case 0xE20D: // DT8
-        case 0xE210: // DT6+
         case 0xE212: // WKS-B93
         case 0xE220: // DT1+
         case 0xE221: // DT2
@@ -767,6 +766,7 @@ bool should_disable_rdma(const ze_device_handle_t& device) {
             break;
 
         // Don't disable RDMA for these devices
+        case 0xE210: // DT6+
         case 0xE211: // DT6-
         case 0xE216: // NEX2
         case 0xE222: // DT3-

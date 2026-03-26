@@ -27,5 +27,3 @@
 #include "coll/algorithms/utils/rt64_128.hpp"
 
 #include "ring_transmit.hpp"
-
-extern uint32_t pattern_counter;

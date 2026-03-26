@@ -47,6 +47,7 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const int dsize = ccl_dtype.size();
+    size_t total_size = count * dsize;
 
     if (world == 1) {
         sycl::event sycl_e;
@@ -74,7 +75,8 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
               has_all_vertices_connected);
 
     // for ARC GPUs to do ring LL256
-    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+        total_size <= ccl::global_data::env().sycl_allreduce_simple_threshold) {
         if (!is_aligned(send_buf, recv_buf, 0, 4)) {
             done = false;
             return e;

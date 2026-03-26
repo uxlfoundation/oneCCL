@@ -182,6 +182,8 @@ env_data::env_data()
           sycl_allreduce_scaleout_algo("auto"),
           sycl_enable_arc_allreduce(0),
           sycl_allreduce_ll_threshold(4096),
+          sycl_allreduce_simple_threshold(4194304),
+          sycl_allreduce_simple_read(0),
           sycl_allreduce_chunking_threshold(0),
 
           sycl_reduce_scatter_tmp_buf(0),
@@ -190,15 +192,22 @@ env_data::env_data()
           sycl_reduce_scatter_scaleout_threshold(4294967296),
           sycl_reduce_scatter_scaleout_algo("auto"),
           sycl_reduce_scatter_ll_threshold(512),
+          sycl_reduce_scatter_simple_threshold(8388608),
 
           sycl_allgatherv_tmp_buf(0),
           sycl_allgatherv_small_threshold(131072),
           sycl_allgatherv_medium_threshold(2097152),
           sycl_allgatherv_scaleout_threshold(1048576),
           sycl_allgatherv_ll_threshold(2048),
+          sycl_allgatherv_simple_threshold(1048576),
           sycl_allgatherv_chunking_threshold(0),
 
+          sycl_alltoall_scaleout_algo("auto"),
           sycl_enable_arc_alltoall_ll(0),
+          sycl_alltoall_tmp_buf(0),
+          sycl_alltoall_ll_threshold(2048),
+          sycl_alltoall_chunking_threshold(0),
+          sycl_alltoall_single_node_algorithm(1),
 
           enable_sycl_kernels(1),
 
@@ -210,7 +219,7 @@ env_data::env_data()
           sycl_kernel_copy(1),
           sycl_esimd(0),
           sycl_full_vector(1),
-          sycl_tmp_buf_size(3 * 128 * 1024 * 1024),
+          sycl_tmp_buf_size(ccl_large_tmp_bufs::buf_count * 128 * 1024 * 1024),
           sycl_scaleout_host_buf_size(1024 * 1024 * 1024),
           sycl_scaleout_device_buf_size(1024 * 1024 * 1024),
           sycl_kernels_line_size(128),
@@ -218,12 +227,18 @@ env_data::env_data()
           sycl_pt2pt_read(0),
           sycl_max_pipeline_chunk_size(32 * 1024 * 1024),
           sycl_pipeline_chunk_size(CCL_ENV_SIZET_NOT_SPECIFIED),
+          sycl_numa_nodes(1),
+          sycl_numa_nodes_split(0),
+          sycl_split_numa(0),
           sycl_enable_pipeline_gpu_rdma(0),
           sycl_enable_direct_gpu_rdma(0),
           sycl_pipeline_gpu_rdma(0),
           sycl_sub_communicator(1),
           sycl_force_pcie(0),
           sycl_ll_buffer_global(0),
+          sycl_simple_single_kernel(0),
+          sycl_num_threads(0),
+          sycl_work_group_size(64),
 #endif // CCL_ENABLE_SYCL
 
           allreduce_nreduce_buffering(0),
@@ -545,6 +560,8 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_ALLREDUCE_SCALEOUT, sycl_allreduce_scaleout_algo);
     p.env_2_type(CCL_SYCL_ALLREDUCE_ARC, sycl_enable_arc_allreduce);
     p.env_2_type(CCL_SYCL_ALLREDUCE_LL_THRESHOLD, sycl_allreduce_ll_threshold);
+    p.env_2_type(CCL_SYCL_ALLREDUCE_SIMPLE_THRESHOLD, sycl_allreduce_simple_threshold);
+    p.env_2_type(CCL_SYCL_ALLREDUCE_SIMPLE_READ, sycl_allreduce_simple_read);
     p.env_2_type(CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD, sycl_allreduce_chunking_threshold);
 
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_TMP_BUF, sycl_reduce_scatter_tmp_buf);
@@ -553,15 +570,22 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_SCALEOUT_THRESHOLD, sycl_reduce_scatter_scaleout_threshold);
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_SCALEOUT, sycl_reduce_scatter_scaleout_algo);
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_LL_THRESHOLD, sycl_reduce_scatter_ll_threshold);
+    p.env_2_type(CCL_SYCL_REDUCE_SCATTER_SIMPLE_THRESHOLD, sycl_reduce_scatter_simple_threshold);
 
     p.env_2_type(CCL_SYCL_ALLGATHERV_TMP_BUF, sycl_allgatherv_tmp_buf);
     p.env_2_type(CCL_SYCL_ALLGATHERV_SMALL_THRESHOLD, sycl_allgatherv_small_threshold);
     p.env_2_type(CCL_SYCL_ALLGATHERV_MEDIUM_THRESHOLD, sycl_allgatherv_medium_threshold);
     p.env_2_type(CCL_SYCL_ALLGATHERV_SCALEOUT_THRESHOLD, sycl_allgatherv_scaleout_threshold);
     p.env_2_type(CCL_SYCL_ALLGATHERV_LL_THRESHOLD, sycl_allgatherv_ll_threshold);
+    p.env_2_type(CCL_SYCL_ALLGATHERV_SIMPLE_THRESHOLD, sycl_allgatherv_simple_threshold);
     p.env_2_type(CCL_SYCL_ALLGATHERV_CHUNKING_THRESHOLD, sycl_allgatherv_chunking_threshold);
 
+    p.env_2_type(CCL_SYCL_ALLTOALL_SCALEOUT, sycl_alltoall_scaleout_algo);
     p.env_2_type(CCL_SYCL_ALLTOALL_ARC_LL, sycl_enable_arc_alltoall_ll);
+    p.env_2_type(CCL_SYCL_ALLTOALL_TMP_BUF, sycl_alltoall_tmp_buf);
+    p.env_2_type(CCL_SYCL_ALLTOALL_LL_THRESHOLD, sycl_alltoall_ll_threshold);
+    p.env_2_type(CCL_SYCL_ALLTOALL_CHUNKING_THRESHOLD, sycl_alltoall_chunking_threshold);
+    p.env_2_type(CCL_SYCL_ALLTOALL_SINGLE_NODE_ALGORITHM, sycl_alltoall_single_node_algorithm);
 
     p.env_2_type(CCL_ENABLE_SYCL_KERNELS, enable_sycl_kernels);
 
@@ -581,12 +605,18 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_PT2PT_READ, sycl_pt2pt_read);
     p.env_2_type(CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE, sycl_max_pipeline_chunk_size);
     p.env_2_type(CCL_SYCL_PIPELINE_CHUNK_SIZE, (size_t&)sycl_pipeline_chunk_size);
+    p.env_2_type(CCL_SYCL_NUMA_NODES, sycl_numa_nodes);
+    p.env_2_type(CCL_SYCL_NUMA_NODES_SPLIT, sycl_numa_nodes_split);
+    p.env_2_type(CCL_SYCL_SPLIT_NUMA, sycl_split_numa);
     p.env_2_type(CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA, sycl_enable_pipeline_gpu_rdma);
     p.env_2_type(CCL_SYCL_ENABLE_DIRECT_GPU_RDMA, sycl_enable_direct_gpu_rdma);
     p.env_2_type(CCL_SYCL_PIPELINE_GPU_RDMA, sycl_pipeline_gpu_rdma);
     p.env_2_type(CCL_SYCL_SUB_COMMUICATOR, sycl_sub_communicator);
     p.env_2_type(CCL_SYCL_FORCE_PCIE, sycl_force_pcie);
     p.env_2_type(CCL_SYCL_LL_BUFFER_GLOBAL, sycl_ll_buffer_global);
+    p.env_2_type(CCL_SYCL_SIMPLE_SINGLE_KERNEL, sycl_simple_single_kernel);
+    p.env_2_type(CCL_SYCL_NUM_THREADS, sycl_num_threads);
+    p.env_2_type(CCL_SYCL_WORK_GROUP_SIZE, sycl_work_group_size);
 #endif // CCL_ENABLE_SYCL
 
     p.env_2_type(CCL_ALLREDUCE_NREDUCE_BUFFERING, allreduce_nreduce_buffering);
@@ -999,7 +1029,9 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_ALLREDUCE_SCALEOUT, ": ", (!sycl_allreduce_scaleout_algo.empty()) ? sycl_allreduce_scaleout_algo : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_SYCL_ALLREDUCE_ARC, ": ", sycl_enable_arc_allreduce);
     LOG_INFO(CCL_SYCL_ALLREDUCE_LL_THRESHOLD, ": ", sycl_allreduce_ll_threshold);
+    LOG_INFO(CCL_SYCL_ALLREDUCE_SIMPLE_THRESHOLD, ": ", sycl_allreduce_simple_threshold);
     LOG_INFO(CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD, ": ", sycl_allreduce_chunking_threshold);
+    LOG_INFO(CCL_SYCL_ALLREDUCE_SIMPLE_READ, ": ", sycl_allreduce_simple_read);
 
     LOG_INFO(CCL_SYCL_REDUCE_SCATTER_TMP_BUF, ": ", sycl_reduce_scatter_tmp_buf);
     LOG_INFO(CCL_SYCL_REDUCE_SCATTER_SMALL_THRESHOLD, ": ", sycl_reduce_scatter_small_threshold);
@@ -1007,6 +1039,7 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_REDUCE_SCATTER_SCALEOUT_THRESHOLD, ": ", sycl_reduce_scatter_scaleout_threshold);
     LOG_INFO(CCL_SYCL_REDUCE_SCATTER_SCALEOUT, ": ", (!sycl_reduce_scatter_scaleout_algo.empty()) ? sycl_reduce_scatter_scaleout_algo : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_SYCL_REDUCE_SCATTER_LL_THRESHOLD, ": ", sycl_reduce_scatter_ll_threshold);
+    LOG_INFO(CCL_SYCL_REDUCE_SCATTER_SIMPLE_THRESHOLD, ": ", sycl_reduce_scatter_simple_threshold);
 
     LOG_INFO(CCL_SYCL_ALLGATHERV_TMP_BUF, ": ", sycl_allgatherv_tmp_buf);
     LOG_INFO(CCL_SYCL_ALLGATHERV_SMALL_THRESHOLD, ": ", sycl_allgatherv_small_threshold);
@@ -1014,8 +1047,14 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_ALLGATHERV_SCALEOUT_THRESHOLD, ": ", sycl_allgatherv_scaleout_threshold);
     LOG_INFO(CCL_SYCL_ALLGATHERV_LL_THRESHOLD, ": ", sycl_allgatherv_ll_threshold);
     LOG_INFO(CCL_SYCL_ALLGATHERV_CHUNKING_THRESHOLD, ": ", sycl_allgatherv_chunking_threshold);
+    LOG_INFO(CCL_SYCL_ALLGATHERV_SIMPLE_THRESHOLD, ": ", sycl_allgatherv_simple_threshold);
 
+    LOG_INFO(CCL_SYCL_ALLTOALL_SCALEOUT, ": ", (!sycl_alltoall_scaleout_algo.empty()) ? sycl_alltoall_scaleout_algo : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO(CCL_SYCL_ALLTOALL_ARC_LL, ": ", sycl_enable_arc_alltoall_ll);
+    LOG_INFO(CCL_SYCL_ALLTOALL_TMP_BUF, ": ", sycl_alltoall_tmp_buf);
+    LOG_INFO(CCL_SYCL_ALLTOALL_LL_THRESHOLD, ":", sycl_alltoall_ll_threshold);
+    LOG_INFO(CCL_SYCL_ALLTOALL_CHUNKING_THRESHOLD, ":", sycl_alltoall_chunking_threshold);
+    LOG_INFO(CCL_SYCL_ALLTOALL_SINGLE_NODE_ALGORITHM, ": ", sycl_alltoall_single_node_algorithm);
 
     LOG_INFO(CCL_ENABLE_SYCL_KERNELS, ": ", enable_sycl_kernels);
 
@@ -1035,12 +1074,18 @@ void env_data::print(int rank, bool is_mt_enabled) {
     LOG_INFO(CCL_SYCL_PT2PT_READ, ": ", sycl_pt2pt_read);
     LOG_INFO(CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE, ": ", sycl_max_pipeline_chunk_size);
     LOG_INFO(CCL_SYCL_PIPELINE_CHUNK_SIZE, ": ", (sycl_pipeline_chunk_size != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(sycl_pipeline_chunk_size) : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO(CCL_SYCL_NUMA_NODES, ": ", sycl_numa_nodes);
+    LOG_INFO(CCL_SYCL_NUMA_NODES_SPLIT, ": ", sycl_numa_nodes_split);
+    LOG_INFO(CCL_SYCL_SPLIT_NUMA, ": ", sycl_split_numa);
     LOG_INFO(CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA, ": ", sycl_enable_pipeline_gpu_rdma);
     LOG_INFO(CCL_SYCL_ENABLE_DIRECT_GPU_RDMA, ": ", sycl_enable_direct_gpu_rdma);
     LOG_INFO(CCL_SYCL_PIPELINE_GPU_RDMA, ": ", sycl_pipeline_gpu_rdma);
     LOG_INFO(CCL_SYCL_SUB_COMMUICATOR, ": ", sycl_sub_communicator);
     LOG_INFO(CCL_SYCL_FORCE_PCIE, ": ", sycl_force_pcie);
     LOG_INFO(CCL_SYCL_LL_BUFFER_GLOBAL, ": ", sycl_ll_buffer_global);
+    LOG_INFO(CCL_SYCL_SIMPLE_SINGLE_KERNEL, ": ", sycl_simple_single_kernel);
+    LOG_INFO(CCL_SYCL_NUM_THREADS, ": ", sycl_num_threads);
+    LOG_INFO(CCL_SYCL_WORK_GROUP_SIZE, ": ", sycl_work_group_size);
 #endif // CCL_ENABLE_SYCL
 
     LOG_INFO(CCL_ALLREDUCE_NREDUCE_BUFFERING, ": ", allreduce_nreduce_buffering);

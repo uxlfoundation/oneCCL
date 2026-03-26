@@ -36,6 +36,10 @@
 #include "common/api_wrapper/mpi_api_wrapper.hpp"
 #include "coll/algorithms/utils/sycl_kernels.hpp"
 
+namespace syclext = sycl::ext::oneapi;
+namespace syclexp = sycl::ext::oneapi::experimental;
+namespace sycliexp = sycl::ext::intel::experimental;
+
 // TODO: timers can re used, but place in more general place
 class timer {
 public:
@@ -378,6 +382,8 @@ void *get_tmp_buf(int index, ccl_comm *comm = nullptr);
 
 std::array<void *, MAX_NODE_RANKS> get_remote_node_tmp_buf(int index, ccl_comm *comm = nullptr);
 
+std::array<void *, MAX_NODE_RANKS> get_remote_numa_tmp_buf(int index, ccl_comm *comm = nullptr);
+
 std::array<void *, MAX_GPUS> get_remote_even_tmp_buf(int index, ccl_comm *comm = nullptr);
 
 std::array<void *, MAX_TILES> get_remote_pair_tmp_buf(int index, ccl_comm *comm = nullptr);
@@ -385,6 +391,11 @@ std::array<void *, MAX_TILES> get_remote_pair_tmp_buf(int index, ccl_comm *comm 
 size_t get_tmp_buf_size_per_rank();
 
 std::vector<sycl::event> get_sycl_events(const ccl::vector_class<ccl::event> &deps);
+
+sycl::event invoke_p2p_barrier(const std::shared_ptr<ccl_comm> comm,
+                               sycl::queue q,
+                               const std::vector<sycl::event> &dep_events,
+                               bool use_cpu);
 
 sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
                            sycl::queue q,
@@ -491,21 +502,63 @@ ccl::event invoke_collective_size(L lambda, int even_comm_size, ccl::datatype dt
         case 6: e = invoke_collective_type<6, NP>(lambda, dtype); break;
         case 7: e = invoke_collective_type<7, NP>(lambda, dtype); break;
         case 8: e = invoke_collective_type<8, NP>(lambda, dtype); break;
+        case 16: e = invoke_collective_type<16, NP>(lambda, dtype); break;
         default: CCL_THROW("unsupported even_comm size ", even_comm_size); break;
     }
     return e;
 }
 
 template <typename L>
-ccl::event invoke_collective(L lambda, ccl_comm *global_comm, ccl::datatype dtype) {
-    std::shared_ptr<ccl_comm> pair_comm = global_comm->get_pair_comm();
-    std::shared_ptr<ccl_comm> even_comm = global_comm->get_even_comm();
+sycl::event invoke_collective_sycl(L lambda, ccl::datatype dtype) {
+    sycl::event e;
+    switch (dtype) {
+        case ccl::datatype::int16: e = lambda.template operator()<short>(); break;
+        case ccl::datatype::float16:
+#ifdef CCL_SYCL_VEC_SUPPORT_FP16
+            e = lambda.template operator()<sycl::half>();
+#else
+            CCL_THROW(
+                "The Sycl compilers do not support Sycl::vec kernels with float16, please switch to ESIMD kernels, or build oneCCL with the latest version of cmake and oneAPI compiler");
+#endif
+            break;
+        case ccl::datatype::bfloat16:
+#ifdef CCL_SYCL_VEC_SUPPORT_BF16
+            e = lambda.template operator()<sycl::ext::oneapi::bfloat16>();
+#else
+            CCL_THROW(
+                "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
+#endif
+            break;
+        case ccl::datatype::int8: e = lambda.template operator()<int8_t>(); break;
+        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t>(); break;
+        case ccl::datatype::float32: e = lambda.template operator()<float>(); break;
+        case ccl::datatype::float64: e = lambda.template operator()<double>(); break;
+        case ccl::datatype::int32: e = lambda.template operator()<int>(); break;
+        case ccl::datatype::int64: e = lambda.template operator()<int64_t>(); break;
+        case ccl::datatype::uint64: e = lambda.template operator()<uint64_t>(); break;
+        case ccl::datatype::uint32: e = lambda.template operator()<uint32_t>(); break;
+        default: CCL_THROW("unsupported datatype ", dtype); break;
+    }
+    return e;
+}
 
+/* Invokers used in scale-out code */
+template <typename L>
+ccl::event invoke_collective(L lambda, ccl_comm *global_comm, ccl::datatype dtype) {
     ccl::event e;
-    switch (pair_comm->size()) {
-        case 1: e = invoke_collective_size<1>(lambda, even_comm->size(), dtype); break;
-        case 2: e = invoke_collective_size<2>(lambda, even_comm->size(), dtype); break;
-        default: CCL_THROW("unsupported pair_comm size ", pair_comm->size()); break;
+
+    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family)) {
+        e = invoke_collective_size<1>(lambda, global_comm->size(), dtype);
+    }
+    else { // PVC
+        std::shared_ptr<ccl_comm> pair_comm = global_comm->get_pair_comm();
+        std::shared_ptr<ccl_comm> even_comm = global_comm->get_even_comm();
+
+        switch (pair_comm->size()) {
+            case 1: e = invoke_collective_size<1>(lambda, even_comm->size(), dtype); break;
+            case 2: e = invoke_collective_size<2>(lambda, even_comm->size(), dtype); break;
+            default: CCL_THROW("unsupported pair_comm size ", pair_comm->size()); break;
+        }
     }
     return e;
 }

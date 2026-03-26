@@ -224,7 +224,8 @@ sycl::event arc_ll256_allreduce(const void *src,
             }
             //char *local_tmp_buf = local_peer_bufs[local_world_rank];
             local_tmp_buf = (char *)get_tmp_buf(0, comm);
-            size_t persist_buf_size = ccl::global_data::env().sycl_tmp_buf_size / 3;
+            size_t persist_buf_size =
+                ccl::global_data::env().sycl_tmp_buf_size / ccl_large_tmp_bufs::buf_count;
             GATHER_BUF_OFFSET = persist_buf_size;
         }
         else {

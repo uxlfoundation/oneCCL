@@ -48,6 +48,19 @@ enum class reduction : int {
 };
 
 /**
+ * Scalar residence for user-defined operations
+ */
+enum class scalar_residence_type : int {
+    /* scalar_device: The scalar is in device-visible memory and will be
+     * dereferenced while the collective is running. */
+    scalar_device = 0,
+
+    /* scalar_host_immediate: The scalar is in host-visible memory and will be
+     * dereferenced and stored before collective call. */
+    scalar_host_immediate = 1
+};
+
+/**
  * Supported datatypes
  */
 enum class datatype : int {
@@ -80,6 +93,7 @@ enum class cl_backend_type : int {
 } // namespace v1
 
 using v1::reduction;
+using v1::scalar_residence_type;
 using v1::datatype;
 using v1::cl_backend_type;
 

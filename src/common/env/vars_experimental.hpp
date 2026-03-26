@@ -281,6 +281,8 @@ constexpr const char* CCL_SYCL_ALLREDUCE_SCALEOUT = "CCL_SYCL_ALLREDUCE_SCALEOUT
 
 constexpr const char* CCL_SYCL_ALLREDUCE_ARC = "CCL_SYCL_ALLREDUCE_ARC";
 constexpr const char* CCL_SYCL_ALLREDUCE_LL_THRESHOLD = "CCL_SYCL_ALLREDUCE_LL_THRESHOLD";
+constexpr const char* CCL_SYCL_ALLREDUCE_SIMPLE_THRESHOLD = "CCL_SYCL_ALLREDUCE_SIMPLE_THRESHOLD";
+constexpr const char* CCL_SYCL_ALLREDUCE_SIMPLE_READ = "CCL_SYCL_ALLREDUCE_SIMPLE_READ";
 constexpr const char* CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD = "CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD";
 
 /**
@@ -338,12 +340,23 @@ constexpr const char* CCL_SYCL_REDUCE_SCATTER_SCALEOUT_THRESHOLD = "CCL_SYCL_RED
 constexpr const char* CCL_SYCL_REDUCE_SCATTER_SCALEOUT = "CCL_SYCL_REDUCE_SCATTER_SCALEOUT";
 
 constexpr const char* CCL_SYCL_REDUCE_SCATTER_LL_THRESHOLD = "CCL_SYCL_REDUCE_SCATTER_LL_THRESHOLD";
+constexpr const char* CCL_SYCL_REDUCE_SCATTER_SIMPLE_THRESHOLD = "CCL_SYCL_REDUCE_SCATTER_SIMPLE_THRESHOLD";
 
 constexpr const char* CCL_SYCL_ALLGATHERV_LL_THRESHOLD = "CCL_SYCL_ALLGATHERV_LL_THRESHOLD";
+constexpr const char* CCL_SYCL_ALLGATHERV_SIMPLE_THRESHOLD = "CCL_SYCL_ALLGATHERV_SIMPLE_THRESHOLD";
 
 constexpr const char* CCL_SYCL_ALLGATHERV_CHUNKING_THRESHOLD = "CCL_SYCL_ALLGATHERV_CHUNKING_THRESHOLD";
 
+constexpr const char* CCL_SYCL_ALLTOALL_SCALEOUT = "CCL_SYCL_ALLTOALL_SCALEOUT";
+
 constexpr const char* CCL_SYCL_ALLTOALL_ARC_LL = "CCL_SYCL_ALLTOALL_ARC_LL";
+
+constexpr const char* CCL_SYCL_ALLTOALL_TMP_BUF = "CCL_SYCL_ALLTOALL_TMP_BUF";
+
+constexpr const char* CCL_SYCL_ALLTOALL_LL_THRESHOLD = "CCL_SYCL_ALLTOALL_LL_THRESHOLD";
+
+constexpr const char* CCL_SYCL_ALLTOALL_CHUNKING_THRESHOLD = "CCL_SYCL_ALLTOALL_CHUNKING_THRESHOLD";
+constexpr const char* CCL_SYCL_ALLTOALL_SINGLE_NODE_ALGORITHM = "CCL_SYCL_ALLTOALL_SINGLE_NODE_ALGORITHM";
 
 /** @} */
 /** @} */
@@ -384,6 +397,32 @@ constexpr const char* CCL_SYCL_SCALEOUT_BUF_ALLOC_MODE = "CCL_SYCL_SCALEOUT_BUF_
 constexpr const char* CCL_SYCL_PT2PT_READ = "CCL_SYCL_PT2PT_READ";
 constexpr const char* CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE = "CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE";
 constexpr const char* CCL_SYCL_PIPELINE_CHUNK_SIZE = "CCL_SYCL_PIPELINE_CHUNK_SIZE";
+constexpr const char* CCL_SYCL_SIMPLE_SINGLE_KERNEL = "CCL_SYCL_SIMPLE_SINGLE_KERNEL";
+constexpr const char* CCL_SYCL_NUM_THREADS = "CCL_SYCL_NUM_THREADS";
+constexpr const char* CCL_SYCL_WORK_GROUP_SIZE = "CCL_SYCL_WORK_GROUP_SIZE";
+
+/**
+ * @addtogroup ExpOneCCLvars
+ * @{
+ */
+
+/**
+ * @brief Specify the number of NUMA nodes per host for NUMA-aware sub-communicators
+ *
+ * @details Set the number of NUMA nodes per host to enable creation of NUMA-aware
+ * sub-communicators. This allows ranks to be grouped by their NUMA node affinity,
+ * improving performance by reducing cross-NUMA memory access. The ranks are divided
+ * into groups based on this count, creating separate communicators for ranks within
+ * the same NUMA node and for cross-NUMA communication.
+ *
+ * "<value>" : ">= 1"
+ *
+ * By-default: "1" (disabled)
+ */
+constexpr const char* CCL_SYCL_NUMA_NODES = "CCL_SYCL_NUMA_NODES";
+/** @} */
+constexpr const char* CCL_SYCL_NUMA_NODES_SPLIT = "CCL_SYCL_NUMA_NODES_SPLIT";
+constexpr const char* CCL_SYCL_SPLIT_NUMA = "CCL_SYCL_SPLIT_NUMA";
 constexpr const char* CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA = "CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA";
 constexpr const char* CCL_SYCL_ENABLE_DIRECT_GPU_RDMA = "CCL_SYCL_ENABLE_DIRECT_GPU_RDMA";
 constexpr const char* CCL_SYCL_PIPELINE_GPU_RDMA = "CCL_SYCL_PIPELINE_GPU_RDMA";

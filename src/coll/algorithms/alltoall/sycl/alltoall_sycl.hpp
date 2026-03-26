@@ -15,6 +15,7 @@
 */
 #pragma once
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/utils/sycl_selection.hpp"
 
 namespace ccl {
 namespace v1 {
@@ -25,11 +26,13 @@ ccl::event alltoall_sycl_single_node(sycl::queue& q,
                                      size_t count,
                                      ccl::datatype dtype,
                                      ccl_comm* comm,
+                                     bool is_numa_comm,
+                                     int numa_split,
                                      ccl_stream* global_stream,
                                      const vector_class<event>& deps,
                                      bool& done);
 
-ccl::event alltoall_sycl(sycl::queue& q,
+ccl::event alltoall_sycl(sycl::queue q,
                          const void* send_buf,
                          void* recv_buf,
                          size_t count,
@@ -42,10 +45,34 @@ ccl::event alltoall_sycl(sycl::queue& q,
 } // namespace v1
 } // namespace ccl
 
+// ring with LL protocols
+ccl::event alltoall_ll(const void* send_buf,
+                       const void* recv_buf,
+                       size_t send_count,
+                       const ccl::vector_class<size_t>& offsets,
+                       ccl::datatype dtype,
+                       ccl_comm* comm,
+                       ccl_stream* global_stream,
+                       const ccl::vector_class<ccl::event>& deps,
+                       bool& done);
+
 ccl::event alltoall_large(const void* send_buf,
                           void* recv_buf,
                           size_t count,
+                          std::vector<size_t>& offsets,
                           ccl::datatype dtype,
                           ccl_comm* comm,
                           ccl_stream* global_stream,
                           const ccl::vector_class<ccl::event>& deps);
+
+ccl::event alltoall_scaleout_sycl(sycl::queue& q,
+                                  const void* send_buf,
+                                  void* recv_buf,
+                                  size_t count,
+                                  ccl::datatype dtype,
+                                  ccl_comm* comm,
+                                  ccl_stream* global_stream,
+                                  const ccl::vector_class<ccl::event>& deps,
+                                  bool original_deps,
+                                  sycl_alltoall_tune_attr tune_attr,
+                                  bool& done);

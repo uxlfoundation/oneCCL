@@ -73,7 +73,8 @@ ccl::event allgatherv_small(const void* send_buf,
                             ccl_stream* global_stream,
                             const ccl::vector_class<ccl::event>& deps);
 
-ccl::event allgatherv_large(const void* send_buf,
+ccl::event allgatherv_large(sycl::queue& q,
+                            const void* send_buf,
                             size_t send_count,
                             void* recv_buf,
                             const ccl::vector_class<size_t>& recv_counts,

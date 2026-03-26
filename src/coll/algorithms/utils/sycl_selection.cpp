@@ -104,7 +104,7 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
 
     if (param.ctype != ccl_coll_allreduce && param.ctype != ccl_coll_allgatherv &&
         param.ctype != ccl_coll_reduce_scatter && param.ctype != ccl_coll_recv &&
-        param.ctype != ccl_coll_send) {
+        param.ctype != ccl_coll_send && param.ctype != ccl_coll_alltoall) {
         RETURN_FALSE_IF(!param.comm->get_topo_manager().has_p2p_access(),
                         "no p2p access between devices");
     }
@@ -504,4 +504,50 @@ size_t default_select_chunk_size() {
 
 size_t allgatherv_select_chunk_size() {
     return default_select_chunk_size();
+}
+
+// alltoall
+static sycl_alltoall_tune_attr alltoall_auto_select_tune_attr(size_t size,
+                                                              size_t comm_size,
+                                                              ccl_datatype ccl_dtype) {
+    if (ccl::global_data::env().sycl_enable_direct_gpu_rdma) {
+        // for BMG
+        if (size <= 256 * 1024 * 1024)
+            return { alltoall_scaleout_algo::scatter };
+        else
+            return { alltoall_scaleout_algo::gdr_only_pairwise };
+    }
+
+    if (ccl::global_data::env().atl_transport != ccl_atl_ofi) {
+        return { alltoall_scaleout_algo::direct };
+    }
+
+    return { alltoall_scaleout_algo::fallback };
+}
+
+sycl_alltoall_tune_attr alltoall_select_tune_attr(size_t size,
+                                                  size_t comm_size,
+                                                  ccl_datatype ccl_dtype) {
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "auto") {
+        return alltoall_auto_select_tune_attr(size, comm_size, ccl_dtype);
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "direct") {
+        return { alltoall_scaleout_algo::direct };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "pairwise") {
+        return { alltoall_scaleout_algo::pairwise };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "scatter") {
+        return { alltoall_scaleout_algo::scatter };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "gdr-only-pairwise") {
+        return { alltoall_scaleout_algo::gdr_only_pairwise };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "numa-gdr-only") {
+        return { alltoall_scaleout_algo::numa_gdr_only };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "numa-gdr-split") {
+        return { alltoall_scaleout_algo::numa_gdr_split };
+    }
+    CCL_THROW("unsupported selection");
 }

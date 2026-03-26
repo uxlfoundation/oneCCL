@@ -25,6 +25,7 @@
 #include "common/event/impls/host_event.hpp"
 #include "common/request/request.hpp"
 #include "sched/sched.hpp"
+#include "common/utils/exchange_utils.hpp"
 #include "oneapi/ccl/types.hpp"
 #include "oneapi/ccl/kvs.hpp"
 #include "oneapi/ccl/comm_split_attr_ids.hpp"
@@ -53,6 +54,28 @@ struct impl_dispatch {
 #ifdef CCL_ENABLE_SYCL
 size_t ccl_tmp_bufs::buf_size = 2097152;
 #endif // CCL_ENABLE_SYCL
+
+// Helper function to get global ranks string for a sub-communicator
+static std::string get_global_ranks_str(const std::shared_ptr<ccl_comm>& node_comm,
+                                        int node_size,
+                                        int numa_nodes_per_host,
+                                        int ranks_per_numa,
+                                        int target_color,
+                                        bool is_numa_comm) {
+    std::string ranks_str;
+    for (int node_rank = 0; node_rank < node_size; node_rank++) {
+        int global_rank = node_comm->get_global_rank(node_rank);
+        int rank_color =
+            is_numa_comm ? (node_rank / ranks_per_numa) : (node_rank % numa_nodes_per_host);
+
+        if (rank_color == target_color) {
+            if (!ranks_str.empty())
+                ranks_str += ",";
+            ranks_str += std::to_string(global_rank);
+        }
+    }
+    return ranks_str;
+}
 
 // ccl_comm_env
 
@@ -109,7 +132,8 @@ ccl_internal_comm::ccl_internal_comm(int comm_id,
         : m_dtree(size, rank)
 #ifdef CCL_ENABLE_SYCL
           ,
-          m_barrier_data(rank, size)
+          m_barrier_data(rank, size),
+          m_flag_data(rank, size)
 #endif // CCL_ENABLE_SYCL
 {
     atl_comm = atl_comm_manager::create_with_id(comm, comm_id);
@@ -245,6 +269,8 @@ ccl_comm::ccl_comm(const ccl_comm& src, int comm_id)
         : ccl_comm(comm_id, src.get_atl_comm(), true, true) {
     r2r_comm = src.r2r_comm;
     node_comm = src.node_comm;
+    numa_comm = src.numa_comm;
+    numa_r2r_comm = src.numa_r2r_comm;
     even_comm = src.even_comm;
     pair_comm = src.pair_comm;
 }
@@ -279,10 +305,178 @@ ccl_comm* ccl_comm::create(int size, int rank, ccl::shared_ptr_class<ccl::kvs_in
 ccl_comm* ccl_comm::create(int size, ccl::shared_ptr_class<ccl::kvs_interface> kvs) {
     return new ccl_comm(size, get_kvs_wrapper(kvs));
 }
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+// Helper function to detect NUMA topology based on GPU placement
+int ccl_comm::detect_numa_nodes_from_gpu_topology(std::shared_ptr<ccl_comm> node_comm,
+                                                  std::shared_ptr<ccl::device> device_ptr,
+                                                  std::shared_ptr<ccl::context> context_ptr) {
+    if (!(device_ptr && context_ptr)) {
+        return 1;
+    }
+    int node_size = node_comm->size();
+    int local_rank = node_comm->rank();
+
+    // Step 1: Get device ID and NUMA node for this rank
+    int my_gpu_id = -1;
+    int my_numa_node = -1;
+
+    if (device_ptr && context_ptr) {
+        auto& sycl_device = device_ptr->get_native();
+        if (sycl_device.get_backend() == ccl::utils::get_level_zero_backend()) {
+            ze_device_handle_t ze_device =
+                sycl::get_native<ccl::utils::get_level_zero_backend()>(sycl_device);
+
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+            // Get GPU device ID
+            my_gpu_id = ccl::ze::get_device_id(ze_device);
+
+            // Find this device in the global device list to get its PCI info
+            auto& devices = ccl::global_data::get().ze_data->devices;
+            for (const auto& dev_info : devices) {
+                if (dev_info.device == ze_device) {
+                    // Get NUMA node from PCI device using hwloc
+                    if (ccl::global_data::get().hwloc_wrapper->is_initialized()) {
+                        my_numa_node = ccl::global_data::get().hwloc_wrapper->get_numa_node_by_pci(
+                            dev_info.pci.domain,
+                            dev_info.pci.bus,
+                            dev_info.pci.device,
+                            dev_info.pci.function);
+
+                        LOG_DEBUG("Rank ",
+                                  local_rank,
+                                  " GPU ID: ",
+                                  my_gpu_id,
+                                  " PCI: ",
+                                  (int)dev_info.pci.domain,
+                                  ":",
+                                  (int)dev_info.pci.bus,
+                                  ":",
+                                  (int)dev_info.pci.device,
+                                  ".",
+                                  (int)dev_info.pci.function,
+                                  " NUMA node: ",
+                                  my_numa_node);
+                    }
+                    break;
+                }
+            }
+#else // ZE_PCI_PROPERTIES_EXT_NAME
+            LOG_DEBUG(
+                "ZE_PCI_PROPERTIES_EXT_NAME not defined, unable to detect NUMA topology from GPU placement");
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
+        }
+    } // Step 2: Allgather GPU IDs and NUMA nodes from all ranks in node_comm
+    // Note: my_numa_node will be -1 if ZE_PCI_PROPERTIES_EXT_NAME is not defined
+    // or if hwloc is not initialized. This is intentional - negative values are
+    // filtered out in Step 3 below.
+    struct gpu_numa_info {
+        int numa_node;
+    };
+
+    gpu_numa_info my_info = { my_numa_node };
+    std::vector<gpu_numa_info> all_gpu_numa_info(node_size);
+
+    bool gather_success = ccl::utils::allgather(
+        get_atl_comm(), &my_info, all_gpu_numa_info.data(), sizeof(gpu_numa_info));
+    CCL_THROW_IF_NOT(gather_success, "Failed to gather GPU NUMA information across node_comm");
+
+    // Step 3: Determine number of NUMA nodes and assign ranks to NUMA groups
+    std::map<int, std::vector<int>> numa_to_ranks; // NUMA node -> list of ranks
+    int numa_nodes_per_host = 0;
+
+    for (int rank = 0; rank < node_size; rank++) {
+        int numa = all_gpu_numa_info[rank].numa_node;
+        if (numa >= 0) {
+            numa_to_ranks[numa].push_back(rank);
+            numa_nodes_per_host = std::max(numa_nodes_per_host, numa + 1);
+        }
+    }
+
+    // Log the detected topology
+    if (numa_nodes_per_host > 0) {
+        LOG_DEBUG("Detected ", numa_nodes_per_host, " NUMA nodes from GPU topology");
+        for (const auto& [numa, ranks] : numa_to_ranks) {
+            std::stringstream ss;
+            for (size_t i = 0; i < ranks.size(); i++) {
+                if (i > 0)
+                    ss << ",";
+                ss << ranks[i];
+            }
+            LOG_DEBUG("  NUMA node ", numa, ": ranks [", ss.str(), "]");
+        }
+    }
+
+    return numa_nodes_per_host;
+}
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
 void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
     r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(atl_comm->get_r2r_color()));
-    node_comm = std::shared_ptr<ccl_comm>(create_subcomm(topo_manager.get_host_idx()));
+
+    ccl_comm* node_comm_ptr = create_subcomm(topo_manager.get_host_idx());
+    CCL_THROW_IF_NOT(node_comm_ptr, "Failed to create node communicator");
+    node_comm = std::shared_ptr<ccl_comm>(node_comm_ptr);
+
+    // Detect NUMA topology from GPU placement
+    int numa_nodes_per_host = 0;
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    numa_nodes_per_host = detect_numa_nodes_from_gpu_topology(node_comm, device_ptr, context_ptr);
+
+    if (numa_nodes_per_host == 0) {
+        numa_nodes_per_host = ccl::global_data::env().sycl_numa_nodes;
+    }
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
+
+    int node_size = node_comm->size();
+    int local_rank = node_comm->rank();
+
+    // Calculate NUMA color and r2r color based on detected topology
+    int ranks_per_numa = (numa_nodes_per_host > 0) ? (node_size / numa_nodes_per_host) : node_size;
+    int numa_color = (numa_nodes_per_host > 0) ? (atl_comm->get_rank() / ranks_per_numa) : 0;
+    int numa_r2r_color = (numa_nodes_per_host > 0) ? (local_rank % numa_nodes_per_host)
+                                                   : 0; // Assuming one NIC per NUMA node
+
+    // Create numa_comm: ranks that share a NUMA node
+    if (numa_nodes_per_host > 1 && ranks_per_numa > 0) {
+        numa_comm = std::shared_ptr<ccl_comm>(create_subcomm(numa_color));
+        numa_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(numa_r2r_color));
+
+        std::string numa_comm_ranks = get_global_ranks_str(
+            node_comm, node_size, numa_nodes_per_host, ranks_per_numa, numa_color, true);
+        std::string numa_r2r_comm_ranks = get_global_ranks_str(
+            node_comm, node_size, numa_nodes_per_host, ranks_per_numa, numa_r2r_color, false);
+
+        LOG_DEBUG("Created NUMA communicators: numa_comm=",
+                  numa_comm->to_string(),
+                  " global_ranks=[",
+                  numa_comm_ranks,
+                  "], numa_r2r_comm=",
+                  numa_r2r_comm->to_string(),
+                  " global_ranks=[",
+                  numa_r2r_comm_ranks,
+                  "], numa_color=",
+                  numa_color,
+                  ", r2r_color=",
+                  numa_r2r_color,
+                  ", ranks_per_numa=",
+                  ranks_per_numa);
+    }
+    else {
+        // Single NUMA node case: build numa communicators same as node communicator
+        numa_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(atl_comm->get_r2r_color()));
+        numa_comm = std::shared_ptr<ccl_comm>(create_subcomm(topo_manager.get_host_idx()));
+
+        std::string node_ranks = get_global_ranks_str(
+            node_comm, node_size, numa_nodes_per_host, ranks_per_numa, 0, true);
+
+        LOG_DEBUG("Single NUMA node: numa_comm and numa_r2r_comm same as node_comm=",
+                  node_comm->to_string(),
+                  " global_ranks=[",
+                  node_ranks,
+                  "]");
+    }
+
     even_comm = std::shared_ptr<ccl_comm>(
         create_subcomm(topo_manager.get_inter_card_color(atl_comm->get_rank())));
     pair_comm = std::shared_ptr<ccl_comm>(create_subcomm(
@@ -418,6 +612,8 @@ std::string ccl_comm::to_string_ext() const {
     ss << "   " << to_string() << "\n";
     ss << "   r2r_comm: " << (r2r_comm ? r2r_comm->to_string() : "{}") << "\n";
     ss << "   node_comm: " << (node_comm ? node_comm->to_string() : "{}") << "\n";
+    ss << "   numa_comm: " << (numa_comm ? numa_comm->to_string() : "{}") << "\n";
+    ss << "   numa_r2r_comm: " << (numa_r2r_comm ? numa_r2r_comm->to_string() : "{}") << "\n";
     ss << "   even_comm: " << (even_comm ? even_comm->to_string() : "{}") << "\n";
     ss << "   pair_comm: " << (pair_comm ? pair_comm->to_string() : "{}") << "\n";
     ss << "   env: " << (env ? env->to_string() : "{}") << "\n";

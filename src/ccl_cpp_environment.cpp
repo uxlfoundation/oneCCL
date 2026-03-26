@@ -99,6 +99,20 @@ size_t environment::get_datatype_size(ccl::datatype dtype) const {
     return ccl::global_data::get().dtypes->get(dtype).size();
 }
 
+/*************** CUSTOM REDUCTIONS ****************/
+
+void environment::reduction_create_pre_mul_sum(reduction* rtype,
+                                               void* scalar,
+                                               datatype dtype,
+                                               scalar_residence_type residence,
+                                               const communicator&) {
+    CCL_THROW("reduction_create_pre_mul_sum - is not implemented");
+}
+
+void environment::reduction_destroy(reduction rtype, const communicator&) {
+    CCL_THROW("reduction_destroy - is not implemented");
+}
+
 /******************** COMMUNICATOR ********************/
 
 communicator environment::create_communicator(const comm_attr& attr) const {

@@ -88,6 +88,7 @@ ccl::event run_allreduce_large(ccl::datatype dtype,
 }
 
 #include "coll/algorithms/allreduce/sycl/allreduce_large_sycl_impl.hpp"
+#include "coll/algorithms/allreduce/sycl/allreduce_large_sycl_ring.hpp"
 
 ccl::event allreduce_large(const void *send_buf,
                            void *recv_buf,
@@ -110,6 +111,46 @@ ccl::event allreduce_large(const void *send_buf,
     sycl_ptrs_type sycl_ptrs;
     std::shared_ptr<ccl_comm> pair_comm = comm->get_pair_comm();
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
+
+    // BMG
+    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family)) {
+        std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+        bool is_tmp_used = ccl::global_data::env().sycl_allreduce_tmp_buf;
+        if (is_tmp_used) {
+            LOG_DEBUG("invoking allreduce_large_su_ring_write_no_ipc");
+            auto lambda = [&]<typename T>() {
+                return allreduce_large_su_ring_write_no_ipc<T>(
+                    send_buf, recv_buf, count, dtype, reduction, comm, global_stream, deps);
+            };
+            sycl::event e = invoke_collective_sycl(lambda, dtype);
+            return ccl::event::create_from_native(e);
+        }
+        else {
+            std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
+            auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+
+            sycl_ptrs.node_ptrs_rd =
+                get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, (void *)send_buf, sched);
+            sycl_ptrs.node_ptrs_wr =
+                get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 1, recv_buf, sched);
+
+            delete exchange_entry;
+            delete sched;
+            auto lambda = [&]<typename T>() {
+                return allreduce_large_su_ring<T>(send_buf,
+                                                  recv_buf,
+                                                  count,
+                                                  dtype,
+                                                  reduction,
+                                                  comm,
+                                                  global_stream,
+                                                  sycl_ptrs,
+                                                  deps);
+            };
+            sycl::event e = invoke_collective_sycl(lambda, dtype);
+            return ccl::event::create_from_native(e);
+        }
+    }
 
     // use full vector (>= 8 bytes) if buffers are 4 byte aligned
     // we dont have to take into account of the count while calculating alignment,

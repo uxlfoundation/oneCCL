@@ -76,8 +76,7 @@ ccl::event allgather_sycl_single_node(sycl::queue& q,
             done = false;
             return e;
         }
-        if (send_count * ccl_dtype.size() < 256 * 1024 || !ccl::global_data::env().sycl_ccl_barrier ||
-            ccl::global_data::env().sycl_allgatherv_tmp_buf) {
+        if (send_count * ccl_dtype.size() <= ccl::global_data::env().sycl_allgatherv_simple_threshold) {
             int node_size = comm->size();
             const int chunk_size = ccl::global_data::env().sycl_allgatherv_chunking_threshold;
             size_t max_pack_count;
@@ -124,8 +123,6 @@ ccl::event allgather_sycl_single_node(sycl::queue& q,
             } // for
             return e;
         }
-        CCL_THROW_IF_NOT(ccl::global_data::env().sycl_ccl_barrier,
-                         "To run on BMG, CCL_SYCL_CCL_BARRIER must be set to 1");
         CCL_THROW_IF_NOT(ccl::global_data::env().sycl_allgatherv_tmp_buf == 0,
                          "To run on BMG, CCL_SYCL_ALLGATHERV_TMP_BUF must be set to 0");
     }
@@ -149,7 +146,8 @@ ccl::event allgather_sycl_single_node(sycl::queue& q,
             ccl::profile::itt::task_begin("allgatherv_large", "send_size", send_count * ccl_dtype.size());
 #endif // CCL_ENABLE_ITT
             LOG_DEBUG("|CCL_SYCL| invoking large allgatherv: count: ", send_count, " datatype: ", dtype);
-            e = allgatherv_large(send_buf,
+            e = allgatherv_large(q,
+                                 send_buf,
                                  send_count,
                                  recv_buf,
                                  recv_counts,
@@ -210,7 +208,7 @@ ccl::event allgather_sycl_single_node(sycl::queue& q,
 
 #if defined(CCL_SYCL_VEC_SUPPORT_FP16) && defined(CCL_SYCL_VEC_SUPPORT_BF16)
         e = allgatherv_large(
-            send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, deps);
+            q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, deps);
 #else
         // allgatherv_large is sycl::vec based algorithm
         // when 16-bit datatypes are not supported, gather by int16 instead
@@ -221,7 +219,7 @@ ccl::event allgather_sycl_single_node(sycl::queue& q,
             new_recv_counts.push_back(recv_counts[i] * ccl_dtype.size() / 2);
         }
         e = allgatherv_large(
-            send_buf, new_send_count, recv_buf, new_recv_counts, offsets, new_dtype, comm, global_stream, deps);
+            q, send_buf, new_send_count, recv_buf, new_recv_counts, offsets, new_dtype, comm, global_stream, deps);
 #endif // defined(CCL_SYCL_VEC_SUPPORT_FP16) && defined(CCL_SYCL_VEC_SUPPORT_BF16)
         LOG_DEBUG(
             "|CCL_SYCL| allgatherv selects large kernel: count: ", send_count, " datatype: ", dtype, " done");

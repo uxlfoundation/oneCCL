@@ -263,6 +263,10 @@ bool topo_manager::has_p2p_access() const {
     return is_p2p_access_enabled;
 }
 
+bool topo_manager::has_p2p_atomics() const {
+    return is_p2p_atomics_enabled;
+}
+
 bool topo_manager::has_all_vertices_connected() const {
     return are_all_vertices_connected;
 }
@@ -367,6 +371,34 @@ p2p_matrix_t topo_manager::build_p2p_matrix(const std::vector<ze_device_handle_t
             }
         }
     }
+
+    return matrix;
+}
+
+p2p_matrix_t topo_manager::build_p2p_atomics_matrix(
+    const std::vector<ze_device_handle_t>& devices) {
+    size_t device_count = devices.size();
+    p2p_matrix_t matrix(device_count);
+
+    // check p2p atomics
+    // FIXME: for JGS, p2p only query the property inside a node
+    // so when cross node with UAL, it may not detect atomics/p2p
+    // even though it is supported
+    for (uint32_t i = 0; i < device_count; i++) {
+        matrix[i].resize(device_count);
+        for (uint32_t j = 0; j < device_count; j++) {
+            if (i == j) {
+                matrix[i][j] = true;
+            }
+            else {
+                ze_device_p2p_properties_t p2pProps = {};
+                p2pProps.stype = ZE_STRUCTURE_TYPE_DEVICE_P2P_PROPERTIES;
+                ZE_CALL(zeDeviceGetP2PProperties, (devices[i], devices[j], &p2pProps));
+                matrix[i][j] = p2pProps.flags & ZE_DEVICE_P2P_PROPERTY_FLAG_ATOMICS;
+            }
+        }
+    }
+
     return matrix;
 }
 
@@ -649,6 +681,7 @@ std::string topo_manager::to_string() const {
     ss << "\n";
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    ss << "  p2p_atomics: " << is_p2p_atomics_enabled << "\n";
     ss << "  p2p_access: " << is_p2p_access_enabled << "\n";
     if (port_status != port_health_status::unknown) {
         ss << "  ports_healthy: " << ((port_status == port_health_status::ok) ? "1" : "0") << "\n";
@@ -967,6 +1000,17 @@ bool topo_manager::check_p2p_access() const {
     for (size_t i = 0; i < p2p_matrix.size(); i++) {
         for (size_t j = 0; j < p2p_matrix[i].size(); j++) {
             if (!p2p_matrix[i][j]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool topo_manager::check_p2p_atomics() const {
+    for (size_t i = 0; i < atomics_matrix.size(); i++) {
+        for (size_t j = 0; j < atomics_matrix[i].size(); j++) {
+            if (!atomics_matrix[i][j]) {
                 return false;
             }
         }
@@ -1589,6 +1633,9 @@ void topo_manager::ze_base_init(const std::shared_ptr<ccl::device>& device,
               ccl::to_string(p2p_matrix),
               "\nnumber of node devices: ",
               node_devices.size());
+
+    atomics_matrix = build_p2p_atomics_matrix(node_devices_filtered);
+    is_p2p_atomics_enabled = check_p2p_atomics();
 
     if (comm_rank == 0) {
         LOG_INFO("ze_rank_info_vec: ", ccl::to_string(ze_rank_info_vec, host_info_vec));

@@ -19,6 +19,7 @@
 ccl::event alltoall_large(const void* send_buf,
                           void* recv_buf,
                           size_t count,
+                          std::vector<size_t>& offsets,
                           ccl::datatype dtype,
                           ccl_comm* comm,
                           ccl_stream* global_stream,
@@ -38,7 +39,7 @@ ccl::event alltoall_large(const void* send_buf,
 
     auto lambda = [&]<typename T, int NE, int NP>() {
         return alltoall_large_impl<T, NE * NP>(
-            send_buf, recv_buf, count, dtype, comm, global_stream, deps);
+            send_buf, recv_buf, count, offsets, dtype, comm, global_stream, deps);
     };
     return invoke_collective(lambda, comm, dtype);
 }

@@ -18,6 +18,7 @@
 #include "common/global/global.hpp"
 #include "coll/algorithms/utils/sycl_kernels.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/allgatherv/sycl/allgatherv_large_sycl_ring.hpp"
 
 template <typename T, int N>
 void inline read_write_kernel(std::array<void*, MAX_GPUS> even_ptrs,
@@ -213,39 +214,6 @@ ccl::event allgatherv_large_impl_ipc(const void* send_buf,
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
-
-    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
-        sycl::event kernel_event;
-
-        sycl::event barrier_event1 = invoke_barrier(node_comm, q, dep_events, is_cpu_barrier);
-
-        int rank = comm->rank();
-        for (int i = 0; i < N; i++) {
-            // scatter the ranks and limit the amount to copy
-            int peer = (rank + i) % N;
-            // limit amount of write due to crash in KMD (read timeout error)
-            const size_t max_chunk = 512 * 1024 * 1024;
-            size_t left = send_count * dsize;
-            size_t offset = 0;
-            while (left > 0) {
-                size_t chunk = left > max_chunk ? max_chunk : left;
-                kernel_event = q.submit([=](sycl::handler& h) {
-                    h.depends_on(barrier_event1);
-                    h.memcpy(((char*)sycl_ptrs.node_ptrs_wr[peer] + rank * send_count * dsize) + offset,
-                             (char*)send_buf + offset,
-                             chunk);
-                });
-                left -= chunk;
-                offset += chunk;
-                // skip the barrier for the very last iterations
-                if (i < N - 1 || left > 0)
-                    kernel_event = invoke_barrier(node_comm, q, { kernel_event }, is_cpu_barrier);
-            }
-        }
-
-        kernel_event = invoke_barrier(node_comm, q, { kernel_event }, is_cpu_barrier);
-        return ccl::event::create_from_native(kernel_event);
-    }
 
     std::array<void*, MAX_GPUS> local_peer_even_ptrs, local_local_ptrs, local_peer_pair_ptrs;
     for (int i = 0; i < even_comm->size(); i++) {
@@ -535,7 +503,8 @@ ccl::event allgatherv_large_impl_tmp(const void* send_buf,
 // NE is the number of ranks in even_comm and
 // NP is the number of ranks in pair_comm
 template <typename T, int NE, int NP, bool use_full_vector>
-ccl::event allgatherv_large_impl(const void* send_buf,
+ccl::event allgatherv_large_impl(sycl::queue& q,
+                                 const void* send_buf,
                                  size_t send_count,
                                  void* recv_buf,
                                  const ccl::vector_class<size_t>& recv_counts,
@@ -563,6 +532,15 @@ ccl::event allgatherv_large_impl(const void* send_buf,
                              ((!use_full_vector || !is_aligned) && ccl::global_data::env().sycl_auto_use_tmp_buf);
 
     ccl::event e;
+
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+        sycl::event kernel_event;
+        kernel_event = allgatherv_large_su_ring<T>(
+            q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
+        //kernel_event = allgatherv_large_su_a2a<T>(q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
+        return ccl::event::create_from_native(kernel_event);
+    }
+
     // TODO: copy engines currently does not support tmp buf
     if (ccl::global_data::env().sycl_copy_engine) {
         e = allgatherv_large_impl_ipc_ce<T>(
