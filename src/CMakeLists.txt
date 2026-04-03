@@ -301,6 +301,7 @@ set(SRC_SHARED_LINKER_FLAGS)
 set(SRC_INCLUDE_DIRS)
 set(SRC_LINK_DIRS)
 set(SRC_LINK_LIBS)
+set(SRC_LINK_TARGETS)
 
 if (USE_SECURITY_FLAGS)
     set(SRC_C_FLAGS "${SRC_C_FLAGS} -Wformat -Wformat-security -D_FORTIFY_SOURCE=2 -fstack-protector")
@@ -340,9 +341,10 @@ list(APPEND SRC_INCLUDE_DIRS
      ${PROJECT_SOURCE_DIR}/src
      ${PROJECT_SOURCE_DIR}/src/atl
      ${LEVEL_ZERO_INCLUDE_DIR}
-     ${LIBFABRIC_INCLUDE_DIR}
-     ${HWLOC_INCLUDE_DIR}
      ${ITT_INCLUDE_DIR})
+
+list(APPEND SRC_LINK_TARGETS
+    PkgConfig::LIBFABRIC)
 
 if (ENABLE_DRM)
     list(APPEND SRC_SYSTEM_INCLUDE_DIRS
@@ -350,20 +352,23 @@ if (ENABLE_DRM)
 endif()
 
 if (ENABLE_PMIX)
-    list(APPEND SRC_INCLUDE_DIRS
-         ${PMIX_INCLUDE_DIR})
+    list(APPEND SRC_LINK_TARGETS
+        PkgConfig::PMIX)
 endif()
 
 if (ENABLE_UMF)
-    list(APPEND SRC_INCLUDE_DIRS
-         ${UMF_INCLUDE_DIR})
+    list(APPEND SRC_LINK_TARGETS
+         umf::umf_headers)
 endif()
+
+list(APPEND SRC_LINK_TARGETS
+    PkgConfig::HWLOC)
 
 list(APPEND SRC_LINK_LIBS
      dl
      pthread
      ${EXTERNAL_LIBS}
-     ${HWLOC_LIB_DIR}/libhwloc.a
+     ${SRC_LINK_TARGETS}
      ${ITT_LIB_DIR}/libittnotify.a)
 
 if (ENABLE_MPI)
@@ -383,6 +388,7 @@ add_library(ccl-objects OBJECT ${CCL_SRC})
 set_target_properties(ccl-objects PROPERTIES POSITION_INDEPENDENT_CODE 1)
 target_include_directories(ccl-objects PRIVATE ${SRC_INCLUDE_DIRS})
 target_include_directories(ccl-objects SYSTEM PRIVATE ${SRC_SYSTEM_INCLUDE_DIRS})
+target_link_libraries(ccl-objects PRIVATE ${SRC_LINK_TARGETS})
 
 if (COMPUTE_BACKEND_TARGET_NAME)
     target_include_directories(ccl-objects PUBLIC ${INTERFACE_INCLUDE_DIRECTORIES})
@@ -429,7 +435,7 @@ install(TARGETS ccl-static ARCHIVE DESTINATION ${CCL_INSTALL_LIB} OPTIONAL)
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/
         DESTINATION ${CCL_INSTALL_INCLUDE} FILES_MATCHING REGEX ".*\\.(h|hpp)$")
 
-if ("${LIBFABRIC_DIR}" STREQUAL "")
+if (NOT USE_SYSTEM_DEPS AND "${LIBFABRIC_DIR}" STREQUAL "")
     # internal libfabric is used, install it into package
     install(DIRECTORY ${DEPS_DIR}/ofi/lib/
             DESTINATION ${CMAKE_INSTALL_PREFIX}/opt/mpi/libfabric/lib)
