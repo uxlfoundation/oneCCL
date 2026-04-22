@@ -331,7 +331,7 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
 
             //set up temp buf to be used for large collectives
             // WA : use smaller tmp buffer for client GPUs
-            if (is_arc &&
+            if (is_arc && ccl::global_data::env().sycl_ll_buffer_global &&
                 ccl::global_data::env().sycl_tmp_buf_size == tmp_bufs_count * 128 * 1024 * 1024) {
                 ccl::global_data::env().sycl_tmp_buf_size =
                     tmp_bufs_count * calculate_ll_buf_size(q);
@@ -607,7 +607,8 @@ void coll_initExt(ccl_comm *comm,
             //set up temp buf to be used for large collectives
             // WA : use smaller tmp buffer for client GPUs
             if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
-                ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
+                ccl::global_data::env().sycl_ll_buffer_global &&
+                ccl::global_data::env().sycl_tmp_buf_size == tmp_bufs_count * 128 * 1024 * 1024) {
                 ccl::global_data::env().sycl_tmp_buf_size =
                     tmp_bufs_count * calculate_ll_buf_size(q);
                 LOG_DEBUG("MT: Allocate LL ring buffer of size: ",

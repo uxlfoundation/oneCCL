@@ -181,8 +181,20 @@ public:
             retry |= recvMessages(messages, localScatterSink[peer][slot][wireId], flag);
         } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
 
-        shuffleData(v);
-        accumMessages(v, messages);
+        if constexpr (sizeof(T) > sizeof(flag)) {
+            // restore data, accumulate, shuffle
+            restoreData(messages);
+            accumMessages(v, messages);
+            shuffleData(v);
+        }
+        else {
+            // datasize is smaller than flag,
+            // no overlap between datatype and flag
+            // can accumulate shuffled data:
+            // less ops to perform, faster
+            shuffleData(v);
+            accumMessages(v, messages);
+        }
         insertFlags(v, flag);
 
         sendMessages(scatterSink[peer][slot][wireId], v);
@@ -208,8 +220,20 @@ public:
             retry |= recvMessages(messages, localScatterSink[peer][slot][wireId], flag);
         } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
 
-        shuffleData(v);
-        accumMessages(v, messages);
+        if constexpr (sizeof(T) > sizeof(flag)) {
+            // restore data, accumulate, shuffle
+            restoreData(messages);
+            accumMessages(v, messages);
+            shuffleData(v);
+        }
+        else {
+            // datasize is smaller than flag,
+            // no overlap between datatype and flag
+            // can accumulate shuffled data:
+            // less ops to perform, faster
+            shuffleData(v);
+            accumMessages(v, messages);
+        }
 
         insertFlags(v, flag);
         sendMessages(gatherSink[peer][slot][wireId], v);
@@ -294,8 +318,20 @@ public:
             retry |= recvMessages(messages, localScatterSink[peer][slot][wireId], flag);
         } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
 
-        shuffleData(v);
-        accumMessages(v, messages);
+        if constexpr (sizeof(T) > sizeof(flag)) {
+            // restore data, accumulate, shuffle
+            restoreData(messages);
+            accumMessages(v, messages);
+            shuffleData(v);
+        }
+        else {
+            // datasize is smaller than flag,
+            // no overlap between datatype and flag
+            // can accumulate shuffled data:
+            // less ops to perform, faster
+            shuffleData(v);
+            accumMessages(v, messages);
+        }
 
         insertFlags(v, flag);
         restoreData(v);

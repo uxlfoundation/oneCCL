@@ -332,16 +332,18 @@ void allreduce_large_su_ring_write_multi_kernel(const void *send_buf,
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event work_event;
 
-    const int pipeline_size = N;
+    const int pipeline_size = std::max(N, ccl_large_tmp_bufs::buf_count);
 
     const size_t my_offset_count = count_per_rank * rank;
     const size_t recv_count = count_per_rank;
     const size_t recv_bytes = recv_count * dsize;
     void *recv_buf_rank_offset = (T *)recv_buf + my_offset_count;
     void *peer_recv_buf_rank_offset = (T *)peer_recv + my_offset_count;
-    const size_t chunk_size = ccl::global_data::env().sycl_tmp_buf_size / pipeline_size;
-    const size_t rem_chunk_size = recv_bytes % chunk_size;
-    const size_t num_chunks = recv_bytes / chunk_size + (rem_chunk_size != 0);
+    const size_t chunk_size = ccl::global_data::env().sycl_tmp_buf_size / pipeline_size /
+                              sizeof(message_t) * sizeof(message_t);
+    const size_t chunk_count = chunk_size / dsize;
+    const size_t rem_chunk_count = recv_count % chunk_count;
+    const size_t num_chunks = recv_count / chunk_count + (rem_chunk_count != 0);
 
     std::array<void *, ARC_MAX_NUM> work_bufs;
     std::array<void *, ARC_MAX_NUM> remote_work_bufs;
@@ -356,13 +358,12 @@ void allreduce_large_su_ring_write_multi_kernel(const void *send_buf,
 
     int slot = 0;
     for (size_t nc = 0; nc < num_chunks; nc++) {
-        const size_t chunk_offset = nc * chunk_size;
-        const size_t data_count =
-            ((nc < recv_bytes / chunk_size) ? chunk_size : rem_chunk_size) / dsize;
+        const size_t chunk_offset = nc * chunk_count * dsize;
+        const size_t data_count = (nc < recv_count / chunk_count) ? chunk_count : rem_chunk_count;
 
         // starting indexes
-        int s = (rank - 1 + N) % N;
-        int r = (s - 1 + N) % N;
+        int s = (rank + N - 1) % N;
+        int r = (s + N - 1) % N;
 
         for (int i = 0; i < N - 1; i++) {
             int next_slot = (slot + 1) % pipeline_size;
@@ -413,7 +414,7 @@ void allreduce_large_su_ring_write_multi_kernel(const void *send_buf,
             }
 
             s = r;
-            r = (s - 1 + N) % N;
+            r = (s + N - 1) % N;
             slot = next_slot;
         }
     }

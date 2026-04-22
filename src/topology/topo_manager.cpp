@@ -1008,13 +1008,34 @@ bool topo_manager::check_p2p_access() const {
 }
 
 bool topo_manager::check_p2p_atomics() const {
+    static int atomics_enable = -1;
+
+    /* with ZE_AFFINITY_MASK, if there is only one device visible,
+     * i.e. this rank's own device, the self checking result
+     * must be ignored */
+    if (atomics_matrix.size() == 1) {
+        if (atomics_enable != -1) {
+            // old results are valid because it is same GPU
+            return atomics_enable;
+        }
+        if (ze::is_arc_card(ccl::global_data::get().ze_data->devices[0].family)) {
+            return false;
+        }
+        // FIXME: be conservative, assume no atomics
+        // however, the no atomics version may not barrier
+        // may not work on PVC
+        return false;
+    }
+
     for (size_t i = 0; i < atomics_matrix.size(); i++) {
         for (size_t j = 0; j < atomics_matrix[i].size(); j++) {
             if (!atomics_matrix[i][j]) {
+                atomics_enable = 0;
                 return false;
             }
         }
     }
+    atomics_enable = 1;
     return true;
 }
 
