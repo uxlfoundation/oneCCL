@@ -343,7 +343,7 @@ endif()
 
 set(CCL_MAJOR_VERSION     "2021")
 set(CCL_MINOR_VERSION     "15")
-set(CCL_UPDATE_VERSION    "8")
+set(CCL_UPDATE_VERSION    "9")
 set(CCL_PRODUCT_STATUS    "Gold")
 string(TIMESTAMP CCL_PRODUCT_BUILD_DATE "%Y-%m-%dT %H:%M:%SZ")
 get_vcs_properties("git")

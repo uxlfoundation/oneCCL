@@ -185,4 +185,5 @@ private:
     atl_status_t init_transport(bool is_new);
 
     uint64_t tag_counter = 0;
+    uint64_t tag_counter_barrier = 0;
 };

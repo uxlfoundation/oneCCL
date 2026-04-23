@@ -382,15 +382,15 @@ int ccl_comm::detect_numa_nodes_from_gpu_topology(std::shared_ptr<ccl_comm> node
 
     // Step 3: Determine number of NUMA nodes and assign ranks to NUMA groups
     std::map<int, std::vector<int>> numa_to_ranks; // NUMA node -> list of ranks
-    int numa_nodes_per_host = 0;
-
     for (int rank = 0; rank < node_size; rank++) {
         int numa = all_gpu_numa_info[rank].numa_node;
         if (numa >= 0) {
             numa_to_ranks[numa].push_back(rank);
-            numa_nodes_per_host = std::max(numa_nodes_per_host, numa + 1);
         }
     }
+
+    // Get number of numa nodes in our system
+    int numa_nodes_per_host = static_cast<int>(numa_to_ranks.size());
 
     // Log the detected topology
     if (numa_nodes_per_host > 0) {

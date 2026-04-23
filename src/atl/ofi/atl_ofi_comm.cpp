@@ -59,14 +59,26 @@ atl_status_t atl_ofi_comm::barrier(size_t ep_idx, atl_req_t& req) {
     int tag_comm_id = (comm_id != atl_comm_id_storage::invalid_comm_id)
                           ? comm_id
                           : atl_comm_id_storage::max_comm_id;
-    int tagc = tag_counter++;
+    int tagc = tag_counter_barrier++;
+
+    LOG_DEBUG("ofi_barrier: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tagc);
+
     int src, dst;
     const int len = 1;
     char sendbuf[len], recvbuf[len];
     int mask = 0x1;
     while (mask < size) {
         dst = (rank + mask) % size;
-        src = (rank - mask + size) % size;
+        src = (rank + size - mask) % size;
         atl_req send_req, recv_req;
         uint64_t op_tag = tag_creator->create(rank, tag_comm_id, tagc, 1);
         do {
@@ -97,6 +109,17 @@ atl_status_t atl_ofi_comm::barrier(size_t ep_idx, atl_req_t& req) {
         }
         mask <<= 1;
     }
+
+    LOG_DEBUG("ofi_barrier done: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tagc);
 
     ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
     return ATL_STATUS_SUCCESS;
@@ -204,6 +227,19 @@ atl_status_t atl_ofi_comm::allgatherv(size_t ep_idx,
 
     atl_ofi_req_t* ofi_req = ((atl_ofi_req_t*)req.internal);
     ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
+
+    LOG_DEBUG("ofi_allgatherv done: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", send_len: ",
+              send_len,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tag_counter);
 
     tag_counter++;
 

@@ -34,8 +34,6 @@ ccl::event recv_ll(const void *recv_buf,
     const int comm_size = node_comm->size();
     const int comm_rank = node_comm->rank();
 
-    //    coll_init(comm, global_stream);
-
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t dt_sz = ccl_dtype.size();
     size_t recv_size = recv_count * ccl_dtype.size();
@@ -43,17 +41,26 @@ ccl::event recv_ll(const void *recv_buf,
     bool p2p = node_comm->get_topo_manager().has_p2p_access();
     uint32_t pattern = node_comm->get_rt_pattern(pattern_type::recv, peer_rank);
 
+    LOG_DEBUG("recv_ll recv_count: ", recv_count, " peer rank: ", peer_rank);
+
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
 
     auto lambda = [&]<typename T, template <typename, int> class Proto>(int NRanks) {
         T *peerbuf0[NRanks];
         T *peerbuf1[NRanks];
+        T *ipcbuf0;
+        T *ipcbuf1;
+        // use small tmp buffer. Can not use large tmp buffer because
+        // there is only single copy of the buffer.
+        // Otherwise a barrier is needed her
+        auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
         for (int i = 0; i < NRanks; i++) {
-            peerbuf0[i] = (T *)get_remote_node_tmp_buf(0, comm)[i];
-            peerbuf1[i] = (T *)get_remote_node_tmp_buf(1, comm)[i];
+            peerbuf0[i] = (T *)remote_ptrs[i];
+            peerbuf1[i] = (T *)((char *)remote_ptrs[i] + ccl_tmp_bufs::buf_size / 2);
         }
-        T *ipcbuf0 = (T *)get_tmp_buf(0, comm);
-        T *ipcbuf1 = (T *)get_tmp_buf(1, comm);
+        ipcbuf0 = (T *)local_tmp_buf;
+        ipcbuf1 = (T *)((char *)local_tmp_buf + ccl_tmp_bufs::buf_size / 2);
+
         sycl::event e = Recv<T, Proto, RingTransmit>::launch(NRanks,
                                                              (T *)recv_buf,
                                                              ipcbuf0,

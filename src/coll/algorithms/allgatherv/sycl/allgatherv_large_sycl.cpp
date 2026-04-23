@@ -33,12 +33,16 @@ ccl::event allgatherv_large(sycl::queue& q,
     std::shared_ptr<ccl_comm> pair_comm = comm->get_pair_comm();
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
 
+    bool is_arc = is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()));
+
     const size_t dsize = ccl::global_data::get().dtypes->get(dtype).size();
     // use full vector (>= 8 bytes) if buffers and data size are 4 byte aligned
     bool use_full_vector = can_use_full_vector(send_buf, recv_buf, send_count * dsize);
     // TODO : generalize constraints for different hardware.
     // kernels with remote access is best performant at 64 bytes alignment (sycl_kernels_line_size/2) on PVC
-    const size_t align_size = ccl::global_data::env().sycl_kernels_line_size / 2;
+    // for BMG, relax the alignment check so that we don't change the path
+    // tmp_buf = 1 path is not implemented in this branch
+    const size_t align_size = is_arc ? dsize : ccl::global_data::env().sycl_kernels_line_size / 2;
     const bool is_aligned = (send_count * dsize) % align_size == 0;
     // use tmp buf for types < 4 byte size with odd count or non 4 byte aligned data
     // use tmp buf when data count bytes is not 64 byte aligned
@@ -47,6 +51,7 @@ ccl::event allgatherv_large(sycl::queue& q,
                              ((!use_full_vector || !is_aligned) && ccl::global_data::env().sycl_auto_use_tmp_buf);
 
     if (is_tmp_used) {
+        CCL_THROW_IF_NOT(!is_arc);
         CCL_THROW_IF_NOT(!ccl::global_data::env().sycl_copy_engine,
                          "allgatherv using copy engines not supported with tmp buffer");
 
@@ -72,7 +77,7 @@ ccl::event allgatherv_large(sycl::queue& q,
             }
         }
 
-        if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+        if (is_arc) {
             // only need output buffer
             std::vector<void*> ptrs{ recv_buf }; // index 0
             auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
