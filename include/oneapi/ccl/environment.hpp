@@ -71,6 +71,8 @@
 
 #include "oneapi/ccl/exception.hpp"
 
+#include "oneapi/ccl/window.hpp"
+
 namespace ccl {
 
 namespace detail {

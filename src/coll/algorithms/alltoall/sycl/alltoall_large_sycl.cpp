@@ -19,6 +19,7 @@
 ccl::event alltoall_large(const void* send_buf,
                           void* recv_buf,
                           size_t count,
+                          std::vector<size_t>& offsets,
                           ccl::datatype dtype,
                           ccl_comm* comm,
                           ccl_stream* global_stream,
@@ -30,7 +31,8 @@ ccl::event alltoall_large(const void* send_buf,
 
     const size_t dsize = ccl::global_data::get().dtypes->get(dtype).size();
 
-    CCL_THROW_IF_NOT(!ccl::global_data::env().sycl_copy_engine,
+    bool is_arc = is_arc_card(ccl::global_data::get().ze_data->devices[0].family);
+    CCL_THROW_IF_NOT(!ccl::global_data::env().sycl_copy_engine || is_arc,
                      "alltoall using copy engines not supported");
 
     // no constraints on rank reordering - performance should not be affected
@@ -42,9 +44,9 @@ ccl::event alltoall_large(const void* send_buf,
         LOG_DEBUG("invoking alltoall_large");
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
-        return alltoall_large_impl<T, NE * NP>(
-            send_buf, recv_buf, count, dtype, comm, global_stream, deps);
+    auto lambda = [&]<typename T>() {
+        return alltoall_large_impl<T>(
+            send_buf, recv_buf, count, offsets, dtype, comm, global_stream, deps);
     };
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

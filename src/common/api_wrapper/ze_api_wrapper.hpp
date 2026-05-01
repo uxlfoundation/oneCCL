@@ -31,6 +31,7 @@ namespace ccl {
 
 typedef struct ze_lib_ops {
     decltype(zeInit) *zeInit;
+    decltype(zesInit) *zesInit;
     decltype(zeDriverGet) *zeDriverGet;
     decltype(zeDriverGetApiVersion) *zeDriverGetApiVersion;
     decltype(zeMemGetAllocProperties) *zeMemGetAllocProperties;
@@ -103,9 +104,12 @@ typedef struct ze_lib_ops {
     decltype(zesFabricPortGetConfig) *zesFabricPortGetConfig;
     decltype(zesFabricPortGetProperties) *zesFabricPortGetProperties;
     decltype(zesFabricPortGetState) *zesFabricPortGetState;
+    decltype(zesDriverGet) *zesDriverGet;
+    decltype(zesDeviceGet) *zesDeviceGet;
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     decltype(zeDevicePciGetPropertiesExt) *zeDevicePciGetPropertiesExt;
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
+    decltype(zesDriverGetDeviceByUuidExp) *zesDriverGetDeviceByUuidExp;
     decltype(zeDriverGetExtensionFunctionAddress) *zeDriverGetExtensionFunctionAddress;
     decltype(zeFabricVertexGetExp) *zeFabricVertexGetExp;
     decltype(zeFabricVertexGetSubVerticesExp) *zeFabricVertexGetSubVerticesExp;
@@ -119,6 +123,7 @@ typedef struct ze_lib_ops {
 
 static std::vector<std::string> ze_fn_names = {
     "zeInit",
+    "zesInit",
     "zeDriverGet",
     "zeDriverGetApiVersion",
     "zeMemGetAllocProperties",
@@ -191,9 +196,12 @@ static std::vector<std::string> ze_fn_names = {
     "zesFabricPortGetConfig",
     "zesFabricPortGetProperties",
     "zesFabricPortGetState",
+    "zesDriverGet",
+    "zesDeviceGet",
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     "zeDevicePciGetPropertiesExt",
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
+    "zesDriverGetDeviceByUuidExp",
     "zeDriverGetExtensionFunctionAddress",
     "zeFabricVertexGetExp",
     "zeFabricVertexGetSubVerticesExp",
@@ -208,6 +216,7 @@ static std::vector<std::string> ze_fn_names = {
 extern ccl::ze_lib_ops_t ze_lib_ops;
 
 #define zeInit                  ccl::ze_lib_ops.zeInit
+#define zesInit                 ccl::ze_lib_ops.zesInit
 #define zeDriverGet             ccl::ze_lib_ops.zeDriverGet
 #define zeDriverGetApiVersion   ccl::ze_lib_ops.zeDriverGetApiVersion
 #define zeMemGetAllocProperties ccl::ze_lib_ops.zeMemGetAllocProperties
@@ -283,9 +292,12 @@ extern ccl::ze_lib_ops_t ze_lib_ops;
 #define zesFabricPortGetConfig            ccl::ze_lib_ops.zesFabricPortGetConfig
 #define zesFabricPortGetProperties        ccl::ze_lib_ops.zesFabricPortGetProperties
 #define zesFabricPortGetState             ccl::ze_lib_ops.zesFabricPortGetState
+#define zesDriverGet                      ccl::ze_lib_ops.zesDriverGet
+#define zesDeviceGet                      ccl::ze_lib_ops.zesDeviceGet
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
 #define zeDevicePciGetPropertiesExt ccl::ze_lib_ops.zeDevicePciGetPropertiesExt
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
+#define zesDriverGetDeviceByUuidExp         ccl::ze_lib_ops.zesDriverGetDeviceByUuidExp
 #define zeDriverGetExtensionFunctionAddress ccl::ze_lib_ops.zeDriverGetExtensionFunctionAddress
 #define zeFabricVertexGetExp                ccl::ze_lib_ops.zeFabricVertexGetExp
 #define zeFabricVertexGetSubVerticesExp     ccl::ze_lib_ops.zeFabricVertexGetSubVerticesExp

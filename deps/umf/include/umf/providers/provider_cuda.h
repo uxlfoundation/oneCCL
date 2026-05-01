@@ -61,6 +61,16 @@ umf_result_t umfCUDAMemoryProviderParamsSetMemoryType(
 umf_result_t umfCUDAMemoryProviderParamsSetAllocFlags(
     umf_cuda_memory_provider_params_handle_t hParams, unsigned int flags);
 
+/// @brief  Set custom name of the CUDA Memory Provider.
+/// @param  hParams handle to the parameters of the CUDA Memory Provider.
+/// @param  name custom name. Must not be NULL. Name longer than 63 characters
+///         will be truncated.
+/// \details Name should contain only [a-zA-Z0-9_-] characters.
+/// Other names are deprecated and may limit CTL functionality.
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+umf_result_t umfCUDAMemoryProviderParamsSetName(
+    umf_cuda_memory_provider_params_handle_t hParams, const char *name);
+
 const umf_memory_provider_ops_t *umfCUDAMemoryProviderOps(void);
 
 #ifdef __cplusplus

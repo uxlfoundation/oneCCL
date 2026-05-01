@@ -48,8 +48,37 @@ typedef enum umf_result_t {
     UMF_RESULT_ERROR_DEPENDENCY_UNAVAILABLE =
         7, ///< External required dependency is unavailable or missing
     UMF_RESULT_ERROR_OUT_OF_RESOURCES = 8, ///< Out of internal resources
-    UMF_RESULT_ERROR_UNKNOWN = 0x7ffffffe  ///< Unknown error
+    UMF_RESULT_ERROR_INVALID_CTL_PATH =
+        9, ///< CTL path is not supported or not found
+    UMF_RESULT_ERROR_UNKNOWN = 0x7ffffffe ///< Unknown error
 } umf_result_t;
+
+/// @brief Handle to the memory properties structure
+typedef struct umf_memory_properties_t *umf_memory_properties_handle_t;
+
+/// @brief ID of the memory property
+typedef enum umf_memory_property_id_t {
+    UMF_MEMORY_PROPERTY_INVALID = -1, ///< Invalid property
+
+    // UMF specific
+    UMF_MEMORY_PROPERTY_PROVIDER_HANDLE = 0, ///< Handle to the memory provider
+    UMF_MEMORY_PROPERTY_POOL_HANDLE = 1,     ///< Handle to the memory pool
+
+    // generic pointer properties
+    UMF_MEMORY_PROPERTY_BASE_ADDRESS = 10, ///< Base address of the allocation
+    UMF_MEMORY_PROPERTY_BASE_SIZE = 11,    ///< Base size of the allocation
+    UMF_MEMORY_PROPERTY_BUFFER_ID = 12,    ///< Unique identifier for the buffer
+
+    // GPU specific
+    UMF_MEMORY_PROPERTY_POINTER_TYPE = 20, ///< Type of the pointer
+    UMF_MEMORY_PROPERTY_CONTEXT = 21,      ///< GPU context of the allocation
+    UMF_MEMORY_PROPERTY_DEVICE =
+        22, ///< GPU device where the allocation resides
+
+    /// @cond
+    UMF_MEMORY_PROPERTY_MAX_RESERVED = 0x1000, ///< Maximum reserved value
+    /// @endcond
+} umf_memory_property_id_t;
 
 /// @brief Type of the CTL query
 typedef enum umf_ctl_query_type {

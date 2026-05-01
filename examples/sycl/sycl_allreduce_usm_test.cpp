@@ -663,7 +663,7 @@ int main(int argc, char *argv[]) {
             std::string check_msg("user-defined reduction operation");
             if (exception_msg.find(check_msg) != std::string::npos) {
                 std::cout
-                    << "SKIP: user-defined reduction operation is not supported for the scheduler or scale-out path."
+                    << "SKIP: user-defined reduction operation is not supported for the scheduler path."
                     << std::endl;
                 ret = 0;
             }

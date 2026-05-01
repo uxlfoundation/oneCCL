@@ -21,7 +21,7 @@ extern "C" {
 /// @brief Version of the Memory Provider ops structure.
 /// NOTE: This is equal to the latest UMF version, in which the ops structure
 /// has been modified.
-#define UMF_PROVIDER_OPS_VERSION_CURRENT UMF_MAKE_VERSION(1, 0)
+#define UMF_PROVIDER_OPS_VERSION_CURRENT UMF_MAKE_VERSION(1, 1)
 
 ///
 /// @brief This structure comprises function pointers used by corresponding
@@ -123,8 +123,18 @@ typedef struct umf_memory_provider_ops_t {
     /// @brief Retrieve name of a given memory \p provider.
     /// @param provider pointer to the memory provider
     /// @param name [out] pointer to a string containing the name of the \p provider
-    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+    /// \details
+    /// * Implementations *must* return a literal null-terminated string.
     ///
+    /// * Implementations *must* return default provider name when NULL is provided,
+    ///   otherwise the pool's name is returned.
+    ///
+    /// * The returned name should not exceed 64 characters and may contain
+    ///   only [a-zA-Z0-9_-] characters. Names violating these rules are deprecated
+    ///   and will not be supported in the next major API release.
+    ///   CTL functionality may be limited if other characters are returned.
+    ///
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
     umf_result_t (*get_name)(void *provider, const char **name);
 
     ///
@@ -273,10 +283,48 @@ typedef struct umf_memory_provider_ops_t {
     /// @param args variable arguments for the operation.
     ///
     /// @return umf_result_t result of the control operation.
+    ///         Implementations must return
+    ///         UMF_RESULT_ERROR_INVALID_CTL_PATH if the given path is not
+    ///         supported.
     ///
     umf_result_t (*ext_ctl)(void *provider, umf_ctl_query_source_t source,
                             const char *name, void *arg, size_t size,
                             umf_ctl_query_type_t queryType, va_list args);
+
+    // The following operations were added in ops version 1.1
+
+    ///
+    /// @brief Retrieve provider-specific properties of the memory allocation.
+    /// \details
+    ///     If provider supports allocation properties,
+    ///     ext_get_allocation_properties and ext_get_allocation_properties_size,
+    ///     must either be all set or all NULL.
+    /// @param provider pointer to the memory provider
+    /// @param ptr pointer to the allocated memory
+    /// @param memory_property_id ID of the memory property
+    /// @param property_value [out] pointer to the value of the memory property
+    ///         which will be filled
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure
+    ///
+    umf_result_t (*ext_get_allocation_properties)(
+        void *provider, const void *ptr,
+        umf_memory_property_id_t memory_property_id, void *property_value);
+
+    ///
+    /// @brief Retrieve size of the provider-specific properties of the memory
+    ///        allocation.
+    /// \details
+    ///     If provider supports allocation properties,
+    ///     ext_get_allocation_properties and ext_get_allocation_properties_size,
+    ///     must either be all set or all NULL.
+    /// @param provider pointer to the memory provider
+    /// @param memory_property_id ID of the memory property to get the size of
+    /// @param size [out] pointer to the size of the property
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure
+    ///
+    umf_result_t (*ext_get_allocation_properties_size)(
+        void *provider, umf_memory_property_id_t memory_property_id,
+        size_t *size);
 
 } umf_memory_provider_ops_t;
 

@@ -92,6 +92,7 @@ private:
     std::vector<ccl::ze::device_bdf_info> physical_devices;
 
     struct payload_t {
+        ze_ipc_mem_handle_t ipc_handle;
         int mem_handle{ ccl::utils::invalid_mem_handle };
         ccl::ze::ipc_mem_type mem_type{};
         size_t handle_id{ ccl::utils::initial_handle_id_value };
@@ -152,4 +153,15 @@ private:
     uint32_t get_remote_device_id(ccl::ze::device_info& info);
     int get_remote_physical_device_fd(const ssize_t remote_device_id);
     int get_handle_idx(ccl_coll_type ctype, int rank_arg);
+};
+
+class HandleExchangeData {
+public:
+    HandleExchangeData(std::shared_ptr<ze_handle_exchange_entry> exchange_entry,
+                       std::shared_ptr<ccl_sched> sched)
+            : exchange_entry(exchange_entry),
+              sched(sched) {}
+
+    std::shared_ptr<ze_handle_exchange_entry> exchange_entry;
+    std::shared_ptr<ccl_sched> sched;
 };

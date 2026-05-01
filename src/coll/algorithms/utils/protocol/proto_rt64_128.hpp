@@ -15,8 +15,15 @@
 */
 #pragma once
 
+#include <sys/types.h>
+#include <cstdint>
+#include "coll/algorithms/utils/sycl_kernels.hpp"
+
 template <typename T, int SubGroupSize>
-struct Rt64_128_PCIE {
+struct Rt64_128_PCIE : public ProtoBase<T,
+                                        SubGroupSize,
+                                        sycl::vec<uint32_t, 4>,
+                                        Rt64_128_PCIE<T, SubGroupSize>> {
     using message_t = sycl::vec<uint32_t, 4>;
 #if defined(__SYCL_DEVICE_ONLY__)
     using inner_t = uint32_t __attribute__((ext_vector_type(4)));
@@ -39,6 +46,47 @@ struct Rt64_128_PCIE {
     constexpr static auto CommWriteCacheCtrl = CacheCtrl::L1UC_L3UC;
 #endif
 
+    static inline void loadByByte(message_t &v, T *src, ssize_t bytes) {
+        sycl::vec<uint8_t, 16> raw((uint8_t)0);
+        uint8_t *raw_src = reinterpret_cast<uint8_t *>(src);
+        for (ssize_t j = 0; j < bytes; ++j) {
+            raw[j] = raw_src[j];
+        }
+        v = sycl::bit_cast<message_t>(raw);
+    }
+
+    static inline void loadByElement(message_t &v, T *src, ssize_t nElems) {
+        sycl::vec<T, 16 / sizeof(T)> raw((T)0);
+        for (ssize_t j = 0; j < nElems; ++j) {
+            raw[j] = src[j];
+        }
+        v = sycl::bit_cast<message_t>(raw);
+    }
+
+    static inline void loadInputInner(message_t &v, T *src, ssize_t nElt, AccessGranularity gr) {
+        switch (gr) {
+            case AccessGranularity::Byte: {
+                loadByByte(v, src, nElt * sizeof(T));
+                break;
+            }
+            case AccessGranularity::Item: {
+                loadByElement(v, src, nElt);
+                break;
+            }
+            case AccessGranularity::Vector: {
+                if (nElt == (ssize_t)(sizeof(message_t) / sizeof(T))) {
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+                    lscLoad<SubGroupSize>(v, src);
+#endif
+                }
+                else {
+                    loadByElement(v, src, nElt);
+                }
+                break;
+            }
+        }
+    }
+
     //
     // Process of pack messages
     // 1. multiple load inputs (16 round maximum)
@@ -46,72 +94,38 @@ struct Rt64_128_PCIE {
     // 3. Shuffle flag into the middle of second register
     //
     template <int unroll>
-    static inline void loadInput(message_t (&v)[unroll], T *src, int nElt) {
+    static inline void loadInput(message_t (&v)[unroll],
+                                 T *src,
+                                 ssize_t nElt,
+                                 AccessGranularity gr) {
         auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
         auto lid = sg.get_local_id()[0];
-        int local_off = lid * sizeof(message_t) / sizeof(T);
+        ssize_t local_off = lid * sizeof(message_t) / sizeof(T);
 
         if (lid < payloadChannels) {
 #pragma unroll
             for (int i = 0; i < unroll; ++i) {
                 auto off = i * wireCapacityInType + local_off;
-                if (off < nElt) {
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-                    lscLoad<SubGroupSize>(v[i], src + off);
-#else
-                    (void)off;
-#endif
+                ssize_t nEltToLoad = nElt - off;
+                if (nEltToLoad >= (ssize_t)(sizeof(message_t) / sizeof(T))) {
+                    nEltToLoad = (ssize_t)(sizeof(message_t) / sizeof(T));
                 }
+                loadInputInner(v[i], src + off, nEltToLoad, gr);
             }
         }
     }
 
-    static inline void loadInput(message_t &v, T *src, int nElt) {
+    static inline void loadInput(message_t &v, T *src, ssize_t nElt, AccessGranularity gr) {
         auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
         auto lid = sg.get_local_id()[0];
         int off = lid * sizeof(message_t) / sizeof(T);
 
         if (lid < payloadChannels) {
-            if (off < nElt) {
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-                lscLoad<SubGroupSize>(v, src + off);
-#else
-                (void)off;
-#endif
+            ssize_t nEltToLoad = nElt - off;
+            if (nEltToLoad >= (ssize_t)(sizeof(message_t) / sizeof(T))) {
+                nEltToLoad = (ssize_t)(sizeof(message_t) / sizeof(T));
             }
-        }
-    }
-
-    template <int unroll>
-    static inline void loadInput(message_t (&v)[unroll], T *src) {
-        auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
-        auto lid = sg.get_local_id()[0];
-        int local_off = lid * sizeof(message_t) / sizeof(T);
-
-        if (lid < payloadChannels) {
-#pragma unroll
-            for (int i = 0; i < unroll; ++i) {
-                auto off = i * wireCapacityInType + local_off;
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-                lscLoad<SubGroupSize>(v[i], src + off);
-#else
-                (void)off;
-#endif
-            }
-        }
-    }
-
-    static inline void loadInput(message_t &v, T *src) {
-        auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
-        auto lid = sg.get_local_id()[0];
-        int off = lid * sizeof(message_t) / sizeof(T);
-
-        if (lid < payloadChannels) {
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-            lscLoad<SubGroupSize>(v, src + off);
-#else
-            (void)off;
-#endif
+            loadInputInner(v, src + off, nEltToLoad, gr);
         }
     }
 
@@ -325,66 +339,76 @@ struct Rt64_128_PCIE {
 #endif
     }
 
-    template <int unroll>
-    static inline void storeOutput(T *dst, message_t (&v)[unroll]) {
-        auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
-        auto lid = sg.get_local_id()[0];
-        int local_off = lid * sizeof(message_t) / sizeof(T);
-        if (lid < payloadChannels) { // XXX: Diverge
-#pragma unroll
-            for (int i = 0; i < unroll; ++i) {
-                auto off = i * wireCapacityInType + local_off;
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-                lscStore<SubGroupSize>(dst + off, v[i]);
-#else
-                (void)off;
-                (void)local_off;
-#endif
+    static inline void storeByByte(T *dst, message_t &v, ssize_t bytes) {
+        auto dst_bytes = reinterpret_cast<uint8_t *>(dst);
+        auto v_raw = sycl::bit_cast<sycl::vec<uint8_t, 16>>(v);
+        for (ssize_t j = 0; j < bytes; ++j) {
+            dst_bytes[j] = v_raw[j];
+        }
+    }
+
+    static inline void storeByElement(T *dst, message_t &v, ssize_t nElems) {
+        auto v_raw = sycl::bit_cast<sycl::vec<T, 16 / sizeof(T)>>(v);
+        for (ssize_t j = 0; j < nElems; ++j) {
+            dst[j] = v_raw[j];
+        }
+    }
+
+    static inline void storeOutputInner(T *dst, message_t &v, ssize_t nElt, AccessGranularity gr) {
+        switch (gr) {
+            case AccessGranularity::Byte: {
+                storeByByte(dst, v, nElt * sizeof(T));
+                break;
             }
-        }
-    }
-
-    static inline void storeOutput(T *dst, message_t &v) {
-        auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
-        auto lid = sg.get_local_id()[0];
-        int off = lid * sizeof(message_t) / sizeof(T);
-        if (lid < payloadChannels) { // XXX: Diverge
+            case AccessGranularity::Item: {
+                storeByElement(dst, v, nElt);
+                break;
+            }
+            case AccessGranularity::Vector: {
+                if (nElt == (ssize_t)(sizeof(message_t) / sizeof(T))) {
 #if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-            lscStore<SubGroupSize>(dst + off, v);
-#else
-            (void)off;
-#endif
-        }
-    }
-
-    template <int unroll>
-    static inline void storeOutput(T *dst, message_t (&v)[unroll], int nElt) {
-        auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
-        auto lid = sg.get_local_id()[0];
-        int local_off = lid * sizeof(message_t) / sizeof(T);
-        if (lid < payloadChannels) { // XXX: Fixed diverge
-#pragma unroll
-            for (int i = 0; i < unroll; ++i) {
-                auto off = i * wireCapacityInType + local_off;
-                if (off < nElt) { // XXX: runtime condition
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-                    lscStore<SubGroupSize>(dst + off, v[i]);
+                    lscStore<SubGroupSize>(dst, v);
 #endif
                 }
+                else {
+                    storeByElement(dst, v, nElt);
+                }
+                break;
             }
         }
     }
 
-    static inline void storeOutput(T *dst, message_t &v, int nElt) {
+    template <int unroll>
+    static inline void storeOutput(T *dst,
+                                   message_t (&v)[unroll],
+                                   ssize_t nElt,
+                                   AccessGranularity gr) {
         auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
         auto lid = sg.get_local_id()[0];
-        int off = lid * sizeof(message_t) / sizeof(T);
-        if (lid < payloadChannels) { // XXX: Fixed diverge
-            if (off < nElt) { // XXX: runtime condition
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-                lscStore<SubGroupSize>(dst + off, v);
-#endif
+        ssize_t local_off = lid * sizeof(message_t) / sizeof(T);
+        if (lid < payloadChannels) {
+#pragma unroll
+            for (int i = 0; i < unroll; ++i) {
+                ssize_t off = i * wireCapacityInType + local_off;
+                ssize_t nEltToStore = nElt - off;
+                if (nEltToStore >= (ssize_t)(sizeof(message_t) / sizeof(T))) {
+                    nEltToStore = (ssize_t)(sizeof(message_t) / sizeof(T));
+                }
+                storeOutputInner(dst + off, v[i], nEltToStore, gr);
             }
+        }
+    }
+
+    static inline void storeOutput(T *dst, message_t &v, ssize_t nElt, AccessGranularity gr) {
+        auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
+        auto lid = sg.get_local_id()[0];
+        ssize_t off = lid * sizeof(message_t) / sizeof(T);
+        if (lid < payloadChannels) {
+            ssize_t nEltToStore = nElt - off;
+            if (nEltToStore >= (ssize_t)(sizeof(message_t) / sizeof(T))) {
+                nEltToStore = (ssize_t)(sizeof(message_t) / sizeof(T));
+            }
+            storeOutputInner(dst + off, v, nEltToStore, gr);
         }
     }
 
@@ -479,26 +503,88 @@ struct Rt64_128_PCIE {
     }
 
     template <int unroll>
-    static inline void accumMessages(message_t (&v)[unroll], message_t (&m)[unroll]) {
+
+    static inline void accumMessages(message_t (&v)[unroll],
+                                     message_t (&m)[unroll],
+                                     ccl::reduction reduction = ccl::reduction::sum) {
 #if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
         using math_t = sycl::vec<T, sizeof(message_t) / sizeof(T)>;
+        if (reduction == ccl::reduction::sum) {
 #pragma unroll
-        for (int u = 0; u < unroll; ++u)
-            v[u] = sycl::bit_cast<message_t>(sycl::bit_cast<math_t>(m[u]) +
-                                             sycl::bit_cast<math_t>(v[u]));
+            for (int u = 0; u < unroll; ++u) {
+                auto a = sycl::bit_cast<math_t>(v[u]);
+                auto b = sycl::bit_cast<math_t>(m[u]);
+                v[u] = sycl::bit_cast<message_t>(a + b);
+            }
+        }
+        else if (reduction == ccl::reduction::prod) {
+#pragma unroll
+            for (int u = 0; u < unroll; ++u) {
+                auto a = sycl::bit_cast<math_t>(v[u]);
+                auto b = sycl::bit_cast<math_t>(m[u]);
+                v[u] = sycl::bit_cast<message_t>(a * b);
+            }
+        }
+        else if (reduction == ccl::reduction::min) {
+#pragma unroll
+            for (int u = 0; u < unroll; ++u) {
+                auto a = sycl::bit_cast<math_t>(v[u]);
+                auto b = sycl::bit_cast<math_t>(m[u]);
+                v[u] = sycl::bit_cast<message_t>(sycl_min_op{}(a, b));
+            }
+        }
+        else if (reduction == ccl::reduction::max) {
+#pragma unroll
+            for (int u = 0; u < unroll; ++u) {
+                auto a = sycl::bit_cast<math_t>(v[u]);
+                auto b = sycl::bit_cast<math_t>(m[u]);
+                v[u] = sycl::bit_cast<message_t>(sycl_max_op{}(a, b));
+            }
+        }
+        else {
+#pragma unroll
+            for (int u = 0; u < unroll; ++u) {
+                auto a = sycl::bit_cast<math_t>(v[u]);
+                auto b = sycl::bit_cast<math_t>(m[u]);
+                v[u] = sycl::bit_cast<message_t>(a + b);
+            }
+        }
 #endif
     }
 
-    static inline void accumMessages(message_t &v, message_t &m) {
+    static inline void accumMessages(message_t &v,
+                                     message_t &m,
+                                     ccl::reduction reduction = ccl::reduction::sum) {
 #if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
         using math_t = sycl::vec<T, sizeof(message_t) / sizeof(T)>;
-        v = sycl::bit_cast<message_t>(sycl::bit_cast<math_t>(m) + sycl::bit_cast<math_t>(v));
+        auto a = sycl::bit_cast<math_t>(v);
+        auto b = sycl::bit_cast<math_t>(m);
+        math_t r;
+        if (reduction == ccl::reduction::sum) {
+            r = a + b;
+        }
+        else if (reduction == ccl::reduction::prod) {
+            r = a * b;
+        }
+        else if (reduction == ccl::reduction::min) {
+            r = sycl_min_op{}(a, b);
+        }
+        else if (reduction == ccl::reduction::max) {
+            r = sycl_max_op{}(a, b);
+        }
+        else {
+            r = a + b;
+        }
+        v = sycl::bit_cast<message_t>(r);
 #endif
     }
 };
 
 template <typename T, int SubGroupSize>
-struct Rt64_128 {
+struct Rt64_128 : public ProtoBase<T,
+                                   SubGroupSize,
+                                   sycl::vec<uint32_t, 128 / SubGroupSize / 4>,
+                                   Rt64_128<T, SubGroupSize>> {
     constexpr static int nReg128B = 128 / SubGroupSize / 4;
     constexpr static int firstElem = 0;
     constexpr static int lastElem = nReg128B - 1;
@@ -528,7 +614,7 @@ struct Rt64_128 {
     // 3. Shuffle flag into the middle of second register
     //
     template <int unroll>
-    static inline void loadInput(message_t (&v)[unroll], T *src, int nElt) {
+    static inline void loadInput(message_t (&v)[unroll], T *src, ssize_t nElt) {
         auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
         auto lid = sg.get_local_id()[0];
         int local_off = lid * sizeof(message_t) / sizeof(T);
@@ -548,7 +634,7 @@ struct Rt64_128 {
         }
     }
 
-    static inline void loadInput(message_t &v, T *src, int nElt) {
+    static inline void loadInput(message_t &v, T *src, ssize_t nElt) {
         auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
         auto lid = sg.get_local_id()[0];
         int off = lid * sizeof(message_t) / sizeof(T);
@@ -781,7 +867,7 @@ struct Rt64_128 {
     }
 
     template <int unroll>
-    static inline void storeOutput(T *dst, message_t (&v)[unroll], int nElt) {
+    static inline void storeOutput(T *dst, message_t (&v)[unroll], ssize_t nElt) {
         auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
         auto lid = sg.get_local_id()[0];
         int local_off = lid * sizeof(message_t) / sizeof(T);
@@ -798,8 +884,7 @@ struct Rt64_128 {
         }
     }
 
-    template <int unroll>
-    static inline void storeOutput(T *dst, message_t &v, int nElt) {
+    static inline void storeOutput(T *dst, message_t &v, ssize_t nElt) {
         auto sg = sycl::ext::oneapi::this_work_item::get_sub_group();
         auto lid = sg.get_local_id()[0];
         int off = lid * sizeof(message_t) / sizeof(T);

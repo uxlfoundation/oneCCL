@@ -27,7 +27,6 @@
 #endif // CCL_ENABLE_SYCL
 
 #include "atl/atl_base_comm.hpp"
-#include "comm/comm.hpp"
 #include "topology/topo_manager.hpp"
 
 namespace ccl {
@@ -58,8 +57,11 @@ struct op_id_entry {
 struct group_buffer_entry {
     void *buffer_ptr = nullptr;
     bool group_discovery_phase{ true };
-    std::atomic<int> copy_done{ 0 }, reg_done{ 0 }; //signaling counters
+    std::atomic<int> copy_submitted{ 0 }, reg_done{ 0 }; //signaling counters
     int copy_counter = 1, reg_counter = 1; // checking counters
+#ifdef CCL_ENABLE_SYCL
+    sycl::event recv_ready, copy_event;
+#endif // CCL_ENABLE_SYCL
 };
 
 class shared_resources {
@@ -85,7 +87,7 @@ public:
     std::mutex allocation_mutex;
 
     bool is_multi_thread_instance = false;
-    int current_global_id = ccl_comm::invalid_id;
+    // int current_global_id = ccl_comm::invalid_id;
     std::unordered_map<int, pthread_barrier_t> barrier_waits;
 
     shared_resources() = default;
@@ -157,59 +159,9 @@ public:
         pthread_barrier_wait(&barrier_waits[global_id]);
     }
 
-    void do_ipc_exchangeExt(
-        ccl_comm *comm,
-        std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> &hash_table,
-        ccl_stream *stream,
-        std::vector<void *> ptrs,
-        int exchange_id = 0,
-        bool is_pt2pt = false) {
-        {
-            static std::mutex hash_table_mutex;
-            std::lock_guard<std::mutex> guard(hash_table_mutex);
-            hash_table[exchange_id][comm->rank()] = ptrs;
-        }
-        if (!is_pt2pt) {
-            pthread_barrier_wait(&barrier_waits[comm->global_current_id]);
-        }
-    }
-
     int get_node_rank(int ranks[2], int pair_comm_size) {
         // Possibly this calculation has to be universalized
         return ranks[0] * pair_comm_size + ranks[1];
-    }
-
-    template <typename T, int N>
-    std::array<T *, N> get_ipc_ptrsExt(
-        std::shared_ptr<ccl_comm> comm,
-        std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> &hash_table,
-        const int comm_index,
-        const int handle_index,
-        void *local_ptr,
-        int exchange_id = 0,
-        std::shared_ptr<ccl_comm> even_comm = nullptr,
-        std::shared_ptr<ccl_comm> pair_comm = nullptr) {
-        std::array<T *, N> remote_ptrs = {};
-        const int rank = comm->rank();
-        const int size = comm->size();
-
-        remote_ptrs[rank] = (T *)local_ptr;
-        for (int i = 1; i < size; i++) {
-            int peer_rank = (rank + i) % size;
-            int peer_rank_node = peer_rank;
-            if (comm_index > 0) {
-                int ranks[2] = { even_comm->rank(), pair_comm->rank() };
-                ranks[comm_index - 1] = peer_rank;
-                peer_rank_node = get_node_rank(ranks, pair_comm->size());
-            }
-            if (hash_table.find(exchange_id) != hash_table.end() &&
-                hash_table[exchange_id].find(peer_rank_node) != hash_table[exchange_id].end()) {
-                const auto &ptr = hash_table[exchange_id][peer_rank_node][handle_index];
-                remote_ptrs[peer_rank] = (T *)ptr;
-            }
-            CCL_ASSERT(remote_ptrs[peer_rank] != NULL);
-        }
-        return remote_ptrs;
     }
 
     int get_shared_op_id(int global_id, bool is_sender) {

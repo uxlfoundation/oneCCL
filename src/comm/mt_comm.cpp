@@ -55,7 +55,8 @@ ccl_internal_comm::ccl_internal_comm(int comm_id, int rank, int size)
         : m_dtree(size, rank)
 #ifdef CCL_ENABLE_SYCL
           ,
-          m_barrier_data(rank, size)
+          m_barrier_data(rank, size),
+          m_flag_data(rank, size)
 #endif // CCL_ENABLE_SYCL
 {
     reset(rank, size);
@@ -160,11 +161,11 @@ void ccl_comm::initExt(int size,
     enable_multi_thread_instance = true;
     // Set the flag in shared_data for group operations
     ccl::global_data::get().shared_data->is_multi_thread_instance = true;
-#ifdef CCL_ENABLE_SYCL
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ESIMD)
     // TODO: choose more correct place for falling back
     CCL_THROW_IF_NOT(ccl::global_data::env().sycl_esimd == 0,
                      "esimd kernels are not support by multi-threading case");
-#endif // CCL_ENABLE_SYCL
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ESIMD
     comm_rank = rank;
     comm_size = size;
 
@@ -181,12 +182,11 @@ void ccl_comm::initExt(int size,
     pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[group_id]);
 
     if (comm_rank == 0) {
-        {
-            std::lock_guard<std::mutex> lock(ccl::global_data::get().shared_data->allocation_mutex);
-            if (static_cast<int>(ccl::global_data::get().shared_data->group_buffers.size()) <=
-                global_current_id) {
-                ccl::global_data::get().shared_data->group_buffers.resize(global_current_id + 1);
-            }
+        std::lock_guard<std::mutex> lock(ccl::global_data::get().shared_data->allocation_mutex);
+
+        if (static_cast<int>(ccl::global_data::get().shared_data->group_buffers.size()) <=
+            global_current_id) {
+            ccl::global_data::get().shared_data->group_buffers.resize(global_current_id + 1);
         }
         ccl::global_data::get().shared_data->group_buffers[global_current_id].reserve(comm_size);
         for (int i = 0; i < comm_size; i++) {
@@ -221,7 +221,7 @@ void ccl_comm::initExt(int size,
     }
 
     local2global_map = rank2rank_map;
-    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
+    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[group_id]);
 
     env = std::make_shared<ccl_comm_env>(device_ptr);
 

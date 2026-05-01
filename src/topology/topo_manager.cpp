@@ -263,6 +263,10 @@ bool topo_manager::has_p2p_access() const {
     return is_p2p_access_enabled;
 }
 
+bool topo_manager::has_p2p_atomics() const {
+    return is_p2p_atomics_enabled;
+}
+
 bool topo_manager::has_all_vertices_connected() const {
     return are_all_vertices_connected;
 }
@@ -367,6 +371,40 @@ p2p_matrix_t topo_manager::build_p2p_matrix(const std::vector<ze_device_handle_t
             }
         }
     }
+
+    return matrix;
+}
+
+p2p_matrix_t topo_manager::build_p2p_atomics_matrix(
+    const std::vector<ze_device_handle_t>& devices) {
+    // zeDeviceGetP2PProperties may not be thread-safe
+    // randomly crash in multi-threading mode
+    static std::mutex local_data_mutex;
+    std::lock_guard<std::mutex> lock(local_data_mutex);
+
+    size_t device_count = devices.size();
+    p2p_matrix_t matrix(device_count);
+
+    // check p2p atomics
+    // FIXME: for JGS, p2p only query the property inside a node
+    // so when cross node with UAL, it may not detect atomics/p2p
+    // even though it is supported
+    for (uint32_t i = 0; i < device_count; i++) {
+        matrix[i].resize(device_count);
+        for (uint32_t j = 0; j < device_count; j++) {
+            if (i == j) {
+                matrix[i][j] = true;
+            }
+            else {
+                ze_device_p2p_properties_t p2pProps{};
+                p2pProps.stype = ZE_STRUCTURE_TYPE_DEVICE_P2P_PROPERTIES;
+                p2pProps.pNext = nullptr;
+                ZE_CALL(zeDeviceGetP2PProperties, (devices[i], devices[j], &p2pProps));
+                matrix[i][j] = p2pProps.flags & ZE_DEVICE_P2P_PROPERTY_FLAG_ATOMICS;
+            }
+        }
+    }
+
     return matrix;
 }
 
@@ -649,6 +687,7 @@ std::string topo_manager::to_string() const {
     ss << "\n";
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    ss << "  p2p_atomics: " << is_p2p_atomics_enabled << "\n";
     ss << "  p2p_access: " << is_p2p_access_enabled << "\n";
     if (port_status != port_health_status::unknown) {
         ss << "  ports_healthy: " << ((port_status == port_health_status::ok) ? "1" : "0") << "\n";
@@ -979,6 +1018,38 @@ bool topo_manager::check_p2p_access() const {
     return true;
 }
 
+bool topo_manager::check_p2p_atomics() const {
+    static int atomics_enable = -1;
+
+    /* with ZE_AFFINITY_MASK, if there is only one device visible,
+     * i.e. this rank's own device, the self checking result
+     * must be ignored */
+    if (atomics_matrix.size() == 1) {
+        if (atomics_enable != -1) {
+            // old results are valid because it is same GPU
+            return atomics_enable;
+        }
+        if (ze::is_arc_card(ccl::global_data::get().ze_data->devices[0].family)) {
+            return false;
+        }
+        // FIXME: be conservative, assume no atomics
+        // however, the no atomics version may not barrier
+        // may not work on PVC
+        return false;
+    }
+
+    for (size_t i = 0; i < atomics_matrix.size(); i++) {
+        for (size_t j = 0; j < atomics_matrix[i].size(); j++) {
+            if (!atomics_matrix[i][j]) {
+                atomics_enable = 0;
+                return false;
+            }
+        }
+    }
+    atomics_enable = 1;
+    return true;
+}
+
 fabric_ports_t topo_manager::get_fabric_ports() {
     int comm_rank = comm->get_rank();
     int comm_size = comm->get_size();
@@ -991,15 +1062,13 @@ fabric_ports_t topo_manager::get_fabric_ports() {
 
     uint32_t port_count{};
 
-    // ZE_CALL(zesDeviceEnumFabricPorts, ((zes_device_handle_t)ze_device, &port_count, NULL));
-    if (zesDeviceEnumFabricPorts((zes_device_handle_t)ze_device, &port_count, NULL) !=
-        ZE_RESULT_SUCCESS) {
+    if (zesDeviceEnumFabricPorts(zes_device, &port_count, NULL) != ZE_RESULT_SUCCESS) {
         LOG_INFO("can not retrieve ze fabric ports");
         return {};
     }
 
     std::vector<zes_fabric_port_handle_t> ports(port_count);
-    ZE_CALL(zesDeviceEnumFabricPorts, ((zes_device_handle_t)ze_device, &port_count, ports.data()));
+    ZE_CALL(zesDeviceEnumFabricPorts, (zes_device, &port_count, ports.data()));
 
     bool use_all_ports = false;
     if (ccl::ze::get_device_family(ze_device) == ccl::device_family::unknown) {
@@ -1282,10 +1351,12 @@ void topo_manager::detect_tune_port_count(const std::vector<ze::device_info>& de
 
     LOG_INFO("auto tune with port counts enabled");
     if (!devices.empty()) {
+        // zes_device is always valid now (set correctly in ze_data.cpp)
+        zes_device_handle_t first_zes_device = devices[0].zes_device;
+
         uint32_t first_dev_port_count = 0;
-        if (zesDeviceEnumFabricPorts((zes_device_handle_t)devices[0].device,
-                                     &first_dev_port_count,
-                                     NULL) != ZE_RESULT_SUCCESS) {
+        if (zesDeviceEnumFabricPorts(first_zes_device, &first_dev_port_count, NULL) !=
+            ZE_RESULT_SUCCESS) {
             LOG_INFO("can not retrieve ze fabric ports");
             return;
         }
@@ -1294,10 +1365,11 @@ void topo_manager::detect_tune_port_count(const std::vector<ze::device_info>& de
         }
 
         for (size_t idx = 1; idx < devices.size(); idx++) {
+            // zes_device is always valid now (set correctly in ze_data.cpp)
+            zes_device_handle_t zes_dev = devices[idx].zes_device;
+
             uint32_t port_count = 0;
-            if (zesDeviceEnumFabricPorts((zes_device_handle_t)devices[idx].device,
-                                         &port_count,
-                                         NULL) != ZE_RESULT_SUCCESS) {
+            if (zesDeviceEnumFabricPorts(zes_dev, &port_count, NULL) != ZE_RESULT_SUCCESS) {
                 LOG_INFO("can not retrieve ze fabric ports");
                 return;
             }
@@ -1574,6 +1646,19 @@ void topo_manager::ze_base_init(const std::shared_ptr<ccl::device>& device,
     CCL_THROW_IF_NOT(ze_device, "null ze device");
     ZE_CALL(zeDeviceGetProperties, (ze_device, &dev_props));
 
+    // Get node devices early - needed for zes_device lookup and p2p matrix
+    const auto& node_devices = global_data::get().ze_data->devices;
+
+    // Look up the zes_device from global data (already set correctly in ze_data.cpp)
+    zes_device = nullptr;
+    for (const auto& dev_info : node_devices) {
+        if (dev_info.device == ze_device) {
+            zes_device = dev_info.zes_device;
+            break;
+        }
+    }
+    CCL_THROW_IF_NOT(zes_device, "zes_device not found for ze_device");
+
     // exchange ze specific rank info
     topo_ze_rank_info ze_rank_info{};
     ze_rank_info_vec.resize(comm_size);
@@ -1601,7 +1686,6 @@ void topo_manager::ze_base_init(const std::shared_ptr<ccl::device>& device,
     fabric_ports = get_fabric_ports();
 
     // build p2p connectivity info
-    const auto& node_devices = global_data::get().ze_data->devices;
     const auto& node_devices_filtered = get_filtered_devices(node_devices);
     p2p_matrix = build_p2p_matrix(node_devices_filtered);
 
@@ -1612,6 +1696,9 @@ void topo_manager::ze_base_init(const std::shared_ptr<ccl::device>& device,
               ccl::to_string(p2p_matrix),
               "\nnumber of node devices: ",
               node_devices.size());
+
+    atomics_matrix = build_p2p_atomics_matrix(node_devices_filtered);
+    is_p2p_atomics_enabled = check_p2p_atomics();
 
     if (comm_rank == 0) {
         LOG_INFO("ze_rank_info_vec: ", ccl::to_string(ze_rank_info_vec, host_info_vec));

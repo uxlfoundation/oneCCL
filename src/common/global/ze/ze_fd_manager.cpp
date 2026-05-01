@@ -416,7 +416,7 @@ int fd_manager::mem_handle_to_fd(int convert_from_fd, int handle) {
     else if (ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::pidfd) {
         fd = convert_fd_pidfd(convert_from_fd, handle);
     }
-    else {
+    else if (ccl::global_data::env().ze_ipc_exchange != ccl::ze::ipc_exchange_mode::none) {
         CCL_THROW("unexpected ipc_exchange_mode");
     }
     return fd;

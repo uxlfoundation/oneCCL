@@ -124,7 +124,11 @@ atl_ofi_prov_t* atl_ofi_get_prov(atl_ofi_ctx_t& ctx,
     return &(ctx.provs[prov_idx]);
 }
 
-atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord, std::shared_ptr<ipmi> pmi) {
+atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord,
+                                          std::shared_ptr<ipmi> pmi,
+                                          occp_client_t* occp_client,
+                                          uint16_t occp_srv_port,
+                                          occp_server_t* occp_server) {
     atl_status_t ret = ATL_STATUS_SUCCESS;
     int i;
     int local_idx = 0, local_count = 0;
@@ -158,11 +162,41 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord, std::shared_p
         goto fn_err;
     }
 
-    if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi &&
-        ccl::global_data::env().enable_init_hostname_sharing) {
+    // OCCP
+    if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::occp) {
+        LOG_DEBUG("Step 1: Getting local hostname (already done), rank: ", pmi->get_rank());
+
+        rank_info_t my_info;
+        ranks_infos_t ranks_info(coord.global_count);
+
+        LOG_DEBUG("Step 2: OCCP exchange_rank_info, rank: ", pmi->get_rank());
+
+        strncpy(my_info.hostname, my_hostname, ATL_MAX_HOSTNAME_LEN - 1);
+        my_info.hostname[ATL_MAX_HOSTNAME_LEN - 1] = '\0';
+
+        if (!occp_client->exchange_rank_info(
+                pmi->get_rank(), pmi->get_size(), my_info, ranks_info)) {
+            LOG_ERROR("OCCP exchange_rank_info failed");
+            ret = ATL_STATUS_FAILURE;
+            goto fn_err;
+        }
+
+        LOG_DEBUG("Step 2 completed. rank: ", pmi->get_rank());
+
+        LOG_DEBUG("Step 3: Copying OCCP results to all_hostnames");
+        for (i = 0; i < coord.global_count; i++) {
+            strncpy(all_hostnames + i * ATL_MAX_HOSTNAME_LEN,
+                    ranks_info[i].hostname,
+                    ATL_MAX_HOSTNAME_LEN - 1);
+            all_hostnames[i * ATL_MAX_HOSTNAME_LEN + ATL_MAX_HOSTNAME_LEN - 1] = '\0';
+        }
+        LOG_DEBUG("Step 3 completed");
+    }
+    // PMIx
+    else if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi &&
+             ccl::global_data::env().enable_init_hostname_sharing) {
         LOG_DEBUG("using PMIx for hostname exchange");
 
-        // PMIx-based sharing
         pmix_value_t value;
         PMIX_VALUE_CONSTRUCT(&value);
         ccl_pmix::value_load(value, my_hostname, PMIX_STRING);
@@ -187,6 +221,7 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord, std::shared_p
             PMIX_VALUE_RELEASE(ret_value);
         }
     }
+    //PMI
     else if (ccl::global_data::env().enable_init_hostname_sharing) {
         LOG_DEBUG("using PMI for hostname exchange");
         // PMI-based sharing
@@ -217,6 +252,7 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord, std::shared_p
         LOG_DEBUG("disable hostname exchange to get local coords");
     }
 
+    LOG_DEBUG("Step 4: Building global2local_map");
     // Initialize the map with all local ids invalid
     coord.global2local_map.clear();
     coord.global2local_map.resize(coord.global_count, -1);
@@ -238,6 +274,8 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord, std::shared_p
             }
         }
     }
+
+    LOG_DEBUG("Step 5: Assigning local_idx and local_count");
     // The initial approach for obtaining local coordinates involves hostname
     // sharing, where the current hostname is compared with shared hostnames to
     // calculate the local count and rank. The environment variable enable_init_hostname_sharing
@@ -252,6 +290,7 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord, std::shared_p
                             ? local_count
                             : ccl::global_data::get().get_local_proc_count();
 
+    LOG_DEBUG("Step 6: Remapping global2local_map to local indices");
     local_idx = 0;
     // Assign local ids to local node ranks
     for (i = 0; i < coord.global_count; i++) {
@@ -263,6 +302,7 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord, std::shared_p
     }
 
 fn_exit:
+    LOG_DEBUG("Step 7: Cleaning up all_hostnames");
     free(all_hostnames);
     return ret;
 
@@ -276,6 +316,8 @@ atl_status_t atl_ofi_prov_update_addr_table(atl_ofi_ctx_t& ctx,
                                             size_t prov_idx,
                                             std::shared_ptr<ipmi> pmi,
                                             ep_names_t& ep_names,
+                                            occp_client_t* occp_client = nullptr,
+                                            uint16_t occp_srv_port = 0,
                                             void* shared_memory = nullptr,
                                             size_t length = 0,
                                             size_t total_named_eps = 0,
@@ -317,8 +359,49 @@ atl_status_t atl_ofi_prov_update_addr_table(atl_ofi_ctx_t& ctx,
               coord.global_count,
               ", proc_count ",
               proc_count);
+    // OCCP
+    if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::occp) {
+        LOG_DEBUG("Step 1: Preparing local endpoint(s) for OCCP exchange");
 
-    if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi_shm) {
+        ofi_endpoints_t my_ofi_eps(named_ep_count);
+        for (size_t j = 0; j < named_ep_count; j++) {
+            memcpy(my_ofi_eps[j].data, prov->eps[j].name.addr, addr_len);
+        }
+
+        ofi_endpoints_t all_efis(coord.global_count * named_ep_count);
+
+        LOG_DEBUG("Step 2: OCCP exchange_ofi_config start rank: ", pmi->get_rank());
+        if (!occp_client->exchange_ofi_config(
+                pmi->get_rank(), pmi->get_size(), my_ofi_eps[0], all_efis)) {
+            LOG_ERROR("OCCP exchange_ofi_config failed");
+            return ATL_STATUS_FAILURE;
+        }
+        LOG_DEBUG("Step 2 completed. rank: ", pmi->get_rank());
+
+        LOG_DEBUG("Step 3: Allocate ep_names_table");
+        ep_names_table = (char*)calloc(1, ep_names_table_len);
+        if (!ep_names_table) {
+            LOG_ERROR("can't allocate epnames_table");
+            return ATL_STATUS_FAILURE;
+        }
+
+        LOG_DEBUG("Step 4: Build ep_names_table from OCCP results");
+        addr_idx = 0;
+        for (int i = 0; i < coord.global_count; i++) {
+            if (prov->is_shm && coord.global2local_map[i] == -1)
+                continue;
+
+            for (size_t j = 0; j < named_ep_count; j++) {
+                const auto& peer_ofi_ep = all_efis[i * named_ep_count + j];
+                memcpy(ep_names_table + addr_idx * addr_len, peer_ofi_ep.data, addr_len);
+
+                ep_names.push_back(
+                    std::vector<char>(peer_ofi_ep.data, peer_ofi_ep.data + addr_len));
+                addr_idx++;
+            }
+        }
+    }
+    else if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi_shm) {
         int global_size = pmi->get_size();
         int global_rank = coord.global_idx;
         int local_rank = coord.local_idx;
@@ -625,7 +708,9 @@ atl_status_t atl_ofi_prov_eps_connect(atl_ofi_ctx_t& ctx,
                                       const atl_proc_coord_t& coord,
                                       size_t prov_idx,
                                       std::shared_ptr<ipmi> pmi,
-                                      ep_names_t& ep_names) {
+                                      ep_names_t& ep_names,
+                                      occp_client_t* occp_client,
+                                      uint16_t occp_srv_port) {
     int ret;
     size_t ep_idx;
 
@@ -634,6 +719,7 @@ atl_status_t atl_ofi_prov_eps_connect(atl_ofi_ctx_t& ctx,
 
     prov->addr_len = 0;
 
+    // Step 1: Get local endpoint names
     for (ep_idx = 0; ep_idx < ctx.ep_count; ep_idx++) {
         ret = atl_ofi_prov_ep_get_name(prov, ep_idx);
         if (ret) {
@@ -642,7 +728,14 @@ atl_status_t atl_ofi_prov_eps_connect(atl_ofi_ctx_t& ctx,
         }
     }
 
-    if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi_shm) {
+    // Step 2: Branch depending on kvs_init_mode
+    if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::occp) {
+        LOG_DEBUG("Using OCCP for endpoint exchange, rank: ", pmi->get_rank());
+
+        ret = atl_ofi_prov_update_addr_table(
+            ctx, coord, prov_idx, pmi, ep_names, occp_client, occp_srv_port);
+    }
+    else if (ccl::global_data::env().kvs_init_mode == ccl::kvs_mode::pmix_ofi_shm) {
         int global_rank = coord.global_idx;
         int local_rank = coord.local_idx;
         int local_size = coord.local_count;
@@ -684,7 +777,6 @@ atl_status_t atl_ofi_prov_eps_connect(atl_ofi_ctx_t& ctx,
         LOG_DEBUG("Barrier after writing local addresses");
 
         // PMIx Put by Each Rank Individually
-        // Each rank publishes its local endpoints directly with a rank-specific key:
         {
             std::string key_str = "RANK_EP_ADDRS_" + std::to_string(global_rank);
             pmix_value_t value;
@@ -709,6 +801,8 @@ atl_status_t atl_ofi_prov_eps_connect(atl_ofi_ctx_t& ctx,
                                              prov_idx,
                                              pmi,
                                              ep_names,
+                                             nullptr,
+                                             0,
                                              shared_memory,
                                              length,
                                              total_named_eps,
@@ -716,6 +810,7 @@ atl_status_t atl_ofi_prov_eps_connect(atl_ofi_ctx_t& ctx,
                                              global_addr_offset);
     }
     else {
+        // PMIx/PMI path
         for (ep_idx = 0; ep_idx < named_ep_count; ep_idx++) {
             atl_ofi_prov_ep_t* ep = &(prov->eps[ep_idx]);
             int key = coord.global_idx * ATL_OFI_PMI_PROC_MULTIPLIER +
@@ -1180,7 +1275,9 @@ atl_status_t atl_ofi_prov_init(atl_ofi_ctx_t& ctx,
                                atl_ofi_prov_t* prov,
                                atl_attr_t* attr,
                                std::shared_ptr<ipmi> pmi,
-                               ep_names_t& ep_names) {
+                               ep_names_t& ep_names,
+                               occp_client_t* occp_client,
+                               uint16_t occp_srv_port) {
     struct fi_av_attr av_attr;
     size_t ep_idx = 0;
     ssize_t ret = 0;
@@ -1252,7 +1349,8 @@ atl_status_t atl_ofi_prov_init(atl_ofi_ctx_t& ctx,
     }
 
     /* TODO: make separate function to be called on CCL comm creation */
-    ret = atl_ofi_prov_eps_connect(ctx, coord, prov->idx, std::move(pmi), ep_names);
+    ret = atl_ofi_prov_eps_connect(
+        ctx, coord, prov->idx, std::move(pmi), ep_names, occp_client, occp_srv_port);
     if (ret) {
         LOG_ERROR("atl_ofi_prov_eps_connect error, prov_idx ", prov->idx);
         goto err;
@@ -1494,7 +1592,9 @@ atl_status_t atl_ofi_open_nw_provs(atl_ofi_ctx_t& ctx,
                                    atl_attr_t* attr,
                                    std::shared_ptr<ipmi> pmi,
                                    std::vector<ep_names_t>& ep_names,
-                                   bool log_on_error) {
+                                   bool log_on_error,
+                                   occp_client_t* occp_client,
+                                   uint16_t occp_srv_port) {
     atl_status_t ret = ATL_STATUS_SUCCESS;
     struct fi_info* prov_list = nullptr;
     struct fi_info* prov_iter = nullptr;
@@ -1645,9 +1745,16 @@ atl_status_t atl_ofi_open_nw_provs(atl_ofi_ctx_t& ctx,
         prov = &ctx.provs[prov_idx];
         prov->idx = prov_idx;
         prov->is_shm = 0;
-        ATL_CALL(
-            atl_ofi_prov_init(ctx, coord, final_provs[idx], prov, attr, pmi, ep_names[prov->idx]),
-            goto err);
+        ATL_CALL(atl_ofi_prov_init(ctx,
+                                   coord,
+                                   final_provs[idx],
+                                   prov,
+                                   attr,
+                                   pmi,
+                                   ep_names[prov->idx],
+                                   occp_client,
+                                   occp_srv_port),
+                 goto err);
     }
 
 exit:

@@ -51,6 +51,7 @@ public:
     std::string to_string();
 
     bool is_dev_close_by_pci(int domain, int bus, int dev, int func);
+    int get_numa_node_by_pci(int domain, int bus, int dev, int func);
 
     void membind_thread(int numa_node);
     int get_numa_node_by_cpu(int cpu);
@@ -59,10 +60,11 @@ public:
     void* alloc_memory(size_t alignment, size_t size, int numa_node_os_idx);
     void dealloc_memory(void* buffer);
 
+    size_t get_numa_node_count();
+
 private:
     bool is_valid_numa_node(int numa_node);
     bool check_membind(int numa_node);
-    size_t get_numa_node_count();
     hwloc_obj_t get_first_non_io_obj_by_pci(int domain, int bus, int dev, int func);
     std::string obj_to_string(hwloc_obj_t obj);
 

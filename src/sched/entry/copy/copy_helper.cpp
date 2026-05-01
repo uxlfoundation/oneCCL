@@ -17,7 +17,7 @@
 #include "sched/entry/copy/copy_helper.hpp"
 
 copy_attr::copy_attr()
-        : peer_rank(ccl_comm::invalid_rank),
+        : peer_rank(ccl::utils::invalid_rank),
           peer_buf_idx(0),
           direction(copy_direction::undefined),
           pt2pt_op(false),

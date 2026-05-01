@@ -1,11 +1,11 @@
 /*
  *
- * Copyright (C) 2019-2021 Intel Corporation
+ * Copyright (C) 2019-2025 Intel Corporation
  *
  * SPDX-License-Identifier: MIT
  *
  * @file zes_api.h
- * @version v1.13-r1.13.1
+ * @version v1.15-r1.15.31
  *
  */
 #ifndef _ZES_API_H
@@ -163,7 +163,9 @@ typedef enum _zes_structure_type_t
     ZES_STRUCTURE_TYPE_VF_UTIL_ENGINE_EXP2 = 0x00020010,                    ///< ::zes_vf_util_engine_exp2_t
     ZES_STRUCTURE_TYPE_VF_EXP2_CAPABILITIES = 0x00020011,                   ///< ::zes_vf_exp2_capabilities_t
     ZES_STRUCTURE_TYPE_DEVICE_ECC_DEFAULT_PROPERTIES_EXT = 0x00020012,      ///< ::zes_device_ecc_default_properties_ext_t
-    ZES_STRUCTURE_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_STRUCTURE_TYPE_* ENUMs
+    ZES_STRUCTURE_TYPE_PCI_LINK_SPEED_DOWNGRADE_EXT_STATE = 0x00020013,     ///< ::zes_pci_link_speed_downgrade_ext_state_t
+    ZES_STRUCTURE_TYPE_PCI_LINK_SPEED_DOWNGRADE_EXT_PROPERTIES = 0x00020014,///< ::zes_pci_link_speed_downgrade_ext_properties_t
+    ZES_STRUCTURE_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_STRUCTURE_TYPE_* ENUMs
 
 } zes_structure_type_t;
 
@@ -514,6 +516,14 @@ typedef struct _zes_temp_config_t zes_temp_config_t;
 typedef struct _zes_device_ecc_default_properties_ext_t zes_device_ecc_default_properties_ext_t;
 
 ///////////////////////////////////////////////////////////////////////////////
+/// @brief Forward-declare zes_pci_link_speed_downgrade_ext_state_t
+typedef struct _zes_pci_link_speed_downgrade_ext_state_t zes_pci_link_speed_downgrade_ext_state_t;
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Forward-declare zes_pci_link_speed_downgrade_ext_properties_t
+typedef struct _zes_pci_link_speed_downgrade_ext_properties_t zes_pci_link_speed_downgrade_ext_properties_t;
+
+///////////////////////////////////////////////////////////////////////////////
 /// @brief Forward-declare zes_power_limit_ext_desc_t
 typedef struct _zes_power_limit_ext_desc_t zes_power_limit_ext_desc_t;
 
@@ -587,7 +597,7 @@ typedef uint32_t zes_init_flags_t;
 typedef enum _zes_init_flag_t
 {
     ZES_INIT_FLAG_PLACEHOLDER = ZE_BIT(0),                                  ///< placeholder for future use
-    ZES_INIT_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_INIT_FLAG_* ENUMs
+    ZES_INIT_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_INIT_FLAG_* ENUMs
 
 } zes_init_flag_t;
 
@@ -596,7 +606,7 @@ typedef enum _zes_init_flag_t
 /// 
 /// @details
 ///     - The application must call this function or ::zeInit with the
-///       ::ZES_ENABLE_SYSMAN environment variable set before calling any other
+///       `ZES_ENABLE_SYSMAN` environment variable set before calling any other
 ///       sysman function.
 ///     - If this function is not called then all other sysman functions will
 ///       return ::ZE_RESULT_ERROR_UNINITIALIZED.
@@ -615,10 +625,18 @@ typedef enum _zes_init_flag_t
 ///     - ::ZE_RESULT_SUCCESS
 ///     - ::ZE_RESULT_ERROR_UNINITIALIZED
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
-///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `0x1 < flags`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ZE_APIEXPORT ze_result_t ZE_APICALL
 zesInit(
@@ -644,6 +662,14 @@ zesInit(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pCount`
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -687,6 +713,14 @@ typedef struct _zes_driver_extension_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDriver`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -720,6 +754,14 @@ zesDriverGetExtensionProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDriver`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -746,8 +788,8 @@ zesDriverGetExtensionFunctionAddress(
 ///     - Multiple calls to this function will return identical sysman device
 ///       handles, in the same order.
 ///     - The number and order of handles returned from this function is NOT
-///       affected by the ::ZE_AFFINITY_MASK, ::ZE_ENABLE_PCI_ID_DEVICE_ORDER,
-///       or ::ZE_FLAT_DEVICE_HIERARCHY environment variables.
+///       affected by the `ZE_AFFINITY_MASK`, `ZE_ENABLE_PCI_ID_DEVICE_ORDER`,
+///       or `ZE_FLAT_DEVICE_HIERARCHY` environment variables.
 ///     - The application may call this function from simultaneous threads.
 ///     - The implementation of this function should be lock-free.
 /// 
@@ -757,6 +799,14 @@ zesDriverGetExtensionFunctionAddress(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDriver`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -798,7 +848,7 @@ typedef enum _zes_engine_type_flag_t
     ZES_ENGINE_TYPE_FLAG_MEDIA = ZE_BIT(3),                                 ///< Engines that process media workloads.
     ZES_ENGINE_TYPE_FLAG_DMA = ZE_BIT(4),                                   ///< Engines that copy blocks of data.
     ZES_ENGINE_TYPE_FLAG_RENDER = ZE_BIT(5),                                ///< Engines that can process both 3D content and compute kernels.
-    ZES_ENGINE_TYPE_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_ENGINE_TYPE_FLAG_* ENUMs
+    ZES_ENGINE_TYPE_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_ENGINE_TYPE_FLAG_* ENUMs
 
 } zes_engine_type_flag_t;
 
@@ -809,7 +859,7 @@ typedef enum _zes_repair_status_t
     ZES_REPAIR_STATUS_UNSUPPORTED = 0,                                      ///< The device does not support in-field repairs.
     ZES_REPAIR_STATUS_NOT_PERFORMED = 1,                                    ///< The device has never been repaired.
     ZES_REPAIR_STATUS_PERFORMED = 2,                                        ///< The device has been repaired.
-    ZES_REPAIR_STATUS_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_REPAIR_STATUS_* ENUMs
+    ZES_REPAIR_STATUS_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_REPAIR_STATUS_* ENUMs
 
 } zes_repair_status_t;
 
@@ -821,7 +871,7 @@ typedef enum _zes_reset_reason_flag_t
     ZES_RESET_REASON_FLAG_WEDGED = ZE_BIT(0),                               ///< The device needs to be reset because one or more parts of the hardware
                                                                             ///< is wedged
     ZES_RESET_REASON_FLAG_REPAIR = ZE_BIT(1),                               ///< The device needs to be reset in order to complete in-field repairs
-    ZES_RESET_REASON_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_RESET_REASON_FLAG_* ENUMs
+    ZES_RESET_REASON_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_RESET_REASON_FLAG_* ENUMs
 
 } zes_reset_reason_flag_t;
 
@@ -832,7 +882,7 @@ typedef enum _zes_reset_type_t
     ZES_RESET_TYPE_WARM = 0,                                                ///< Apply warm reset
     ZES_RESET_TYPE_COLD = 1,                                                ///< Apply cold reset
     ZES_RESET_TYPE_FLR = 2,                                                 ///< Apply FLR reset
-    ZES_RESET_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_RESET_TYPE_* ENUMs
+    ZES_RESET_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_RESET_TYPE_* ENUMs
 
 } zes_reset_type_t;
 
@@ -879,7 +929,7 @@ typedef enum _zes_device_type_t
     ZES_DEVICE_TYPE_FPGA = 3,                                               ///< Field Programmable Gate Array
     ZES_DEVICE_TYPE_MCA = 4,                                                ///< Memory Copy Accelerator
     ZES_DEVICE_TYPE_VPU = 5,                                                ///< Vision Processing Unit
-    ZES_DEVICE_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_DEVICE_TYPE_* ENUMs
+    ZES_DEVICE_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_DEVICE_TYPE_* ENUMs
 
 } zes_device_type_t;
 
@@ -892,7 +942,7 @@ typedef enum _zes_device_property_flag_t
     ZES_DEVICE_PROPERTY_FLAG_SUBDEVICE = ZE_BIT(1),                         ///< Device handle used for query represents a sub-device.
     ZES_DEVICE_PROPERTY_FLAG_ECC = ZE_BIT(2),                               ///< Device supports error correction memory access.
     ZES_DEVICE_PROPERTY_FLAG_ONDEMANDPAGING = ZE_BIT(3),                    ///< Device supports on-demand page-faulting.
-    ZES_DEVICE_PROPERTY_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_DEVICE_PROPERTY_FLAG_* ENUMs
+    ZES_DEVICE_PROPERTY_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_DEVICE_PROPERTY_FLAG_* ENUMs
 
 } zes_device_property_flag_t;
 
@@ -957,6 +1007,14 @@ typedef struct _zes_device_ext_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -981,6 +1039,14 @@ zesDeviceGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1011,6 +1077,12 @@ zesDeviceGetState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
@@ -1046,6 +1118,12 @@ zesDeviceReset(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1103,6 +1181,14 @@ typedef struct _zes_process_state_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1176,7 +1262,7 @@ typedef enum _zes_pci_link_status_t
     ZES_PCI_LINK_STATUS_QUALITY_ISSUES = 2,                                 ///< The link is up but has quality and/or bandwidth degradation
     ZES_PCI_LINK_STATUS_STABILITY_ISSUES = 3,                               ///< The link has stability issues and preventing workloads making forward
                                                                             ///< progress
-    ZES_PCI_LINK_STATUS_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_PCI_LINK_STATUS_* ENUMs
+    ZES_PCI_LINK_STATUS_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_PCI_LINK_STATUS_* ENUMs
 
 } zes_pci_link_status_t;
 
@@ -1187,7 +1273,7 @@ typedef enum _zes_pci_link_qual_issue_flag_t
 {
     ZES_PCI_LINK_QUAL_ISSUE_FLAG_REPLAYS = ZE_BIT(0),                       ///< A significant number of replays are occurring
     ZES_PCI_LINK_QUAL_ISSUE_FLAG_SPEED = ZE_BIT(1),                         ///< There is a degradation in the maximum bandwidth of the link
-    ZES_PCI_LINK_QUAL_ISSUE_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_PCI_LINK_QUAL_ISSUE_FLAG_* ENUMs
+    ZES_PCI_LINK_QUAL_ISSUE_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_PCI_LINK_QUAL_ISSUE_FLAG_* ENUMs
 
 } zes_pci_link_qual_issue_flag_t;
 
@@ -1197,7 +1283,7 @@ typedef uint32_t zes_pci_link_stab_issue_flags_t;
 typedef enum _zes_pci_link_stab_issue_flag_t
 {
     ZES_PCI_LINK_STAB_ISSUE_FLAG_RETRAINING = ZE_BIT(0),                    ///< Link retraining has occurred to deal with quality issues
-    ZES_PCI_LINK_STAB_ISSUE_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_PCI_LINK_STAB_ISSUE_FLAG_* ENUMs
+    ZES_PCI_LINK_STAB_ISSUE_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_PCI_LINK_STAB_ISSUE_FLAG_* ENUMs
 
 } zes_pci_link_stab_issue_flag_t;
 
@@ -1230,7 +1316,7 @@ typedef enum _zes_pci_bar_type_t
     ZES_PCI_BAR_TYPE_MMIO = 0,                                              ///< MMIO registers
     ZES_PCI_BAR_TYPE_ROM = 1,                                               ///< ROM aperture
     ZES_PCI_BAR_TYPE_MEM = 2,                                               ///< Device memory
-    ZES_PCI_BAR_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_PCI_BAR_TYPE_* ENUMs
+    ZES_PCI_BAR_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_PCI_BAR_TYPE_* ENUMs
 
 } zes_pci_bar_type_t;
 
@@ -1314,6 +1400,14 @@ typedef struct _zes_pci_stats_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1337,6 +1431,14 @@ zesDevicePciGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1360,6 +1462,14 @@ zesDevicePciGetState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1391,6 +1501,13 @@ zesDevicePciGetBars(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1423,7 +1540,7 @@ typedef enum _zes_overclock_domain_t
     ZES_OVERCLOCK_DOMAIN_GPU_MEDIA = 64,                                    ///< Overclocking a GPU with media assets on its own PLL/VR.
     ZES_OVERCLOCK_DOMAIN_VRAM = 128,                                        ///< Overclocking device local memory.
     ZES_OVERCLOCK_DOMAIN_ADM = 256,                                         ///< Overclocking LLC/L4 cache.
-    ZES_OVERCLOCK_DOMAIN_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_OVERCLOCK_DOMAIN_* ENUMs
+    ZES_OVERCLOCK_DOMAIN_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_OVERCLOCK_DOMAIN_* ENUMs
 
 } zes_overclock_domain_t;
 
@@ -1446,7 +1563,7 @@ typedef enum _zes_overclock_control_t
     ZES_OVERCLOCK_CONTROL_TEMP_LIMIT = 512,                                 ///< This control changes the value of TjMax.
     ZES_OVERCLOCK_CONTROL_ITD_DISABLE = 1024,                               ///< This control permits disabling the adaptive voltage feature ITD
     ZES_OVERCLOCK_CONTROL_ACM_DISABLE = 2048,                               ///< This control permits disabling the adaptive voltage feature ACM.
-    ZES_OVERCLOCK_CONTROL_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_OVERCLOCK_CONTROL_* ENUMs
+    ZES_OVERCLOCK_CONTROL_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_OVERCLOCK_CONTROL_* ENUMs
 
 } zes_overclock_control_t;
 
@@ -1460,7 +1577,7 @@ typedef enum _zes_overclock_mode_t
     ZES_OVERCLOCK_MODE_MODE_UNAVAILABLE = 4,                                ///< Overclocking is unavailable at this time since the system is running
                                                                             ///< on battery.
     ZES_OVERCLOCK_MODE_MODE_DISABLED = 5,                                   ///< Overclock mode is disabled.
-    ZES_OVERCLOCK_MODE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_OVERCLOCK_MODE_* ENUMs
+    ZES_OVERCLOCK_MODE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_OVERCLOCK_MODE_* ENUMs
 
 } zes_overclock_mode_t;
 
@@ -1473,7 +1590,7 @@ typedef enum _zes_control_state_t
     ZES_CONTROL_STATE_STATE_ACTIVE = 2,                                     ///< The overclock control has been set and it is active.
     ZES_CONTROL_STATE_STATE_DISABLED = 3,                                   ///< The overclock control value has been disabled due to the current power
                                                                             ///< configuration (typically when running on DC).
-    ZES_CONTROL_STATE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_CONTROL_STATE_* ENUMs
+    ZES_CONTROL_STATE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_CONTROL_STATE_* ENUMs
 
 } zes_control_state_t;
 
@@ -1486,7 +1603,7 @@ typedef enum _zes_pending_action_t
     ZES_PENDING_ACTION_PENDING_COLD_RESET = 2,                              ///< The requested change requires a device cold reset (hotplug, system
                                                                             ///< boot).
     ZES_PENDING_ACTION_PENDING_WARM_RESET = 3,                              ///< The requested change requires a device warm reset (PCIe FLR).
-    ZES_PENDING_ACTION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_PENDING_ACTION_* ENUMs
+    ZES_PENDING_ACTION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_PENDING_ACTION_* ENUMs
 
 } zes_pending_action_t;
 
@@ -1501,7 +1618,7 @@ typedef enum _zes_vf_program_type_t
                                                                             ///< the frequency of those points cannot be changed
     ZES_VF_PROGRAM_TYPE_VF_VOLT_FIXED = 2,                                  ///< Can only program the frequency for the V-F points that is reads back -
                                                                             ///< the voltage of each point cannot be changed.
-    ZES_VF_PROGRAM_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_VF_PROGRAM_TYPE_* ENUMs
+    ZES_VF_PROGRAM_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_VF_PROGRAM_TYPE_* ENUMs
 
 } zes_vf_program_type_t;
 
@@ -1511,7 +1628,7 @@ typedef enum _zes_vf_type_t
 {
     ZES_VF_TYPE_VOLT = 0,                                                   ///< VF Voltage point
     ZES_VF_TYPE_FREQ = 1,                                                   ///< VF Frequency point
-    ZES_VF_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_VF_TYPE_* ENUMs
+    ZES_VF_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_VF_TYPE_* ENUMs
 
 } zes_vf_type_t;
 
@@ -1522,7 +1639,7 @@ typedef enum _zes_vf_array_type_t
     ZES_VF_ARRAY_TYPE_USER_VF_ARRAY = 0,                                    ///< User V-F array
     ZES_VF_ARRAY_TYPE_DEFAULT_VF_ARRAY = 1,                                 ///< Default V-F array
     ZES_VF_ARRAY_TYPE_LIVE_VF_ARRAY = 2,                                    ///< Live V-F array
-    ZES_VF_ARRAY_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_VF_ARRAY_TYPE_* ENUMs
+    ZES_VF_ARRAY_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_VF_ARRAY_TYPE_* ENUMs
 
 } zes_vf_array_type_t;
 
@@ -1605,6 +1722,13 @@ typedef struct _zes_vf_property_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -1627,6 +1751,13 @@ zesDeviceSetOverclockWaiver(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1655,10 +1786,18 @@ zesDeviceGetOverclockDomains(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_OVERCLOCK_DOMAIN_ADM < domainType`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pAvailableControls`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -1686,6 +1825,13 @@ zesDeviceGetOverclockControls(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -1710,6 +1856,13 @@ zesDeviceResetOverclockSettings(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1744,6 +1897,14 @@ zesDeviceReadOverclockState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1777,6 +1938,13 @@ zesDeviceEnumOverclockDomains(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1802,6 +1970,13 @@ zesOverclockGetDomainProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -1827,10 +2002,18 @@ zesOverclockGetDomainVFProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_OVERCLOCK_CONTROL_ACM_DISABLE < DomainControl`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pControlProperties`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -1855,10 +2038,18 @@ zesOverclockGetDomainControlProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_OVERCLOCK_CONTROL_ACM_DISABLE < DomainControl`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pValue`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -1883,10 +2074,18 @@ zesOverclockGetControlCurrentValue(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_OVERCLOCK_CONTROL_ACM_DISABLE < DomainControl`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pValue`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -1912,10 +2111,18 @@ zesOverclockGetControlPendingValue(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_OVERCLOCK_CONTROL_ACM_DISABLE < DomainControl`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pPendingAction`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -1942,10 +2149,18 @@ zesOverclockSetControlUserValue(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_OVERCLOCK_CONTROL_ACM_DISABLE < DomainControl`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pControlState`
 ///         + `nullptr == pPendingAction`
@@ -1973,11 +2188,19 @@ zesOverclockGetControlState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_VF_TYPE_FREQ < VFType`
 ///         + `::ZES_VF_ARRAY_TYPE_LIVE_VF_ARRAY < VFArrayType`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == PointValue`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -2005,10 +2228,18 @@ zesOverclockGetVFPointValues(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDomainHandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_VF_TYPE_FREQ < VFType`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
 ///         + Overclocking is not supported on this control domain
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -2036,7 +2267,7 @@ typedef enum _zes_diag_result_t
     ZES_DIAG_RESULT_FAIL_CANT_REPAIR = 2,                                   ///< Diagnostic had problems setting up repairs
     ZES_DIAG_RESULT_REBOOT_FOR_REPAIR = 3,                                  ///< Diagnostics found errors, setup for repair and reboot is required to
                                                                             ///< complete the process
-    ZES_DIAG_RESULT_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_DIAG_RESULT_* ENUMs
+    ZES_DIAG_RESULT_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_DIAG_RESULT_* ENUMs
 
 } zes_diag_result_t;
 
@@ -2091,6 +2322,14 @@ typedef struct _zes_diag_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2124,6 +2363,14 @@ zesDeviceEnumDiagnosticTestSuites(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDiagnostics`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2152,6 +2399,14 @@ zesDiagnosticsGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDiagnostics`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2192,6 +2447,13 @@ zesDiagnosticsGetTests(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDiagnostics`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2222,7 +2484,7 @@ typedef enum _zes_device_ecc_state_t
     ZES_DEVICE_ECC_STATE_UNAVAILABLE = 0,                                   ///< None
     ZES_DEVICE_ECC_STATE_ENABLED = 1,                                       ///< ECC enabled.
     ZES_DEVICE_ECC_STATE_DISABLED = 2,                                      ///< ECC disabled.
-    ZES_DEVICE_ECC_STATE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_DEVICE_ECC_STATE_* ENUMs
+    ZES_DEVICE_ECC_STATE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_DEVICE_ECC_STATE_* ENUMs
 
 } zes_device_ecc_state_t;
 
@@ -2234,7 +2496,7 @@ typedef enum _zes_device_action_t
     ZES_DEVICE_ACTION_WARM_CARD_RESET = 1,                                  ///< Warm reset of the card.
     ZES_DEVICE_ACTION_COLD_CARD_RESET = 2,                                  ///< Cold reset of the card.
     ZES_DEVICE_ACTION_COLD_SYSTEM_REBOOT = 3,                               ///< Cold reboot of the system.
-    ZES_DEVICE_ACTION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_DEVICE_ACTION_* ENUMs
+    ZES_DEVICE_ACTION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_DEVICE_ACTION_* ENUMs
 
 } zes_device_action_t;
 
@@ -2275,6 +2537,14 @@ typedef struct _zes_device_ecc_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2298,6 +2568,14 @@ zesDeviceEccAvailable(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2321,6 +2599,14 @@ zesDeviceEccConfigurable(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2346,6 +2632,14 @@ zesDeviceGetEccState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2353,6 +2647,7 @@ zesDeviceGetEccState(
 ///         + `nullptr == pState`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_DEVICE_ECC_STATE_DISABLED < newState->state`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_WARNING_ACTION_REQUIRED
 ///         + User must look at the pendingAction attribute of pState & perform the action required to complete the ECC state change.
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -2411,7 +2706,7 @@ typedef enum _zes_engine_group_t
                                                                             ///< engines so activity of such an engine may not be indicative of the
                                                                             ///< underlying resource utilization - use ::ZES_ENGINE_GROUP_MEDIA_ALL for
                                                                             ///< that.
-    ZES_ENGINE_GROUP_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_ENGINE_GROUP_* ENUMs
+    ZES_ENGINE_GROUP_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_ENGINE_GROUP_* ENUMs
 
 } zes_engine_group_t;
 
@@ -2470,6 +2765,14 @@ typedef struct _zes_engine_stats_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2503,6 +2806,14 @@ zesDeviceEnumEngineGroups(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hEngine`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2528,6 +2839,14 @@ zesEngineGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hEngine`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2579,7 +2898,7 @@ typedef enum _zes_event_type_flag_t
     ZES_EVENT_TYPE_FLAG_DEVICE_RESET_REQUIRED = ZE_BIT(14),                 ///< Event is triggered when the device needs to be reset (use
                                                                             ///< ::zesDeviceGetState() to determine the reasons for the reset).
     ZES_EVENT_TYPE_FLAG_SURVIVABILITY_MODE_DETECTED = ZE_BIT(15),           ///< Event is triggered when graphics driver encounter an error condition.
-    ZES_EVENT_TYPE_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_EVENT_TYPE_FLAG_* ENUMs
+    ZES_EVENT_TYPE_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_EVENT_TYPE_FLAG_* ENUMs
 
 } zes_event_type_flag_t;
 
@@ -2596,10 +2915,19 @@ typedef enum _zes_event_type_flag_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `0xffff < events`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ZE_APIEXPORT ze_result_t ZE_APICALL
 zesDeviceEventRegister(
     zes_device_handle_t hDevice,                                            ///< [in] The device handle.
@@ -2619,6 +2947,12 @@ zesDeviceEventRegister(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDriver`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2664,6 +2998,12 @@ zesDriverEventListen(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDriver`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2726,7 +3066,7 @@ typedef enum _zes_fabric_port_status_t
     ZES_FABRIC_PORT_STATUS_FAILED = 3,                                      ///< Port connection instabilities are preventing workloads making forward
                                                                             ///< progress
     ZES_FABRIC_PORT_STATUS_DISABLED = 4,                                    ///< The port is configured down
-    ZES_FABRIC_PORT_STATUS_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FABRIC_PORT_STATUS_* ENUMs
+    ZES_FABRIC_PORT_STATUS_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FABRIC_PORT_STATUS_* ENUMs
 
 } zes_fabric_port_status_t;
 
@@ -2737,7 +3077,7 @@ typedef enum _zes_fabric_port_qual_issue_flag_t
 {
     ZES_FABRIC_PORT_QUAL_ISSUE_FLAG_LINK_ERRORS = ZE_BIT(0),                ///< Excessive link errors are occurring
     ZES_FABRIC_PORT_QUAL_ISSUE_FLAG_SPEED = ZE_BIT(1),                      ///< There is a degradation in the bitrate and/or width of the link
-    ZES_FABRIC_PORT_QUAL_ISSUE_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FABRIC_PORT_QUAL_ISSUE_FLAG_* ENUMs
+    ZES_FABRIC_PORT_QUAL_ISSUE_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FABRIC_PORT_QUAL_ISSUE_FLAG_* ENUMs
 
 } zes_fabric_port_qual_issue_flag_t;
 
@@ -2757,7 +3097,7 @@ typedef enum _zes_fabric_port_failure_flag_t
                                                                             ///< period of time. Driver will allow port to continue to train, but will
                                                                             ///< not enable the port for use until the port has been disabled and
                                                                             ///< subsequently re-enabled using ::zesFabricPortSetConfig().
-    ZES_FABRIC_PORT_FAILURE_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FABRIC_PORT_FAILURE_FLAG_* ENUMs
+    ZES_FABRIC_PORT_FAILURE_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FABRIC_PORT_FAILURE_FLAG_* ENUMs
 
 } zes_fabric_port_failure_flag_t;
 
@@ -2907,6 +3247,14 @@ typedef struct _zes_fabric_port_error_counters_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2940,6 +3288,14 @@ zesDeviceEnumFabricPorts(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPort`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2963,6 +3319,14 @@ zesFabricPortGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPort`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -2987,6 +3351,14 @@ zesFabricPortGetLinkType(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPort`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3010,6 +3382,13 @@ zesFabricPortGetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPort`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3036,6 +3415,14 @@ zesFabricPortSetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPort`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3059,6 +3446,13 @@ zesFabricPortGetState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPort`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3087,6 +3481,13 @@ zesFabricPortGetThroughput(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPort`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3112,6 +3513,14 @@ zesFabricPortGetFabricErrorCounters(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3142,7 +3551,7 @@ typedef enum _zes_fan_speed_mode_t
     ZES_FAN_SPEED_MODE_FIXED = 1,                                           ///< The fan speed is currently set to a fixed value
     ZES_FAN_SPEED_MODE_TABLE = 2,                                           ///< The fan speed is currently controlled dynamically by hardware based on
                                                                             ///< a temp/speed table
-    ZES_FAN_SPEED_MODE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FAN_SPEED_MODE_* ENUMs
+    ZES_FAN_SPEED_MODE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FAN_SPEED_MODE_* ENUMs
 
 } zes_fan_speed_mode_t;
 
@@ -3152,7 +3561,7 @@ typedef enum _zes_fan_speed_units_t
 {
     ZES_FAN_SPEED_UNITS_RPM = 0,                                            ///< The fan speed is in units of revolutions per minute (rpm)
     ZES_FAN_SPEED_UNITS_PERCENT = 1,                                        ///< The fan speed is a percentage of the maximum speed of the fan
-    ZES_FAN_SPEED_UNITS_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FAN_SPEED_UNITS_* ENUMs
+    ZES_FAN_SPEED_UNITS_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FAN_SPEED_UNITS_* ENUMs
 
 } zes_fan_speed_units_t;
 
@@ -3244,6 +3653,14 @@ typedef struct _zes_fan_config_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3277,6 +3694,14 @@ zesDeviceEnumFans(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFan`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3301,6 +3726,14 @@ zesFanGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFan`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3325,6 +3758,13 @@ zesFanGetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFan`
 ///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
@@ -3348,6 +3788,12 @@ zesFanSetDefaultMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFan`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3376,6 +3822,11 @@ zesFanSetFixedSpeedMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFan`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3405,10 +3856,18 @@ zesFanSetSpeedTableMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFan`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_FAN_SPEED_UNITS_PERCENT < units`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
 ///         + `nullptr == pSpeed`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -3461,6 +3920,14 @@ typedef struct _zes_firmware_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3494,6 +3961,14 @@ zesDeviceEnumFirmwares(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFirmware`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3522,6 +3997,13 @@ zesFirmwareGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFirmware`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3548,6 +4030,14 @@ zesFirmwareFlash(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFirmware`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3574,6 +4064,14 @@ zesFirmwareGetFlashProgress(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFirmware`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3599,7 +4097,7 @@ typedef enum _zes_freq_domain_t
     ZES_FREQ_DOMAIN_GPU = 0,                                                ///< GPU Core Domain.
     ZES_FREQ_DOMAIN_MEMORY = 1,                                             ///< Local Memory Domain.
     ZES_FREQ_DOMAIN_MEDIA = 2,                                              ///< GPU Media Domain.
-    ZES_FREQ_DOMAIN_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FREQ_DOMAIN_* ENUMs
+    ZES_FREQ_DOMAIN_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FREQ_DOMAIN_* ENUMs
 
 } zes_freq_domain_t;
 
@@ -3673,7 +4171,10 @@ typedef enum _zes_freq_throttle_reason_flag_t
     ZES_FREQ_THROTTLE_REASON_FLAG_SW_RANGE = ZE_BIT(5),                     ///< frequency throttled due to software supplied frequency range
     ZES_FREQ_THROTTLE_REASON_FLAG_HW_RANGE = ZE_BIT(6),                     ///< frequency throttled due to a sub block that has a lower frequency
                                                                             ///< range when it receives clocks
-    ZES_FREQ_THROTTLE_REASON_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FREQ_THROTTLE_REASON_FLAG_* ENUMs
+    ZES_FREQ_THROTTLE_REASON_FLAG_VOLTAGE = ZE_BIT(7),                      ///< frequency throttled due to voltage excursion
+    ZES_FREQ_THROTTLE_REASON_FLAG_THERMAL = ZE_BIT(8),                      ///< frequency throttled due to thermal conditions
+    ZES_FREQ_THROTTLE_REASON_FLAG_POWER = ZE_BIT(9),                        ///< frequency throttled due to power constraints
+    ZES_FREQ_THROTTLE_REASON_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FREQ_THROTTLE_REASON_FLAG_* ENUMs
 
 } zes_freq_throttle_reason_flag_t;
 
@@ -3745,7 +4246,7 @@ typedef enum _zes_oc_mode_t
                                                                             ///< specified overclock values. This mode disables OVERRIDE and
                                                                             ///< INTERPOLATIVE modes. This mode can damage the part, most of the
                                                                             ///< protections are disabled on this mode.
-    ZES_OC_MODE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_OC_MODE_* ENUMs
+    ZES_OC_MODE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_OC_MODE_* ENUMs
 
 } zes_oc_mode_t;
 
@@ -3801,6 +4302,14 @@ typedef struct _zes_oc_capabilities_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3834,6 +4343,14 @@ zesDeviceEnumFrequencyDomains(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3860,6 +4377,14 @@ zesFrequencyGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3891,6 +4416,14 @@ zesFrequencyGetAvailableClocks(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3918,6 +4451,13 @@ zesFrequencyGetRange(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3945,6 +4485,14 @@ zesFrequencySetRange(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3968,6 +4516,14 @@ zesFrequencyGetState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -3993,6 +4549,14 @@ zesFrequencyGetThrottleTime(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4018,6 +4582,11 @@ zesFrequencyOcGetCapabilities(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4054,6 +4623,11 @@ zesFrequencyOcGetFrequencyTarget(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -4087,6 +4661,11 @@ zesFrequencyOcSetFrequencyTarget(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4125,6 +4704,11 @@ zesFrequencyOcGetVoltageTarget(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -4160,10 +4744,16 @@ zesFrequencyOcSetVoltageTarget(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_OC_MODE_FIXED < CurrentOcMode`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
 ///         + Overclocking is not supported on this frequency domain (see the `isOcSupported` member of ::zes_oc_capabilities_t).
 ///         + The specified voltage and/or frequency overclock settings exceed the hardware values (see the `maxOcFrequency`, `maxOcVoltage`, `minOcVoltageOffset` and `maxOcVoltageOffset` members of ::zes_oc_capabilities_t).
@@ -4192,6 +4782,11 @@ zesFrequencyOcSetMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4224,6 +4819,13 @@ zesFrequencyOcGetMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4253,6 +4855,10 @@ zesFrequencyOcGetIccMax(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -4284,6 +4890,13 @@ zesFrequencyOcSetIccMax(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4312,6 +4925,10 @@ zesFrequencyOcGetTjMax(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFrequency`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -4390,6 +5007,14 @@ typedef struct _zes_led_state_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4423,6 +5048,14 @@ zesDeviceEnumLeds(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hLed`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4446,6 +5079,14 @@ zesLedGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hLed`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4469,6 +5110,13 @@ zesLedGetState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hLed`
 ///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
@@ -4492,6 +5140,12 @@ zesLedSetState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hLed`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4537,7 +5191,7 @@ typedef enum _zes_mem_type_t
     ZES_MEM_TYPE_GDDR6 = 17,                                                ///< GDDR6 memory
     ZES_MEM_TYPE_GDDR6X = 18,                                               ///< GDDR6X memory
     ZES_MEM_TYPE_GDDR7 = 19,                                                ///< GDDR7 memory
-    ZES_MEM_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_MEM_TYPE_* ENUMs
+    ZES_MEM_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_MEM_TYPE_* ENUMs
 
 } zes_mem_type_t;
 
@@ -4547,7 +5201,7 @@ typedef enum _zes_mem_loc_t
 {
     ZES_MEM_LOC_SYSTEM = 0,                                                 ///< System memory
     ZES_MEM_LOC_DEVICE = 1,                                                 ///< On board local device memory
-    ZES_MEM_LOC_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_MEM_LOC_* ENUMs
+    ZES_MEM_LOC_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_MEM_LOC_* ENUMs
 
 } zes_mem_loc_t;
 
@@ -4562,7 +5216,7 @@ typedef enum _zes_mem_health_t
     ZES_MEM_HEALTH_CRITICAL = 3,                                            ///< Operating with reduced memory to cover banks with too many
                                                                             ///< uncorrectable errors.
     ZES_MEM_HEALTH_REPLACE = 4,                                             ///< Device should be replaced due to excessive uncorrectable errors.
-    ZES_MEM_HEALTH_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_MEM_HEALTH_* ENUMs
+    ZES_MEM_HEALTH_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_MEM_HEALTH_* ENUMs
 
 } zes_mem_health_t;
 
@@ -4578,9 +5232,9 @@ typedef struct _zes_mem_properties_t
                                                                             ///< that the resource is on the device of the calling Sysman handle
     uint32_t subdeviceId;                                                   ///< [out] If onSubdevice is true, this gives the ID of the sub-device
     zes_mem_loc_t location;                                                 ///< [out] Location of this memory (system, device)
-    uint64_t physicalSize;                                                  ///< [out] Physical memory size in bytes. A value of 0 indicates that this
-                                                                            ///< property is not known. However, a call to ::zesMemoryGetState() will
-                                                                            ///< correctly return the total size of usable memory.
+    uint64_t physicalSize;                                                  ///< [out] Physical memory capacity in bytes. A value of 0 indicates that
+                                                                            ///< this property is not known. However, a call to zesMemoryGetState()
+                                                                            ///< will return the available free physical memory.
     int32_t busWidth;                                                       ///< [out] Width of the memory bus. A value of -1 means that this property
                                                                             ///< is unknown.
     int32_t numChannels;                                                    ///< [out] The number of memory channels. A value of -1 means that this
@@ -4592,17 +5246,21 @@ typedef struct _zes_mem_properties_t
 /// @brief Memory state - health, allocated
 /// 
 /// @details
-///     - Percent allocation is given by 100 * (size - free / size.
-///     - Percent free is given by 100 * free / size.
+///     - Percent free is given by 100 * free / pysical mem size.
 typedef struct _zes_mem_state_t
 {
     zes_structure_type_t stype;                                             ///< [in] type of this structure
     const void* pNext;                                                      ///< [in][optional] must be null or a pointer to an extension-specific
                                                                             ///< structure (i.e. contains stype and pNext).
     zes_mem_health_t health;                                                ///< [out] Indicates the health of the memory
-    uint64_t free;                                                          ///< [out] The free memory in bytes
+    uint64_t free;                                                          ///< [out] The free physical memory in bytes
     uint64_t size;                                                          ///< [out] The total allocatable memory in bytes (can be less than the
-                                                                            ///< `physicalSize` member of ::zes_mem_properties_t)
+                                                                            ///< `physicalSize` member of ::zes_mem_properties_t). *DEPRECATED* 
+                                                                            ///< This member can no longer track the allocatable memory reliably.
+                                                                            ///< Clients depending on this information can use the 
+                                                                            ///< zeDeviceGetMemoryProperties with 
+                                                                            ///< ze_device_usablemem_size_ext_properties_t extention to get information
+                                                                            ///< of the available usable memory.
 
 } zes_mem_state_t;
 
@@ -4660,6 +5318,14 @@ typedef struct _zes_mem_ext_bandwidth_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4693,6 +5359,14 @@ zesDeviceEnumMemoryModules(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hMemory`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4716,6 +5390,14 @@ zesMemoryGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hMemory`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4739,6 +5421,13 @@ zesMemoryGetState(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hMemory`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4789,6 +5478,14 @@ typedef struct _zes_perf_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4822,6 +5519,14 @@ zesDeviceEnumPerformanceFactorDomains(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPerf`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4846,6 +5551,14 @@ zesPerformanceFactorGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPerf`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -4875,6 +5588,14 @@ zesPerformanceFactorGetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPerf`
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -4900,7 +5621,7 @@ typedef enum _zes_power_domain_t
     ZES_POWER_DOMAIN_STACK = 3,                                             ///< The PUnit power domain is a stack-level power domain.
     ZES_POWER_DOMAIN_MEMORY = 4,                                            ///< The PUnit power domain is a memory-level power domain.
     ZES_POWER_DOMAIN_GPU = 5,                                               ///< The PUnit power domain is a GPU-level power domain.
-    ZES_POWER_DOMAIN_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_POWER_DOMAIN_* ENUMs
+    ZES_POWER_DOMAIN_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_POWER_DOMAIN_* ENUMs
 
 } zes_power_domain_t;
 
@@ -4920,7 +5641,7 @@ typedef enum _zes_power_level_t
     ZES_POWER_LEVEL_INSTANTANEOUS = 4,                                      ///< The PUnit predicts effective power draw using the current device
                                                                             ///< configuration (frequency, voltage, etc...) & throttles proactively to
                                                                             ///< stay within the specified limit.
-    ZES_POWER_LEVEL_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_POWER_LEVEL_* ENUMs
+    ZES_POWER_LEVEL_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_POWER_LEVEL_* ENUMs
 
 } zes_power_level_t;
 
@@ -4932,7 +5653,7 @@ typedef enum _zes_power_source_t
                                                                             ///< battery powered.
     ZES_POWER_SOURCE_MAINS = 1,                                             ///< Limit active only when the device is mains powered.
     ZES_POWER_SOURCE_BATTERY = 2,                                           ///< Limit active only when the device is battery powered.
-    ZES_POWER_SOURCE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_POWER_SOURCE_* ENUMs
+    ZES_POWER_SOURCE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_POWER_SOURCE_* ENUMs
 
 } zes_power_source_t;
 
@@ -4943,7 +5664,7 @@ typedef enum _zes_limit_unit_t
     ZES_LIMIT_UNIT_UNKNOWN = 0,                                             ///< The PUnit power monitoring unit cannot be determined.
     ZES_LIMIT_UNIT_CURRENT = 1,                                             ///< The limit is specified in milliamperes of current drawn.
     ZES_LIMIT_UNIT_POWER = 2,                                               ///< The limit is specified in milliwatts of power generated.
-    ZES_LIMIT_UNIT_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_LIMIT_UNIT_* ENUMs
+    ZES_LIMIT_UNIT_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_LIMIT_UNIT_* ENUMs
 
 } zes_limit_unit_t;
 
@@ -5074,6 +5795,14 @@ typedef struct _zes_energy_threshold_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5108,6 +5837,13 @@ zesDeviceEnumPowerDomains(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5133,6 +5869,14 @@ zesDeviceGetCardPowerDomain(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5156,6 +5900,14 @@ zesPowerGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5181,6 +5933,14 @@ zesPowerGetEnergyCounter(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -5208,6 +5968,12 @@ zesPowerGetLimits(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
@@ -5238,6 +6004,12 @@ zesPowerSetLimits(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5280,6 +6052,11 @@ zesPowerGetEnergyThreshold(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
@@ -5310,7 +6087,7 @@ typedef enum _zes_psu_voltage_status_t
     ZES_PSU_VOLTAGE_STATUS_NORMAL = 1,                                      ///< No unusual voltages have been detected
     ZES_PSU_VOLTAGE_STATUS_OVER = 2,                                        ///< Over-voltage has occurred
     ZES_PSU_VOLTAGE_STATUS_UNDER = 3,                                       ///< Under-voltage has occurred
-    ZES_PSU_VOLTAGE_STATUS_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_PSU_VOLTAGE_STATUS_* ENUMs
+    ZES_PSU_VOLTAGE_STATUS_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_PSU_VOLTAGE_STATUS_* ENUMs
 
 } zes_psu_voltage_status_t;
 
@@ -5360,6 +6137,14 @@ typedef struct _zes_psu_state_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5393,6 +6178,14 @@ zesDeviceEnumPsus(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPsu`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5416,6 +6209,14 @@ zesPsuGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPsu`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5439,7 +6240,7 @@ typedef enum _zes_ras_error_type_t
 {
     ZES_RAS_ERROR_TYPE_CORRECTABLE = 0,                                     ///< Errors were corrected by hardware
     ZES_RAS_ERROR_TYPE_UNCORRECTABLE = 1,                                   ///< Error were not corrected
-    ZES_RAS_ERROR_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_RAS_ERROR_TYPE_* ENUMs
+    ZES_RAS_ERROR_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_RAS_ERROR_TYPE_* ENUMs
 
 } zes_ras_error_type_t;
 
@@ -5458,7 +6259,7 @@ typedef enum _zes_ras_error_cat_t
     ZES_RAS_ERROR_CAT_CACHE_ERRORS = 5,                                     ///< The number of errors that have occurred in caches (L1/L3/register
                                                                             ///< file/shared local memory/sampler)
     ZES_RAS_ERROR_CAT_DISPLAY_ERRORS = 6,                                   ///< The number of errors that have occurred in the display
-    ZES_RAS_ERROR_CAT_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_RAS_ERROR_CAT_* ENUMs
+    ZES_RAS_ERROR_CAT_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_RAS_ERROR_CAT_* ENUMs
 
 } zes_ras_error_cat_t;
 
@@ -5545,6 +6346,14 @@ typedef struct _zes_ras_config_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5580,6 +6389,14 @@ zesDeviceEnumRasErrorSets(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hRas`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5612,6 +6429,14 @@ zesRasGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hRas`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5647,6 +6472,12 @@ zesRasGetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hRas`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5677,6 +6508,13 @@ zesRasSetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hRas`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5713,7 +6551,7 @@ typedef enum _zes_sched_mode_t
                                                                             ///< contexts must wait until the running context completes with no further
                                                                             ///< submitted work.
     ZES_SCHED_MODE_COMPUTE_UNIT_DEBUG = 3,                                  ///< [DEPRECATED] No longer supported.
-    ZES_SCHED_MODE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_SCHED_MODE_* ENUMs
+    ZES_SCHED_MODE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_SCHED_MODE_* ENUMs
 
 } zes_sched_mode_t;
 
@@ -5796,6 +6634,14 @@ typedef struct _zes_sched_timeslice_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5829,6 +6675,14 @@ zesDeviceEnumSchedulers(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5852,6 +6706,13 @@ zesSchedulerGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5877,6 +6738,13 @@ zesSchedulerGetCurrentMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5904,6 +6772,13 @@ zesSchedulerGetTimeoutModeProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5936,6 +6811,12 @@ zesSchedulerGetTimesliceModeProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -5970,6 +6851,12 @@ zesSchedulerSetTimeoutMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6004,6 +6891,12 @@ zesSchedulerSetTimesliceMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6038,6 +6931,12 @@ zesSchedulerSetExclusiveMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hScheduler`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6065,7 +6964,7 @@ zesSchedulerSetComputeUnitDebugMode(
 typedef enum _zes_standby_type_t
 {
     ZES_STANDBY_TYPE_GLOBAL = 0,                                            ///< Control the overall standby policy of the device/sub-device
-    ZES_STANDBY_TYPE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_STANDBY_TYPE_* ENUMs
+    ZES_STANDBY_TYPE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_STANDBY_TYPE_* ENUMs
 
 } zes_standby_type_t;
 
@@ -6090,7 +6989,7 @@ typedef enum _zes_standby_promo_mode_t
     ZES_STANDBY_PROMO_MODE_DEFAULT = 0,                                     ///< Best compromise between performance and energy savings.
     ZES_STANDBY_PROMO_MODE_NEVER = 1,                                       ///< The device/component will never shutdown. This can improve performance
                                                                             ///< but uses more energy.
-    ZES_STANDBY_PROMO_MODE_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_STANDBY_PROMO_MODE_* ENUMs
+    ZES_STANDBY_PROMO_MODE_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_STANDBY_PROMO_MODE_* ENUMs
 
 } zes_standby_promo_mode_t;
 
@@ -6107,6 +7006,14 @@ typedef enum _zes_standby_promo_mode_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6140,6 +7047,14 @@ zesDeviceEnumStandbyDomains(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hStandby`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6163,6 +7078,14 @@ zesStandbyGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hStandby`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6186,10 +7109,18 @@ zesStandbyGetMode(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hStandby`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_STANDBY_PROMO_MODE_NEVER < mode`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
 ///         + User does not have permissions to make these modifications.
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -6218,7 +7149,7 @@ typedef enum _zes_temp_sensors_t
     ZES_TEMP_SENSORS_GPU_BOARD = 6,                                         ///< The maximum temperature across all sensors in the GPU Board
     ZES_TEMP_SENSORS_GPU_BOARD_MIN = 7,                                     ///< The minimum temperature across all sensors in the GPU Board
     ZES_TEMP_SENSORS_VOLTAGE_REGULATOR = 8,                                 ///< The maximum temperature across all sensors in the Voltage Regulator
-    ZES_TEMP_SENSORS_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_TEMP_SENSORS_* ENUMs
+    ZES_TEMP_SENSORS_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_TEMP_SENSORS_* ENUMs
 
 } zes_temp_sensors_t;
 
@@ -6288,6 +7219,14 @@ typedef struct _zes_temp_config_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6321,6 +7260,14 @@ zesDeviceEnumTemperatureSensors(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hTemperature`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6345,6 +7292,12 @@ zesTemperatureGetProperties(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hTemperature`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6386,6 +7339,10 @@ zesTemperatureGetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hTemperature`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6419,6 +7376,14 @@ zesTemperatureSetConfig(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hTemperature`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6449,7 +7414,7 @@ typedef enum _zes_device_ecc_default_properties_ext_version_t
 {
     ZES_DEVICE_ECC_DEFAULT_PROPERTIES_EXT_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),///< version 1.0
     ZES_DEVICE_ECC_DEFAULT_PROPERTIES_EXT_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),///< latest known version
-    ZES_DEVICE_ECC_DEFAULT_PROPERTIES_EXT_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_DEVICE_ECC_DEFAULT_PROPERTIES_EXT_VERSION_* ENUMs
+    ZES_DEVICE_ECC_DEFAULT_PROPERTIES_EXT_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_DEVICE_ECC_DEFAULT_PROPERTIES_EXT_VERSION_* ENUMs
 
 } zes_device_ecc_default_properties_ext_version_t;
 
@@ -6464,6 +7429,94 @@ typedef struct _zes_device_ecc_default_properties_ext_t
     zes_device_ecc_state_t defaultState;                                    ///< [out] Default ECC state
 
 } zes_device_ecc_default_properties_ext_t;
+
+#if !defined(__GNUC__)
+#pragma endregion
+#endif
+// Intel 'oneAPI' Level-Zero Sysman Extension APIs for PCI Link Speed Downgrade
+#if !defined(__GNUC__)
+#pragma region pciLinkSpeedDowngrade
+#endif
+///////////////////////////////////////////////////////////////////////////////
+#ifndef ZES_PCI_LINK_SPEED_DOWNGRADE_EXT_NAME
+/// @brief PCI Link Speed Downgrade Extension Name
+#define ZES_PCI_LINK_SPEED_DOWNGRADE_EXT_NAME  "ZES_extension_pci_link_speed_downgrade"
+#endif // ZES_PCI_LINK_SPEED_DOWNGRADE_EXT_NAME
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief PCI Link Speed Downgrade Extension Version(s)
+typedef enum _zes_pci_link_speed_downgrade_ext_version_t
+{
+    ZES_PCI_LINK_SPEED_DOWNGRADE_EXT_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ), ///< version 1.0
+    ZES_PCI_LINK_SPEED_DOWNGRADE_EXT_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ), ///< latest known version
+    ZES_PCI_LINK_SPEED_DOWNGRADE_EXT_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_PCI_LINK_SPEED_DOWNGRADE_EXT_VERSION_* ENUMs
+
+} zes_pci_link_speed_downgrade_ext_version_t;
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Query PCIe downgrade status.
+/// 
+/// @details
+///     - This structure can be passed in the 'pNext' of ::zes_pci_state_t
+typedef struct _zes_pci_link_speed_downgrade_ext_state_t
+{
+    zes_structure_type_t stype;                                             ///< [in] type of this structure
+    const void* pNext;                                                      ///< [in][optional] must be null or a pointer to an extension-specific
+                                                                            ///< structure (i.e. contains stype and pNext).
+    ze_bool_t pciLinkSpeedDowngradeStatus;                                  ///< [out] Returns the current PCIe downgrade status.
+
+} zes_pci_link_speed_downgrade_ext_state_t;
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Query PCIe downgrade capability.
+/// 
+/// @details
+///     - This structure can be passed in the 'pNext' of ::zes_pci_properties_t
+typedef struct _zes_pci_link_speed_downgrade_ext_properties_t
+{
+    zes_structure_type_t stype;                                             ///< [in] type of this structure
+    void* pNext;                                                            ///< [in,out][optional] must be null or a pointer to an extension-specific
+                                                                            ///< structure (i.e. contains stype and pNext).
+    ze_bool_t pciLinkSpeedUpdateCapable;                                    ///< [out] Returns if PCIe downgrade capability is available.
+    int32_t maxPciGenSupported;                                             ///< [out] Returns the max supported PCIe generation of the device. -1
+                                                                            ///< indicates the information is not available
+
+} zes_pci_link_speed_downgrade_ext_properties_t;
+
+///////////////////////////////////////////////////////////////////////////////
+/// @brief Update PCI Link Speed (Downgrade or Upgrade (restore to its default
+///        speed))
+/// 
+/// @details
+///     - This function allows updating the PCI link speed to downgrade or
+///       upgrade (restore to its default speed) the connection.
+/// 
+/// @returns
+///     - ::ZE_RESULT_SUCCESS
+///     - ::ZE_RESULT_ERROR_UNINITIALIZED
+///     - ::ZE_RESULT_ERROR_DEVICE_LOST
+///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
+///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
+///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
+///         + `nullptr == hDevice`
+///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
+///         + `nullptr == pendingAction`
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///         + User does not have permissions to perform this operation.
+ZE_APIEXPORT ze_result_t ZE_APICALL
+zesDevicePciLinkSpeedUpdateExt(
+    zes_device_handle_t hDevice,                                            ///< [in] Sysman handle of the device.
+    ze_bool_t shouldDowngrade,                                              ///< [in] boolean value to decide whether to perform PCIe downgrade(true)
+                                                                            ///< or set to default speed(false)
+    zes_device_action_t* pendingAction                                      ///< [out] Pending action
+    );
 
 #if !defined(__GNUC__)
 #pragma endregion
@@ -6484,7 +7537,7 @@ typedef enum _zes_power_limits_ext_version_t
 {
     ZES_POWER_LIMITS_EXT_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),             ///< version 1.0
     ZES_POWER_LIMITS_EXT_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),         ///< latest known version
-    ZES_POWER_LIMITS_EXT_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_POWER_LIMITS_EXT_VERSION_* ENUMs
+    ZES_POWER_LIMITS_EXT_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_POWER_LIMITS_EXT_VERSION_* ENUMs
 
 } zes_power_limits_ext_version_t;
 
@@ -6551,6 +7604,14 @@ typedef struct _zes_power_ext_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6590,6 +7651,12 @@ zesPowerGetLimitsExt(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hPower`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6624,7 +7691,7 @@ typedef enum _zes_engine_activity_ext_version_t
 {
     ZES_ENGINE_ACTIVITY_EXT_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),          ///< version 1.0
     ZES_ENGINE_ACTIVITY_EXT_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),      ///< latest known version
-    ZES_ENGINE_ACTIVITY_EXT_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_ENGINE_ACTIVITY_EXT_VERSION_* ENUMs
+    ZES_ENGINE_ACTIVITY_EXT_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_ENGINE_ACTIVITY_EXT_VERSION_* ENUMs
 
 } zes_engine_activity_ext_version_t;
 
@@ -6665,6 +7732,14 @@ typedef struct _zes_engine_ext_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hEngine`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6708,7 +7783,7 @@ typedef enum _zes_ras_state_exp_version_t
 {
     ZES_RAS_STATE_EXP_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),                ///< version 1.0
     ZES_RAS_STATE_EXP_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),            ///< latest known version
-    ZES_RAS_STATE_EXP_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_RAS_STATE_EXP_VERSION_* ENUMs
+    ZES_RAS_STATE_EXP_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_RAS_STATE_EXP_VERSION_* ENUMs
 
 } zes_ras_state_exp_version_t;
 
@@ -6730,7 +7805,7 @@ typedef enum _zes_ras_error_category_exp_t
     ZES_RAS_ERROR_CATEGORY_EXP_MEMORY_ERRORS = 7,                           ///< The number of errors that have occurred in Memory
     ZES_RAS_ERROR_CATEGORY_EXP_SCALE_ERRORS = 8,                            ///< The number of errors that have occurred in Scale Fabric
     ZES_RAS_ERROR_CATEGORY_EXP_L3FABRIC_ERRORS = 9,                         ///< The number of errors that have occurred in L3 Fabric
-    ZES_RAS_ERROR_CATEGORY_EXP_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_RAS_ERROR_CATEGORY_EXP_* ENUMs
+    ZES_RAS_ERROR_CATEGORY_EXP_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_RAS_ERROR_CATEGORY_EXP_* ENUMs
 
 } zes_ras_error_category_exp_t;
 
@@ -6759,6 +7834,14 @@ typedef struct _zes_ras_state_exp_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hRas`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6795,10 +7878,18 @@ zesRasGetStateExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hRas`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `::ZES_RAS_ERROR_CATEGORY_EXP_L3FABRIC_ERRORS < category`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
 ///         + Don't have permissions to clear error counters.
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -6826,7 +7917,7 @@ typedef enum _zes_mem_page_offline_state_exp_version_t
 {
     ZES_MEM_PAGE_OFFLINE_STATE_EXP_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),   ///< version 1.0
     ZES_MEM_PAGE_OFFLINE_STATE_EXP_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),   ///< latest known version
-    ZES_MEM_PAGE_OFFLINE_STATE_EXP_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_MEM_PAGE_OFFLINE_STATE_EXP_VERSION_* ENUMs
+    ZES_MEM_PAGE_OFFLINE_STATE_EXP_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_MEM_PAGE_OFFLINE_STATE_EXP_VERSION_* ENUMs
 
 } zes_mem_page_offline_state_exp_version_t;
 
@@ -6866,7 +7957,7 @@ typedef enum _zes_mem_bandwidth_counter_bits_exp_version_t
 {
     ZES_MEM_BANDWIDTH_COUNTER_BITS_EXP_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),   ///< version 1.0
     ZES_MEM_BANDWIDTH_COUNTER_BITS_EXP_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),   ///< latest known version
-    ZES_MEM_BANDWIDTH_COUNTER_BITS_EXP_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_MEM_BANDWIDTH_COUNTER_BITS_EXP_VERSION_* ENUMs
+    ZES_MEM_BANDWIDTH_COUNTER_BITS_EXP_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_MEM_BANDWIDTH_COUNTER_BITS_EXP_VERSION_* ENUMs
 
 } zes_mem_bandwidth_counter_bits_exp_version_t;
 
@@ -6908,7 +7999,7 @@ typedef enum _zes_power_domain_properties_exp_version_t
 {
     ZES_POWER_DOMAIN_PROPERTIES_EXP_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),  ///< version 1.0
     ZES_POWER_DOMAIN_PROPERTIES_EXP_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),  ///< latest known version
-    ZES_POWER_DOMAIN_PROPERTIES_EXP_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_POWER_DOMAIN_PROPERTIES_EXP_VERSION_* ENUMs
+    ZES_POWER_DOMAIN_PROPERTIES_EXP_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_POWER_DOMAIN_PROPERTIES_EXP_VERSION_* ENUMs
 
 } zes_power_domain_properties_exp_version_t;
 
@@ -6948,7 +8039,7 @@ typedef enum _zes_firmware_security_exp_version_t
 {
     ZES_FIRMWARE_SECURITY_EXP_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),        ///< version 1.0
     ZES_FIRMWARE_SECURITY_EXP_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),    ///< latest known version
-    ZES_FIRMWARE_SECURITY_EXP_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_FIRMWARE_SECURITY_EXP_VERSION_* ENUMs
+    ZES_FIRMWARE_SECURITY_EXP_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_FIRMWARE_SECURITY_EXP_VERSION_* ENUMs
 
 } zes_firmware_security_exp_version_t;
 
@@ -6969,6 +8060,14 @@ typedef enum _zes_firmware_security_exp_version_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFirmware`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -6993,6 +8092,14 @@ zesFirmwareGetSecurityVersionExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hFirmware`
 ZE_APIEXPORT ze_result_t ZE_APICALL
@@ -7019,7 +8126,7 @@ typedef enum _zes_sysman_device_mapping_exp_version_t
 {
     ZES_SYSMAN_DEVICE_MAPPING_EXP_VERSION_1_0 = ZE_MAKE_VERSION( 1, 0 ),    ///< version 1.0
     ZES_SYSMAN_DEVICE_MAPPING_EXP_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 0 ),///< latest known version
-    ZES_SYSMAN_DEVICE_MAPPING_EXP_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_SYSMAN_DEVICE_MAPPING_EXP_VERSION_* ENUMs
+    ZES_SYSMAN_DEVICE_MAPPING_EXP_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_SYSMAN_DEVICE_MAPPING_EXP_VERSION_* ENUMs
 
 } zes_sysman_device_mapping_exp_version_t;
 
@@ -7048,6 +8155,14 @@ typedef struct _zes_subdevice_exp_properties_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7080,6 +8195,14 @@ zesDeviceGetSubDevicePropertiesExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDriver`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7117,7 +8240,7 @@ typedef enum _zes_vf_management_exp_version_t
     ZES_VF_MANAGEMENT_EXP_VERSION_1_1 = ZE_MAKE_VERSION( 1, 1 ),            ///< version 1.1 (deprecated)
     ZES_VF_MANAGEMENT_EXP_VERSION_1_2 = ZE_MAKE_VERSION( 1, 2 ),            ///< version 1.2
     ZES_VF_MANAGEMENT_EXP_VERSION_CURRENT = ZE_MAKE_VERSION( 1, 2 ),        ///< latest known version
-    ZES_VF_MANAGEMENT_EXP_VERSION_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_VF_MANAGEMENT_EXP_VERSION_* ENUMs
+    ZES_VF_MANAGEMENT_EXP_VERSION_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_VF_MANAGEMENT_EXP_VERSION_* ENUMs
 
 } zes_vf_management_exp_version_t;
 
@@ -7128,7 +8251,7 @@ typedef enum _zes_vf_info_mem_type_exp_flag_t
 {
     ZES_VF_INFO_MEM_TYPE_EXP_FLAG_MEM_TYPE_SYSTEM = ZE_BIT(0),              ///< System memory
     ZES_VF_INFO_MEM_TYPE_EXP_FLAG_MEM_TYPE_DEVICE = ZE_BIT(1),              ///< Device local memory
-    ZES_VF_INFO_MEM_TYPE_EXP_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_VF_INFO_MEM_TYPE_EXP_FLAG_* ENUMs
+    ZES_VF_INFO_MEM_TYPE_EXP_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_VF_INFO_MEM_TYPE_EXP_FLAG_* ENUMs
 
 } zes_vf_info_mem_type_exp_flag_t;
 
@@ -7141,7 +8264,7 @@ typedef enum _zes_vf_info_util_exp_flag_t
     ZES_VF_INFO_UTIL_EXP_FLAG_INFO_MEM_CPU = ZE_BIT(1),                     ///< System memory utilization associated with virtual function
     ZES_VF_INFO_UTIL_EXP_FLAG_INFO_MEM_GPU = ZE_BIT(2),                     ///< Device memory utilization associated with virtual function
     ZES_VF_INFO_UTIL_EXP_FLAG_INFO_ENGINE = ZE_BIT(3),                      ///< Engine utilization associated with virtual function
-    ZES_VF_INFO_UTIL_EXP_FLAG_FORCE_UINT32 = 0x7fffffff, ///< Value marking end of ZES_VF_INFO_UTIL_EXP_FLAG_* ENUMs
+    ZES_VF_INFO_UTIL_EXP_FLAG_FORCE_UINT32 = 0x7fffffff ///< Value marking end of ZES_VF_INFO_UTIL_EXP_FLAG_* ENUMs
 
 } zes_vf_info_util_exp_flag_t;
 
@@ -7259,6 +8382,14 @@ typedef struct _zes_vf_util_engine_exp2_t
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7294,6 +8425,14 @@ zesDeviceEnumActiveVFExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7320,6 +8459,14 @@ zesVFManagementGetVFPropertiesExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7358,6 +8505,14 @@ zesVFManagementGetVFMemoryUtilizationExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7395,10 +8550,19 @@ zesVFManagementGetVFEngineUtilizationExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `0xf < flags`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ZE_APIEXPORT ze_result_t ZE_APICALL
 zesVFManagementSetVFTelemetryModeExp(
     zes_vf_handle_t hVFhandle,                                              ///< [in] Sysman handle for the component.
@@ -7422,10 +8586,19 @@ zesVFManagementSetVFTelemetryModeExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_ENUMERATION
 ///         + `0xf < flag`
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_ENUMERATION
 ZE_APIEXPORT ze_result_t ZE_APICALL
 zesVFManagementSetVFTelemetrySamplingIntervalExp(
     zes_vf_handle_t hVFhandle,                                              ///< [in] Sysman handle for the component.
@@ -7447,6 +8620,14 @@ zesVFManagementSetVFTelemetrySamplingIntervalExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hDevice`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7482,6 +8663,14 @@ zesDeviceEnumEnabledVFExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7507,6 +8696,14 @@ zesVFManagementGetVFCapabilitiesExp(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7542,6 +8739,14 @@ zesVFManagementGetVFMemoryUtilizationExp2(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER
@@ -7575,6 +8780,14 @@ zesVFManagementGetVFEngineUtilizationExp2(
 ///     - ::ZE_RESULT_ERROR_DEVICE_LOST
 ///     - ::ZE_RESULT_ERROR_OUT_OF_HOST_MEMORY
 ///     - ::ZE_RESULT_ERROR_OUT_OF_DEVICE_MEMORY
+///     - ::ZE_RESULT_ERROR_INVALID_ARGUMENT
+///     - ::ZE_RESULT_ERROR_UNSUPPORTED_FEATURE
+///     - ::ZE_RESULT_ERROR_DEPENDENCY_UNAVAILABLE
+///     - ::ZE_RESULT_ERROR_INSUFFICIENT_PERMISSIONS
+///     - ::ZE_RESULT_ERROR_NOT_AVAILABLE
+///     - ::ZE_RESULT_ERROR_DEVICE_REQUIRES_RESET
+///     - ::ZE_RESULT_ERROR_DEVICE_IN_LOW_POWER_STATE
+///     - ::ZE_RESULT_ERROR_UNKNOWN
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_HANDLE
 ///         + `nullptr == hVFhandle`
 ///     - ::ZE_RESULT_ERROR_INVALID_NULL_POINTER

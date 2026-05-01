@@ -35,6 +35,9 @@ namespace ccl {
 
 namespace v1 {
 
+#define CCL_WIN_DEFAULT        0
+#define CCL_WIN_COLL_SYMMETRIC 1
+
 /**
  * Supported reduction operations
  */

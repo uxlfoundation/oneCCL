@@ -16,6 +16,7 @@
 #pragma once
 
 #include "common/global/global.hpp"
+#include "comm/comm.hpp"
 #include "sched/entry/copy/copy_helper.hpp"
 #if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
 #include "sched/entry/ze/ze_handle_exchange_entry.hpp"

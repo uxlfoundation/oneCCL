@@ -18,6 +18,7 @@
 #include "coll/coll_util.hpp"
 #include "coll/coll_param.hpp"
 #include "common/global/global.hpp"
+#include "coll/group/group.hpp"
 
 #ifdef CCL_ENABLE_SYCL
 #include "common/utils/sycl_utils.hpp"
@@ -335,12 +336,44 @@ std::vector<void*> ccl_coll_param::get_all_non_zero_bufs() const {
             }
             break;
         }
+        case ccl_coll_broadcast: {
+            /*
+                For broadcast:
+                - send_buf is only used on root rank
+                - recv_buf is needed by all ranks
+                Non-root ranks can pass nullptr for send_buf per the spec
+            */
+            bool is_root = (comm && root != CCL_INVALID_ROOT_RANK_IDX && comm->rank() == root);
+            if (get_send_count() && is_root) {
+                bufs.push_back(get_send_buf());
+            }
+
+            if (get_recv_count()) {
+                bufs.push_back(get_recv_buf());
+            }
+            break;
+        }
+        case ccl_coll_reduce: {
+            /*
+                For reduce:
+                - send_buf is needed by all ranks
+                - recv_buf is only used on root rank
+                Non-root ranks can pass nullptr for recv_buf per the spec
+            */
+            bool is_root = (comm && root != CCL_INVALID_ROOT_RANK_IDX && comm->rank() == root);
+            if (get_send_count()) {
+                bufs.push_back(get_send_buf());
+            }
+
+            if (get_recv_count() && is_root) {
+                bufs.push_back(get_recv_buf());
+            }
+            break;
+        }
         case ccl_coll_allreduce:
         case ccl_coll_alltoall:
         case ccl_coll_allgather:
         case ccl_coll_bcast:
-        case ccl_coll_broadcast:
-        case ccl_coll_reduce:
         case ccl_coll_reduce_scatter:
             if (get_send_count()) {
                 bufs.push_back(get_send_buf());

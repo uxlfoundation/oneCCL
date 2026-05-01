@@ -19,7 +19,58 @@
 #include "atl/util/pm/pmi_resizable_rt/pmi_resizable/kvs/internal_kvs.h"
 #include "atl/util/pm/pmi_resizable_rt/pmi_resizable_simple_internal.h"
 #include "atl/ofi/atl_ofi.hpp"
+#include "atl/ofi/atl_comp.hpp"
 #include "exec/exec.hpp"
+
+enum ofi_op_tag { allgatherv_tag = 0, barrier_tag, allreduce_tag, reduce_scatter_tag };
+
+static inline void ofi_send(void* sendbuf,
+                            size_t len,
+                            int dst,
+                            atl_ofi_comm* comm,
+                            size_t ep_idx,
+                            uint64_t op_tag) {
+    atl_status_t ret;
+    atl_req send_req;
+    do {
+        ret = comm->send(ep_idx, sendbuf, len, dst, op_tag, send_req);
+        CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "send failed");
+        if (ret == ATL_STATUS_AGAIN) {
+            ccl_yield(ccl::global_data::env().yield_type);
+        }
+    } while (ret == ATL_STATUS_AGAIN);
+    while (!send_req.is_completed) {
+        comm->poll(ep_idx);
+        if (!send_req.is_completed) {
+            CCL_THROW_IF_NOT(comm->check(ep_idx, send_req) != ATL_STATUS_FAILURE,
+                             "check send failed");
+        }
+    }
+}
+
+static inline void ofi_recv(void* recvbuf,
+                            size_t len,
+                            int dst,
+                            atl_ofi_comm* comm,
+                            size_t ep_idx,
+                            uint64_t op_tag) {
+    atl_status_t ret;
+    atl_req recv_req;
+    do {
+        ret = comm->recv(ep_idx, recvbuf, len, dst, op_tag, recv_req);
+        CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "recv failed");
+        if (ret == ATL_STATUS_AGAIN) {
+            ccl_yield(ccl::global_data::env().yield_type);
+        }
+    } while (ret == ATL_STATUS_AGAIN);
+    while (!recv_req.is_completed) {
+        comm->poll(ep_idx);
+        if (!recv_req.is_completed) {
+            CCL_THROW_IF_NOT(comm->check(ep_idx, recv_req) != ATL_STATUS_FAILURE,
+                             "check recv failed");
+        }
+    }
+}
 
 atl_ofi_comm::atl_ofi_comm() {
     pmi = std::shared_ptr<ipmi>(new pmi_simple());
@@ -43,6 +94,86 @@ atl_ofi_comm::atl_ofi_comm(int comm_size,
     }
 
     CCL_THROW_IF_NOT(init_transport(true) == ATL_STATUS_SUCCESS, "init transport failed");
+}
+
+atl_status_t atl_ofi_comm::barrier(size_t ep_idx, atl_req_t& req) {
+    ssize_t ret = ATL_STATUS_SUCCESS;
+
+    req.is_completed = false;
+    atl_ofi_req_t* ofi_req = ((atl_ofi_req_t*)req.internal);
+
+    if (size == 1) {
+        ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
+        return ATL_STATUS_SUCCESS;
+    }
+
+    int tag_comm_id = (comm_id != atl_comm_id_storage::invalid_comm_id)
+                          ? comm_id
+                          : atl_comm_id_storage::max_comm_id;
+    int tagc = tag_counter_barrier++;
+
+    LOG_DEBUG("ofi_barrier: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tagc);
+
+    int src, dst;
+    const int len = 1;
+    char sendbuf[len], recvbuf[len];
+    int mask = 0x1;
+    while (mask < size) {
+        dst = (rank + mask) % size;
+        src = (rank + size - mask) % size;
+        atl_req send_req, recv_req;
+        uint64_t op_tag = tag_creator->create(rank, tag_comm_id, tagc, ofi_op_tag::barrier_tag);
+        do {
+            ret = send(ep_idx, sendbuf, len, dst, op_tag, send_req);
+            CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "send failed");
+            if (ret == ATL_STATUS_AGAIN) {
+                ccl_yield(ccl::global_data::env().yield_type);
+            }
+        } while (ret == ATL_STATUS_AGAIN);
+        op_tag = tag_creator->create(src, tag_comm_id, tagc, ofi_op_tag::barrier_tag);
+        do {
+            ret = recv(ep_idx, recvbuf, len, src, op_tag, recv_req);
+            CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "recv failed");
+            if (ret == ATL_STATUS_AGAIN) {
+                ccl_yield(ccl::global_data::env().yield_type);
+            }
+        } while (ret == ATL_STATUS_AGAIN);
+        while (!send_req.is_completed || !recv_req.is_completed) {
+            poll(ep_idx);
+            if (!send_req.is_completed) {
+                CCL_THROW_IF_NOT(check(ep_idx, send_req) != ATL_STATUS_FAILURE,
+                                 "check send failed");
+            }
+            if (!recv_req.is_completed) {
+                CCL_THROW_IF_NOT(check(ep_idx, recv_req) != ATL_STATUS_FAILURE,
+                                 "check recv failed");
+            }
+        }
+        mask <<= 1;
+    }
+
+    LOG_DEBUG("ofi_barrier done: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tagc);
+
+    ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
+    return ATL_STATUS_SUCCESS;
 }
 
 atl_status_t atl_ofi_comm::allgatherv(size_t ep_idx,
@@ -148,8 +279,493 @@ atl_status_t atl_ofi_comm::allgatherv(size_t ep_idx,
     atl_ofi_req_t* ofi_req = ((atl_ofi_req_t*)req.internal);
     ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
 
+    LOG_DEBUG("ofi_allgatherv done: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", send_len: ",
+              send_len,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tag_counter);
+
     tag_counter++;
 
+    return ATL_STATUS_SUCCESS;
+}
+
+atl_status_t atl_ofi_comm::allreduce(size_t ep_idx,
+                                     const void* send_buf,
+                                     void* recv_buf,
+                                     size_t len,
+                                     atl_datatype_t dtype,
+                                     atl_reduction_t op,
+                                     atl_req_t& req) {
+    // simple recursive double algorithm
+    atl_status_t ret;
+    int newrank, mask;
+    int dsize = get_atl_datatype_size(dtype);
+    size_t total_size = len * dsize;
+
+    int tag_comm_id = (comm_id != atl_comm_id_storage::invalid_comm_id)
+                          ? comm_id
+                          : atl_comm_id_storage::max_comm_id;
+
+    int tagc = tag_counter_allreduce++;
+
+    LOG_DEBUG("ofi_allreduce: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", len: ",
+              len,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tagc);
+
+    if (send_buf != recv_buf && send_buf != MPI_IN_PLACE) {
+        memcpy(recv_buf, send_buf, total_size);
+    }
+
+    void* tmp_buf = malloc(total_size);
+    CCL_THROW_IF_NOT(tmp_buf, "malloc failed");
+
+    size_t pof2_size_t = ccl::utils::pof2(size);
+    // coverity fix: overflowed constant
+    CCL_THROW_IF_NOT(pof2_size_t <= static_cast<size_t>(std::numeric_limits<int>::max()),
+                     "pof2 value exceeds int range");
+    int pof2 = static_cast<int>(pof2_size_t);
+    int rem = size - pof2;
+
+    if (rank < 2 * rem) {
+        if (rank % 2 == 0) { /* even */
+            atl_req send_req;
+            uint64_t op_tag =
+                tag_creator->create(rank, tag_comm_id, tagc, ofi_op_tag::allreduce_tag);
+            do {
+                ret = send(ep_idx, recv_buf, total_size, rank + 1, op_tag, send_req);
+                CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "send failed");
+                if (ret == ATL_STATUS_AGAIN) {
+                    ccl_yield(ccl::global_data::env().yield_type);
+                }
+            } while (ret == ATL_STATUS_AGAIN);
+            while (!send_req.is_completed) {
+                poll(ep_idx);
+                if (!send_req.is_completed) {
+                    CCL_THROW_IF_NOT(check(ep_idx, send_req) != ATL_STATUS_FAILURE,
+                                     "check send failed");
+                }
+            }
+
+            /* temporarily set the rank to -1 so that this
+             * process does not pariticipate in recursive
+             * doubling */
+            newrank = -1;
+        }
+        else { /* odd */
+            atl_req recv_req;
+            uint64_t op_tag =
+                tag_creator->create(rank - 1, tag_comm_id, tagc, ofi_op_tag::allreduce_tag);
+            do {
+                ret = recv(ep_idx, tmp_buf, total_size, rank - 1, op_tag, recv_req);
+                CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "recv failed");
+                if (ret == ATL_STATUS_AGAIN) {
+                    ccl_yield(ccl::global_data::env().yield_type);
+                }
+            } while (ret == ATL_STATUS_AGAIN);
+            while (!recv_req.is_completed) {
+                poll(ep_idx);
+                if (!recv_req.is_completed) {
+                    CCL_THROW_IF_NOT(check(ep_idx, recv_req) != ATL_STATUS_FAILURE,
+                                     "check recv failed");
+                }
+            }
+
+            /* do the reduction on received data. since the
+             * ordering is right, it doesn't matter whether
+             * the operation is commutative or not. */
+            size_t out_count;
+            ret = atl_comp_reduce_regular(tmp_buf, len, recv_buf, &out_count, dtype, op);
+            CCL_THROW_IF_NOT(ret == ATL_STATUS_SUCCESS, "atl_comp_reduce_regular failed");
+
+            /* change the rank */
+            newrank = rank / 2;
+        }
+    }
+    else {
+        newrank = rank - rem;
+    }
+
+    if (newrank != -1) {
+        mask = 0x1;
+        while (mask < pof2) {
+            int newdst = newrank ^ mask;
+            /* find real rank of dest */
+            int dst = (newdst < rem) ? newdst * 2 + 1 : newdst + rem;
+
+            /* Send the most current data, which is in recvbuf. Recv
+             * into tmp_buf */
+            atl_req send_req, recv_req;
+            uint64_t op_tag =
+                tag_creator->create(rank, tag_comm_id, tagc, ofi_op_tag::allreduce_tag);
+            do {
+                ret = send(ep_idx, recv_buf, total_size, dst, op_tag, send_req);
+                CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "send failed");
+                if (ret == ATL_STATUS_AGAIN) {
+                    ccl_yield(ccl::global_data::env().yield_type);
+                }
+            } while (ret == ATL_STATUS_AGAIN);
+            op_tag = tag_creator->create(dst, tag_comm_id, tagc, ofi_op_tag::allreduce_tag);
+            do {
+                ret = recv(ep_idx, tmp_buf, total_size, dst, op_tag, recv_req);
+                CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "recv failed");
+                if (ret == ATL_STATUS_AGAIN) {
+                    ccl_yield(ccl::global_data::env().yield_type);
+                }
+            } while (ret == ATL_STATUS_AGAIN);
+            while (!send_req.is_completed || !recv_req.is_completed) {
+                poll(ep_idx);
+                if (!send_req.is_completed) {
+                    CCL_THROW_IF_NOT(check(ep_idx, send_req) != ATL_STATUS_FAILURE,
+                                     "check send failed");
+                }
+                if (!recv_req.is_completed) {
+                    CCL_THROW_IF_NOT(check(ep_idx, recv_req) != ATL_STATUS_FAILURE,
+                                     "check recv failed");
+                }
+            }
+
+            /* tmp_buf contains data received in this step.
+             * recvbuf contains data accumulated so far */
+
+            size_t out_count;
+            // assume the op is always commutative
+            ret = atl_comp_reduce_regular(tmp_buf, len, recv_buf, &out_count, dtype, op);
+            CCL_THROW_IF_NOT(ret == ATL_STATUS_SUCCESS, "atl_comp_reduce_regular failed");
+            mask <<= 1;
+        }
+    }
+
+    if (rank < 2 * rem) {
+        if (rank % 2) { /* odd */
+            atl_req send_req;
+            uint64_t op_tag =
+                tag_creator->create(rank, tag_comm_id, tagc, ofi_op_tag::allreduce_tag);
+            do {
+                ret = send(ep_idx, recv_buf, total_size, rank - 1, op_tag, send_req);
+                CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "send failed");
+                if (ret == ATL_STATUS_AGAIN) {
+                    ccl_yield(ccl::global_data::env().yield_type);
+                }
+            } while (ret == ATL_STATUS_AGAIN);
+            while (!send_req.is_completed) {
+                poll(ep_idx);
+                if (!send_req.is_completed) {
+                    CCL_THROW_IF_NOT(check(ep_idx, send_req) != ATL_STATUS_FAILURE,
+                                     "check send failed");
+                }
+            }
+        }
+        else { /* even */
+            atl_req recv_req;
+            uint64_t op_tag =
+                tag_creator->create(rank + 1, tag_comm_id, tagc, ofi_op_tag::allreduce_tag);
+            do {
+                ret = recv(ep_idx, recv_buf, total_size, rank + 1, op_tag, recv_req);
+                CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "recv failed");
+                if (ret == ATL_STATUS_AGAIN) {
+                    ccl_yield(ccl::global_data::env().yield_type);
+                }
+            } while (ret == ATL_STATUS_AGAIN);
+            while (!recv_req.is_completed) {
+                poll(ep_idx);
+                if (!recv_req.is_completed) {
+                    CCL_THROW_IF_NOT(check(ep_idx, recv_req) != ATL_STATUS_FAILURE,
+                                     "check recv failed");
+                }
+            }
+        }
+    }
+
+    // to let user complete this operation through wait(req)
+    req.is_completed = false;
+
+    atl_ofi_req_t* ofi_req = ((atl_ofi_req_t*)req.internal);
+    ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
+
+    free(tmp_buf);
+    return ATL_STATUS_SUCCESS;
+}
+
+atl_status_t atl_ofi_comm::reduce_scatter(size_t ep_idx,
+                                          const void* send_buf,
+                                          void* recv_buf,
+                                          size_t recv_len,
+                                          atl_datatype_t dtype,
+                                          atl_reduction_t op,
+                                          atl_req_t& req) {
+    // Recursive halving algorithm, suitable for small and medium size
+    // messages
+    atl_status_t ret;
+    int i;
+    size_t* disps = NULL;
+    size_t *newcnts = NULL, *newdisps = NULL;
+    void *tmp_recvbuf = NULL, *tmp_results = NULL;
+    int mask, dst, pof2, rem;
+    size_t pof2_size_t;
+    int newdst, send_idx, recv_idx, last_idx;
+    int newrank;
+    int dsize = get_atl_datatype_size(dtype);
+    size_t total_count = size * recv_len;
+    size_t total_size = total_count * dsize;
+
+    int tag_comm_id = (comm_id != atl_comm_id_storage::invalid_comm_id)
+                          ? comm_id
+                          : atl_comm_id_storage::max_comm_id;
+
+    int tagc = tag_counter_reduce_scatter++;
+
+    LOG_DEBUG("ofi_reduce_scatter: comm_rank: ",
+              rank,
+              ", comm_size: ",
+              size,
+              ", len: ",
+              recv_len,
+              ", comm_id: ",
+              comm_id,
+              ", tag_comm_id: ",
+              tag_comm_id,
+              ", tag_counter: ",
+              tagc);
+
+    if (recv_len == 0)
+        goto fn_exit;
+
+    disps = new size_t[size];
+    total_count = 0;
+    for (i = 0; i < size; i++) {
+        disps[i] = total_count;
+        total_count += recv_len;
+    }
+
+    tmp_recvbuf = malloc(total_size);
+    CCL_THROW_IF_NOT(tmp_recvbuf, "malloc failed");
+
+    tmp_results = malloc(total_size);
+    CCL_THROW_IF_NOT(tmp_results, "malloc tmp_results failed");
+
+    if (send_buf != recv_buf && send_buf != MPI_IN_PLACE) {
+        memcpy(tmp_results, send_buf, total_size);
+    }
+    else {
+        memcpy(tmp_results, recv_buf, total_size);
+    }
+
+    pof2_size_t = ccl::utils::pof2(size);
+    // coverity fix: overflowed constant
+    CCL_THROW_IF_NOT(pof2_size_t <= static_cast<size_t>(std::numeric_limits<int>::max()),
+                     "pof2 value exceeds int range");
+    pof2 = static_cast<int>(pof2_size_t);
+    rem = size - pof2;
+
+    if (rank < 2 * rem) {
+        if (rank % 2 == 0) { /* even */
+            uint64_t op_tag =
+                tag_creator->create(rank, tag_comm_id, tagc, ofi_op_tag::reduce_scatter_tag);
+            ofi_send(tmp_results, total_size, rank + 1, this, ep_idx, op_tag);
+
+            /* set the newrank to -1 to not to participate
+             * in the main loop */
+            newrank = -1;
+        }
+        else { /* odd */
+            uint64_t op_tag =
+                tag_creator->create(rank - 1, tag_comm_id, tagc, ofi_op_tag::reduce_scatter_tag);
+            ofi_recv(tmp_recvbuf, total_size, rank - 1, this, ep_idx, op_tag);
+
+            size_t out_count;
+            ret = atl_comp_reduce_regular(
+                tmp_recvbuf, total_count, tmp_results, &out_count, dtype, op);
+            CCL_THROW_IF_NOT(ret == ATL_STATUS_SUCCESS, "atl_comp_reduce_regular failed");
+
+            /* change the rank */
+            newrank = rank / 2;
+        }
+    }
+    else /* rank >= 2*rem */
+        newrank = rank - rem;
+
+    if (newrank != -1) {
+        /* update recvcounts and disps arrays */
+        newcnts = new size_t[pof2];
+        newdisps = new size_t[pof2];
+
+        for (i = 0; i < pof2; i++) {
+            int old_i = (i < rem) ? i * 2 + 1 : i + rem;
+            if (old_i < 2 * rem) {
+                /* This process will do its left neighbor's work */
+                newcnts[i] = recv_len * 2;
+            }
+            else
+                newcnts[i] = recv_len;
+        }
+
+        newdisps[0] = 0;
+        for (i = 1; i < pof2; i++)
+            newdisps[i] = newdisps[i - 1] + newcnts[i - 1];
+
+        mask = pof2 >> 1;
+        send_idx = recv_idx = 0;
+        last_idx = pof2;
+        while (mask > 0) {
+            newdst = newrank ^ mask;
+            /* real rank of dest */
+            dst = (newdst < rem) ? newdst * 2 + 1 : newdst + rem;
+
+            size_t send_cnt = 0, recv_cnt = 0;
+            if (newrank < newdst) {
+                send_idx = recv_idx + mask;
+                for (i = send_idx; i < last_idx; i++)
+                    send_cnt += newcnts[i];
+                for (i = recv_idx; i < send_idx; i++)
+                    recv_cnt += newcnts[i];
+            }
+            else {
+                recv_idx = send_idx + mask;
+                for (i = send_idx; i < recv_idx; i++)
+                    send_cnt += newcnts[i];
+                for (i = recv_idx; i < last_idx; i++)
+                    recv_cnt += newcnts[i];
+            }
+
+            /* Send data from tmp_results. Recv into tmp_recvbuf */
+            if ((send_cnt != 0) && (recv_cnt != 0)) {
+                atl_req send_req, recv_req;
+                uint64_t op_tag =
+                    tag_creator->create(rank, tag_comm_id, tagc, ofi_op_tag::reduce_scatter_tag);
+                do {
+                    ret = send(ep_idx,
+                               (char*)tmp_results + newdisps[send_idx] * dsize,
+                               send_cnt * dsize,
+                               dst,
+                               op_tag,
+                               send_req);
+                    CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "send failed");
+                    if (ret == ATL_STATUS_AGAIN) {
+                        ccl_yield(ccl::global_data::env().yield_type);
+                    }
+                } while (ret == ATL_STATUS_AGAIN);
+                op_tag =
+                    tag_creator->create(dst, tag_comm_id, tagc, ofi_op_tag::reduce_scatter_tag);
+                do {
+                    ret = recv(ep_idx,
+                               (char*)tmp_recvbuf + newdisps[recv_idx] * dsize,
+                               recv_cnt * dsize,
+                               dst,
+                               op_tag,
+                               recv_req);
+                    CCL_THROW_IF_NOT(ret != ATL_STATUS_FAILURE, "recv failed");
+                    if (ret == ATL_STATUS_AGAIN) {
+                        ccl_yield(ccl::global_data::env().yield_type);
+                    }
+                } while (ret == ATL_STATUS_AGAIN);
+                while (!send_req.is_completed || !recv_req.is_completed) {
+                    poll(ep_idx);
+                    if (!send_req.is_completed) {
+                        CCL_THROW_IF_NOT(check(ep_idx, send_req) != ATL_STATUS_FAILURE,
+                                         "check send failed");
+                    }
+                    if (!recv_req.is_completed) {
+                        CCL_THROW_IF_NOT(check(ep_idx, recv_req) != ATL_STATUS_FAILURE,
+                                         "check recv failed");
+                    }
+                }
+            }
+            else if ((send_cnt == 0) && (recv_cnt != 0)) {
+                uint64_t op_tag =
+                    tag_creator->create(dst, tag_comm_id, tagc, ofi_op_tag::reduce_scatter_tag);
+                ofi_recv((char*)tmp_recvbuf + newdisps[recv_idx] * dsize,
+                         recv_cnt * dsize,
+                         dst,
+                         this,
+                         ep_idx,
+                         op_tag);
+            }
+            else if ((recv_cnt == 0) && (send_cnt != 0)) {
+                uint64_t op_tag =
+                    tag_creator->create(rank, tag_comm_id, tagc, ofi_op_tag::reduce_scatter_tag);
+                ofi_send((char*)tmp_results + newdisps[send_idx] * dsize,
+                         send_cnt * dsize,
+                         dst,
+                         this,
+                         ep_idx,
+                         op_tag);
+            }
+
+            /* tmp_recvbuf contains data received in this step.
+             * tmp_results contains data accumulated so far */
+
+            if (recv_cnt) {
+                size_t out_count;
+                ret = atl_comp_reduce_regular((char*)tmp_recvbuf + newdisps[recv_idx] * dsize,
+                                              recv_cnt,
+                                              (char*)tmp_results + newdisps[recv_idx] * dsize,
+                                              &out_count,
+                                              dtype,
+                                              op);
+                CCL_THROW_IF_NOT(ret == ATL_STATUS_SUCCESS, "atl_comp_reduce_regular failed");
+            }
+
+            send_idx = recv_idx;
+            last_idx = recv_idx + mask;
+            mask >>= 1;
+        }
+
+        /* copy this process's result from tmp_results to recvbuf */
+        memcpy(recv_buf, (char*)tmp_results + disps[rank] * dsize, recv_len * dsize);
+    }
+
+    /* In the non-power-of-two case, all odd-numbered processes 
+     * which did extra work sends results to left neighbor */
+    if (rank < 2 * rem) {
+        if (rank % 2) { /* odd */
+            if (recv_len) {
+                uint64_t op_tag = tag_creator->create(rank, tag_comm_id, tagc, 3);
+                ofi_send((char*)tmp_results + disps[rank - 1] * dsize,
+                         recv_len * dsize,
+                         rank - 1,
+                         this,
+                         ep_idx,
+                         op_tag);
+            }
+        }
+        else { /* even */
+            if (recv_len) {
+                uint64_t op_tag = tag_creator->create(
+                    rank + 1, tag_comm_id, tagc, ofi_op_tag::reduce_scatter_tag);
+                ofi_recv(recv_buf, recv_len * dsize, rank + 1, this, ep_idx, op_tag);
+            }
+        }
+    }
+
+fn_exit:
+    // to let user complete this operation through wait(req)
+    req.is_completed = false;
+
+    atl_ofi_req_t* ofi_req = ((atl_ofi_req_t*)req.internal);
+    ofi_req->comp_state = ATL_OFI_COMP_COMPLETED;
+
+    delete[] newcnts;
+    delete[] newdisps;
+    delete[] disps;
+    free(tmp_recvbuf);
+    free(tmp_results);
     return ATL_STATUS_SUCCESS;
 }
 

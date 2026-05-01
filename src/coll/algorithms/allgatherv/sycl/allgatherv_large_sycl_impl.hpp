@@ -18,6 +18,7 @@
 #include "common/global/global.hpp"
 #include "coll/algorithms/utils/sycl_kernels.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/allgatherv/sycl/allgatherv_large_sycl_ring.hpp"
 
 // Kernel name templates for allgatherv_large
 template <typename T, int vec_size, int GPUS>
@@ -158,7 +159,7 @@ ccl::event allgatherv_large_impl_ipc_ce(sycl::queue& q,
     return ccl::event::create_from_native(barrier_event2);
 }
 
-template <typename T, int N, int vec_size_use>
+template <typename T, int vec_size_use>
 ccl::event allgatherv_large_impl_ipc(sycl::queue& q,
                                      const void* send_buf,
                                      size_t send_count,
@@ -179,6 +180,9 @@ ccl::event allgatherv_large_impl_ipc(sycl::queue& q,
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
 
+    const int pair_comm_size = pair_comm->size();
+    const int even_comm_size = even_comm->size();
+
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     bool is_recording = use_recording_path(q);
 
@@ -197,25 +201,33 @@ ccl::event allgatherv_large_impl_ipc(sycl::queue& q,
     constexpr int work_group_size = 16;
 
     constexpr int vec_size = vec_size_use;
-    const bool is_multi_tile = pair_comm->size() > 1;
+    const bool is_multi_tile = pair_comm_size > 1;
     const size_t kernel_threads = send_count / vec_size + send_count % vec_size;
     const size_t kernel_size = ((kernel_threads + work_group_size - 1) / work_group_size) * work_group_size;
 
     sycl::event kernel_event = q.submit([=](sycl::handler& h) {
         h.depends_on(barrier_event1);
-        h.parallel_for<oneccl_allgatherv_large_ipc<T, vec_size, N>>(
-            sycl::nd_range<1>(kernel_size, work_group_size),
-            [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(work_group_size)]] {
-                read_write<T, N, vec_size>(
-                    local_peer_even_ptrs, local_local_ptrs, local_peer_pair_ptrs, is_multi_tile, send_count, it);
-            });
+        static_for_each_gpu(
+            [&]<int GPUS>() {
+                h.parallel_for<oneccl_allgatherv_large_ipc<T, vec_size, GPUS>>(
+                    sycl::nd_range<1>(kernel_size, work_group_size),
+                    [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(work_group_size)]] {
+                        read_write<T, GPUS, vec_size>(local_peer_even_ptrs,
+                                                      local_local_ptrs,
+                                                      local_peer_pair_ptrs,
+                                                      is_multi_tile,
+                                                      send_count,
+                                                      it);
+                    });
+            },
+            even_comm_size);
     });
 
     sycl::event barrier_event2 = invoke_barrier(node_comm, q, { kernel_event }, is_cpu_barrier);
     return ccl::event::create_from_native(barrier_event2);
 }
 
-template <typename T, int N, int vec_size_use>
+template <typename T, int vec_size_use>
 ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
                                      const void* send_buf,
                                      size_t send_count,
@@ -362,25 +374,30 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
 
         sycl::event kernel_event = q.submit([=](sycl::handler& h) {
             h.depends_on(barrier_event1);
-            h.parallel_for<oneccl_allgatherv_large_main<T, vec_size, N>>(
-                sycl::nd_range<1>(kernel_size, work_group_size),
-                [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(work_group_size)]] {
-                    read_write<T, N, vec_size>(local_peer_even_ptrs,
-                                               local_local_ptrs,
-                                               local_peer_pair_ptrs,
-                                               is_multi_tile,
-                                               data_count,
-                                               it);
-                    // copy next input chunk
-                    if (use_kernel_copy && nc < num_chunks - 1) {
-                        copy_data<T, 1, vec_size>(tmp_send_buf_next, my_send_buf_next, data_count_next, it);
-                    }
-                    // copy prev output chunk
-                    if (use_kernel_copy && nc > 0 && is_multi_tile) {
-                        copy_data<T, N, vec_size>(
-                            recv_buf_dst_ptrs_prev, tmp_buf_src_ptrs_prev, data_count_prev, it);
-                    }
-                });
+            static_for_each_gpu(
+                [&]<int GPUS>() {
+                    h.parallel_for<oneccl_allgatherv_large_main<T, vec_size, GPUS>>(
+                        sycl::nd_range<1>(kernel_size, work_group_size),
+                        [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(work_group_size)]] {
+                            read_write<T, GPUS, vec_size>(local_peer_even_ptrs,
+                                                          local_local_ptrs,
+                                                          local_peer_pair_ptrs,
+                                                          is_multi_tile,
+                                                          data_count,
+                                                          it);
+                            // copy next input chunk
+                            if (use_kernel_copy && nc < num_chunks - 1) {
+                                copy_data<T, 1, vec_size>(
+                                    tmp_send_buf_next, my_send_buf_next, data_count_next, it);
+                            }
+                            // copy prev output chunk
+                            if (use_kernel_copy && nc > 0 && is_multi_tile) {
+                                copy_data<T, GPUS, vec_size>(
+                                    recv_buf_dst_ptrs_prev, tmp_buf_src_ptrs_prev, data_count_prev, it);
+                            }
+                        });
+                },
+                even_comm_size);
         });
         work_events.push_back(kernel_event);
 
@@ -406,7 +423,7 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
             //TODO: should we use single kernel copy when q_use is used
             sycl::queue q_copy_use = (nc == num_chunks - 1 && data_count < small_size_threshold) ? q_use : q_copy;
             copy_data(dsize,
-                      N,
+                      even_comm_size,
                       recv_buf_dst_ptrs_prev,
                       tmp_buf_src_ptrs_prev,
                       data_count_prev,
@@ -444,11 +461,17 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
                     const size_t kernel_threads = data_count / vec_size + data_count % vec_size;
                     const size_t kernel_size =
                         ((kernel_threads + work_group_size - 1) / work_group_size) * work_group_size;
-                    h.parallel_for<oneccl_allgatherv_large_epilogue<T, vec_size, N>>(
-                        sycl::nd_range<1>(kernel_size, work_group_size),
-                        [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(work_group_size)]] {
-                            copy_data<T, N, vec_size>(recv_buf_dst_ptrs, tmp_buf_src_ptrs, data_count, it);
-                        });
+
+                    static_for_each_gpu(
+                        [&]<int GPUS>() {
+                            h.parallel_for<oneccl_allgatherv_large_epilogue<T, vec_size, GPUS>>(
+                                sycl::nd_range<1>(kernel_size, work_group_size),
+                                [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(work_group_size)]] {
+                                    copy_data<T, GPUS, vec_size>(
+                                        recv_buf_dst_ptrs, tmp_buf_src_ptrs, data_count, it);
+                                });
+                        },
+                        even_comm_size);
                 });
             }
             // use memcpys to copy from tmp_buffer to recv_buffer
@@ -479,9 +502,7 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
     return ccl::event::create_from_native(output_event);
 }
 
-// NE is the number of ranks in even_comm and
-// NP is the number of ranks in pair_comm
-template <typename T, int NE, int NP, bool use_full_vector>
+template <typename T, bool use_full_vector>
 ccl::event allgatherv_large_impl(sycl::queue& q,
                                  const void* send_buf,
                                  size_t send_count,
@@ -494,7 +515,6 @@ ccl::event allgatherv_large_impl(sycl::queue& q,
                                  sycl_ptrs_type& sycl_ptrs,
                                  const ccl::vector_class<ccl::event>& deps,
                                  bool use_tmp) {
-    constexpr int N = NE;
     // for 2 byte types with odd count, use 4 byte vectors instead of 8 bytes
     constexpr int vec_size_use = get_num_elements<T, 8, use_full_vector>();
 
@@ -504,17 +524,36 @@ ccl::event allgatherv_large_impl(sycl::queue& q,
     const bool is_tmp_used = use_tmp;
 
     ccl::event e;
+
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+        sycl::event kernel_event;
+        kernel_event = allgatherv_large_su_ring<T>(q,
+                                                   send_buf,
+                                                   send_count,
+                                                   recv_buf,
+                                                   recv_counts,
+                                                   offsets,
+                                                   dtype,
+                                                   comm,
+                                                   global_stream,
+                                                   sycl_ptrs,
+                                                   deps,
+                                                   use_tmp);
+        //kernel_event = allgatherv_large_su_a2a<T>(q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
+        return ccl::event::create_from_native(kernel_event);
+    }
+
     // TODO: copy engines currently does not support tmp buf
     if (ccl::global_data::env().sycl_copy_engine) {
         e = allgatherv_large_impl_ipc_ce<T>(
             q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
     }
     else if (!is_tmp_used) {
-        e = allgatherv_large_impl_ipc<T, N, vec_size_use>(
+        e = allgatherv_large_impl_ipc<T, vec_size_use>(
             q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
     }
     else {
-        e = allgatherv_large_impl_tmp<T, N, vec_size_use>(
+        e = allgatherv_large_impl_tmp<T, vec_size_use>(
             q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
     }
     return e;

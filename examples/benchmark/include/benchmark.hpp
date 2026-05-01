@@ -377,7 +377,9 @@ void store_to_csv(const user_options_t& options,
                   double max_time,
                   double avg_time,
                   double stddev,
-                  double wait_avg_time) {
+                  double wait_avg_time,
+                  double algbw,
+                  double busbw) {
     std::ofstream csvf;
     csvf.open(options.csv_filepath, std::ofstream::out | std::ofstream::app);
 
@@ -396,7 +398,7 @@ void store_to_csv(const user_options_t& options,
                  << "," << ccl::get_datatype_size(dtype) << "," << elem_count << ","
                  << ccl::get_datatype_size(dtype) * elem_count << "," << buf_count << ","
                  << iter_count << "," << min_time << "," << max_time << "," << avg_time << ","
-                 << stddev << "," << wait_avg_time << std::endl;
+                 << stddev << "," << wait_avg_time << "," << algbw << "," << busbw << std::endl;
         }
         csvf.close();
     }
@@ -472,13 +474,42 @@ void print_timings(const ccl::communicator& comm,
         max_time /= iter_count;
 
         size_t bytes = elem_count * ccl::get_datatype_size(dtype) * buf_count;
+
+        double algbw = bytes / total_avg_time / 1000;
+
+        if (ncolls == 1) {
+            if (options.coll_names.front() == "allgather" ||
+                options.coll_names.front() == "allgatherv" ||
+                //options.coll_names.front() == "reduce_scatter" ||
+                options.coll_names.front() == "alltoall" ||
+                options.coll_names.front() == "alltoallv") {
+                algbw = algbw * nranks;
+            }
+        }
+
+        double busbw = algbw;
+        if (ncolls == 1) {
+            if (options.coll_names.front() == "allreduce") {
+                busbw = algbw * 2 * (nranks - 1) / nranks;
+            }
+            else if (options.coll_names.front() == "allgather" ||
+                     options.coll_names.front() == "allgatherv" ||
+                     options.coll_names.front() == "reduce_scatter" ||
+                     options.coll_names.front() == "alltoall" ||
+                     options.coll_names.front() == "alltoallv") {
+                busbw = algbw * (nranks - 1) / nranks;
+            }
+        }
+
         std::stringstream ss;
         ss << std::right << std::fixed << std::setw(COL_WIDTH) << bytes << std::setw(COL_WIDTH)
            << elem_count * buf_count << std::setw(COL_WIDTH) << iter_count << std::setw(COL_WIDTH)
            << std::setprecision(COL_PRECISION) << min_time << std::setw(COL_WIDTH)
            << std::setprecision(COL_PRECISION) << max_time << std::setw(COL_WIDTH)
            << std::setprecision(COL_PRECISION) << total_avg_time << std::setw(COL_WIDTH - 3)
-           << std::setprecision(COL_PRECISION) << stddev << std::setw(COL_WIDTH + 3);
+           << std::setprecision(COL_PRECISION) << stddev << std::setw(COL_WIDTH)
+           << std::setprecision(COL_PRECISION) << algbw << std::setw(COL_WIDTH)
+           << std::setprecision(COL_PRECISION) << busbw << std::setw(COL_WIDTH + 3);
 
         if (show_extened_info(options.show_additional_info)) {
             ss << std::right << std::fixed << std::setprecision(COL_PRECISION) << wait_avg_time;
@@ -497,7 +528,9 @@ void print_timings(const ccl::communicator& comm,
                          max_time,
                          total_avg_time,
                          stddev,
-                         wait_avg_time);
+                         wait_avg_time,
+                         algbw,
+                         busbw);
         }
     }
 

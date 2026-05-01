@@ -25,6 +25,10 @@
 #include "common/utils/hash.hpp"
 #include "common/utils/spinlock.hpp"
 
+#include "occp/occp/occp_client.h"
+#include "occp/occp/occp_server.h"
+#include "occp/occp/types.h"
+
 class atl_ofi : public atl_base_transport {
 public:
     atl_ofi() = default;
@@ -234,6 +238,11 @@ private:
                               size_t named_ep_count,
                               int rank);
     // void shm_barrier(void* mem, int local_size);
+    std::unique_ptr<occp_server_t> occp_server_;
+    std::unique_ptr<occp_client_t> occp_client_;
+    sockaddr_t occp_srv_addr_;
+    uint16_t occp_srv_port_{ 20000 };
+    std::string occp_srv_ip_;
 
     atl_ofi_ctx_t ctx;
 

@@ -52,9 +52,28 @@ ccl::event broadcast_sycl_single_node(sycl::queue& q,
         return ccl::event::create_from_native(sycl_e);
     }
 
+    // for ARC GPUs to do ring RT256
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+        if (!is_aligned(send_buf, recv_buf, count, ccl_dtype.size(), 4)) {
+            done = false;
+            return e;
+        }
+        LOG_DEBUG("invoking broadcast RT256 kernel broadcast_rt_ring, count:",
+                  count,
+                  " datatype: ",
+                  dtype);
+        e = broadcast_rt_ring(send_buf, recv_buf, count, dtype, root, comm, global_stream, done);
+        LOG_DEBUG(
+            "invoking broadcast RT256 kernel, recv_count:", count, " datatype: ", dtype, " done");
+        if (done) {
+            return e;
+        }
+    }
+
     if (count * ccl_dtype.size() <= ccl::global_data::env().sycl_broadcast_small_threshold) {
 #ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin("broadcast_small", "send_size", count * ccl_dtype.size());
+        ccl::profile::itt::task_begin(
+            "broadcast_small", "send_size", count * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG(
             "|CCL_SYCL| broadcast selects small kernel, count: ", count, " datatype: ", dtype);
@@ -70,7 +89,8 @@ ccl::event broadcast_sycl_single_node(sycl::queue& q,
     }
     else {
 #ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin("broadcast_large", "send_size", count * ccl_dtype.size());
+        ccl::profile::itt::task_begin(
+            "broadcast_large", "send_size", count * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG(
             "|CCL_SYCL| broadcast selects large kernel, count: ", count, " datatype: ", dtype);

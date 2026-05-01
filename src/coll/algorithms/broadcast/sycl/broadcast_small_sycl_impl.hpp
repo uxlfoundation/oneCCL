@@ -20,20 +20,24 @@
 #include "coll/algorithms/utils/sycl_kernels.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 
-template <typename T, int VS, int use_block, int NE, int NP>
+template <typename T, int VS, int use_block>
 class oneccl_broadcast_small {};
 
-template <typename T, int N>
-inline void broadcast_kernel(const void* in, std::array<void*, MAX_NODE_RANKS> out, size_t idx) {
+template <typename T>
+inline void broadcast_kernel(const void* in,
+                             std::array<void*, MAX_NODE_RANKS> out,
+                             const size_t comm_size,
+                             size_t idx) {
 #pragma unroll
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < comm_size; i++) {
         ((T*)out[i])[idx] = ((T*)in)[idx];
     }
 }
 
-template <typename T, int N, int vec_size, int use_block>
+template <typename T, int vec_size, int use_block>
 void inline broadcast(const void* in,
                       std::array<void*, MAX_NODE_RANKS> out,
+                      const size_t comm_size,
                       const size_t count,
                       const sycl::nd_item<1> it) {
     const size_t idx = it.get_global_linear_id();
@@ -42,19 +46,17 @@ void inline broadcast(const void* in,
     const size_t packed_count = count / vec_size;
 
     if (use_block && idx < packed_count) {
-        broadcast_kernel<AT, N>(in, out, idx);
+        broadcast_kernel<AT>(in, out, comm_size, idx);
     }
     else {
         const size_t new_idx = idx + (vec_size - 1) * packed_count;
         if (new_idx < count) {
-            broadcast_kernel<T, N>(in, out, new_idx);
+            broadcast_kernel<T>(in, out, comm_size, new_idx);
         }
     }
 }
 
-// NE is the number of ranks in even_comm and
-// NP is the number of ranks in pair_comm
-template <typename T, int NE, int NP>
+template <typename T>
 ccl::event broadcast_small_impl(const void* send_buf,
                                 void* recv_buf,
                                 size_t count,
@@ -63,7 +65,6 @@ ccl::event broadcast_small_impl(const void* send_buf,
                                 ccl_comm* comm,
                                 ccl_stream* global_stream,
                                 const ccl::vector_class<ccl::event>& deps) {
-    constexpr int N = NE * NP;
     sycl::queue q = global_stream->get_native_stream();
     bool is_recording = use_recording_path(q);
 
@@ -97,21 +98,22 @@ ccl::event broadcast_small_impl(const void* send_buf,
         constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
         const size_t kernel_threads = count / vec_size + count % vec_size;
         const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
+        const size_t tmp_buf_size = node_comm->get_tmp_buf_size();
 
         sycl::event local_event = q.submit([=](sycl::handler& h) {
             h.depends_on(sycl_deps);
-            h.parallel_for<oneccl_broadcast_small<T, VS, use_block, NE, NP>>(
+            h.parallel_for<oneccl_broadcast_small<T, VS, use_block>>(
                 sycl::nd_range<1>(kernel_size, wg_size),
                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
                     auto remote_ptrs_cpy = remote_ptrs;
                     if (is_recording) {
-                        size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
+                        size_t offset_bytes = *tmp_buf_idx * tmp_buf_size;
                         for (size_t rem_idx = 0; rem_idx < remote_ptrs.size(); ++rem_idx) {
                             remote_ptrs_cpy[rem_idx] = static_cast<void*>(
                                 static_cast<uint8_t*>(remote_ptrs[rem_idx]) + offset_bytes);
                         }
                     }
-                    broadcast<T, N, VS, use_block>(send_buf, remote_ptrs_cpy, count, it);
+                    broadcast<T, VS, use_block>(send_buf, remote_ptrs_cpy, comm_size, count, it);
                     if (is_recording && it.get_global_linear_id() == 0) {
                         *tmp_buf_secondary_idx = *tmp_buf_idx;
                         *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
@@ -150,6 +152,7 @@ ccl::event broadcast_small_impl(const void* send_buf,
                                              nullptr,
                                              count,
                                              dsize,
+                                             node_comm->get_tmp_buf_size(),
                                              dep_events);
             }
             else {

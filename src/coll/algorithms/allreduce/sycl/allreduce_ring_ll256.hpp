@@ -17,9 +17,6 @@
 
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 
-#define LL256_BUF_SIZE    (32 * 1024 * 1024)
-#define GATHER_BUF_OFFSET (LL256_BUF_SIZE / 2)
-
 ccl::event arc_allreduce(const void *src,
                          void *dst,
                          size_t count,

@@ -28,7 +28,7 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
 #endif // CCL_ENABLE_SYCL
     auto supported_colls = { ccl_coll_allgather, ccl_coll_allgatherv, ccl_coll_alltoall,
                              ccl_coll_allreduce, ccl_coll_broadcast,  ccl_coll_reduce_scatter,
-                             ccl_coll_send,      ccl_coll_recv };
+                             ccl_coll_barrier,   ccl_coll_send,       ccl_coll_recv };
     RETURN_FALSE_IF(!checkers::is_coll_supported(supported_colls, param.ctype),
                     "coll is not supported");
 
@@ -76,17 +76,17 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                     "stub backend is not supported");
 
     RETURN_FALSE_IF(ccl::global_data::env().worker_count != 1, "unsupported count of workers");
+    bool is_arc = is_arc_card(ccl::ze::get_device_family(param.stream->get_ze_device()));
 #ifdef CCL_ENABLE_SYCL
     RETURN_FALSE_IF(param.comm->get_pair_comm()->size() > 2,
                     "unsupported pair_comm size: ",
                     param.comm->get_pair_comm()->size());
     // ARC GPUs are exception
-    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_all_vertices_connected() &&
-                        !is_arc_card(ccl::ze::get_device_family(param.stream->get_ze_device())),
+    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_all_vertices_connected() && !is_arc,
                     "no connection between vertices");
     RETURN_FALSE_IF(!param.comm->get_topo_manager().has_same_ppn(),
                     "ppn is not the same among the nodes");
-    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_same_domains(),
+    RETURN_FALSE_IF(!param.comm->get_topo_manager().has_same_domains() && !is_arc,
                     "processes are not properly distributed among domains");
 
     const ccl::topo_manager& topo_manager = param.comm->get_topo_manager();
@@ -110,8 +110,9 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
     RETURN_FALSE_IF(is_oversubscription, "Oversubscription is not allowed");
 
     if (param.ctype != ccl_coll_allreduce && param.ctype != ccl_coll_allgatherv &&
-        param.ctype != ccl_coll_reduce_scatter && param.ctype != ccl_coll_recv &&
-        param.ctype != ccl_coll_send) {
+        param.ctype != ccl_coll_allgather && param.ctype != ccl_coll_reduce_scatter &&
+        param.ctype != ccl_coll_recv && param.ctype != ccl_coll_send &&
+        param.ctype != ccl_coll_alltoall) {
         RETURN_FALSE_IF(!param.comm->get_topo_manager().has_p2p_access(),
                         "no p2p access between devices");
     }
@@ -125,15 +126,6 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                         " is specified explicitly as: ",
                         ccl::global_data::env().allreduce_algo_raw,
                         " not supported");
-        RETURN_FALSE_IF(
-            param.reduction == ccl::reduction::custom,
-            "allreduce supports only sum/min/max/prod/avg and user-defined reduction operations");
-        if (!is_single_node) {
-            // TODO: enable ring, rabenseifner and direct scale-out collectives
-            RETURN_FALSE_IF(
-                ccl_reduction_type_storage::is_custom(param.reduction),
-                "user-defined reduction operations are not supported for scale-out path");
-        }
     }
 
     // Conditions specific to allgather
@@ -167,16 +159,12 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
     // Conditions specific to both allgather/allgatherv
     if (param.ctype == ccl_coll_allgatherv || param.ctype == ccl_coll_allgather) {
         if (!is_single_node) {
+            ccl_comm* r2r_comm = param.comm->get_r2r_comm().get();
+
             RETURN_FALSE_IF(
-                ccl::global_data::env().atl_transport == ccl_atl_ofi,
-                "SYCL based Allgather/Allgatherv in multiple node mode supports only MPI transport");
+                r2r_comm->size() > ccl::global_data::env().sycl_allgatherv_scaleout_comm_size,
+                "SYCL based Allgather/Allgatherv is not supported at the moment for the larger scale");
         }
-
-        ccl_comm* r2r_comm = param.comm->get_r2r_comm().get();
-
-        RETURN_FALSE_IF(
-            r2r_comm->size() > ccl::global_data::env().sycl_allgatherv_scaleout_comm_size,
-            "SYCL based Allgather/Allgatherv is not supported at the moment for the larger scale");
     }
 
     // Conditions specific to alltoall
@@ -199,11 +187,12 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
                         " is specified explicitly as: ",
                         ccl::global_data::env().broadcast_algo_raw,
                         " not supported");
-
+#ifdef CCL_ENABLE_ESIMD
         if (ccl::global_data::env().sycl_esimd) {
             LOG_DEBUG(
                 "ESIMD kernels are not implemented for broadcast, so SYCL kernels path is selected");
         }
+#endif // CCL_ENABLE_ESIMD
     }
 
     // Conditions specific to reduce_scatter
@@ -218,11 +207,6 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
         RETURN_FALSE_IF(
             param.reduction == ccl::reduction::custom,
             "reduce_scatter supports only sum/min/max/prod/avg and user-defined reduction operations");
-        if (!is_single_node) {
-            RETURN_FALSE_IF(
-                ccl_reduction_type_storage::is_custom(param.reduction),
-                "user-defined reduction operations are not supported for scale-out path");
-        }
     }
 
     if (!ccl::global_data::env().disable_ze_port_check) {
@@ -241,9 +225,10 @@ bool can_use_sycl_kernels(const ccl_selector_param& param) {
         CCL_ASSERT(param.comm->get_node_comm()->size() < local_proc_count);
         RETURN_FALSE_IF(!ccl::global_data::env().sycl_sub_communicator,
                         "SYCL kernels are not enabled for sub-communicators");
-
+#ifdef CCL_ENABLE_ESIMD
         RETURN_FALSE_IF(ccl::global_data::env().sycl_esimd,
                         "SYCL ESIMD kernels are not enabled for sub-communicators");
+#endif // CCL_ENABLE_ESIMD
     }
 
     if (checkers::is_unknown_device_family(param)) {
@@ -372,30 +357,28 @@ static sycl_allreduce_tune_attr allreduce_auto_select_tune_attr(size_t size,
     // small message size
     // direct is the best option based on the latest perf results
     // and message/comm size ranges
-    if (ccl::global_data::env().atl_transport != ccl_atl_ofi) {
-        if (ccl_dtype == ccl::datatype::float16) {
-            // half precision data types: fp16
-            if (comm_size <= 8 && size <= 512 * 1024) {
-                return { allreduce_scaleout_algo::direct };
-            }
-            if (comm_size > 8 && size <= 1024 * 1024) {
-                return { allreduce_scaleout_algo::direct };
-            }
+    if (ccl_dtype == ccl::datatype::float16) {
+        // half precision data types: fp16
+        if (comm_size <= 8 && size <= 512 * 1024) {
+            return { allreduce_scaleout_algo::direct };
         }
-        else if (ccl_dtype == ccl::datatype::bfloat16) {
-            // half precision data types: bf16
-            if (comm_size <= 8 && size <= 1024 * 1024) {
-                return { allreduce_scaleout_algo::direct };
-            }
-            if (comm_size > 8 && size <= 4 * 1024 * 1024) {
-                return { allreduce_scaleout_algo::direct };
-            }
+        if (comm_size > 8 && size <= 1024 * 1024) {
+            return { allreduce_scaleout_algo::direct };
         }
-        else {
-            // full precision data types and other
-            if (size <= 4 * 1024 * 1024) {
-                return { allreduce_scaleout_algo::direct };
-            }
+    }
+    else if (ccl_dtype == ccl::datatype::bfloat16) {
+        // half precision data types: bf16
+        if (comm_size <= 8 && size <= 1024 * 1024) {
+            return { allreduce_scaleout_algo::direct };
+        }
+        if (comm_size > 8 && size <= 4 * 1024 * 1024) {
+            return { allreduce_scaleout_algo::direct };
+        }
+    }
+    else {
+        // full precision data types and other
+        if (size <= 4 * 1024 * 1024) {
+            return { allreduce_scaleout_algo::direct };
         }
     }
     // medium/large message size
@@ -498,32 +481,32 @@ static sycl_reduce_scatter_tune_attr reduce_scatter_auto_select_tune_attr(size_t
     // small message size
     // direct is the best option based on the latest perf results
     // and message/comm size ranges
-    if (ccl::global_data::env().atl_transport != ccl_atl_ofi) {
-        if (ccl_dtype == ccl::datatype::float16) {
-            // half precision data types: fp16
-            if (comm_size <= 8 && size <= 1024 * 1024) {
-                return { reduce_scatter_scaleout_algo::direct };
-            }
-            if (comm_size > 8 && size <= 1024 * 1024) {
-                return { reduce_scatter_scaleout_algo::direct };
-            }
+    //    if (ccl::global_data::env().atl_transport != ccl_atl_ofi) {
+    if (ccl_dtype == ccl::datatype::float16) {
+        // half precision data types: fp16
+        if (comm_size <= 8 && size <= 1024 * 1024) {
+            return { reduce_scatter_scaleout_algo::direct };
         }
-        else if (ccl_dtype == ccl::datatype::bfloat16) {
-            // half precision data types: bf16
-            if (comm_size <= 8 && size <= 1024 * 1024) {
-                return { reduce_scatter_scaleout_algo::direct };
-            }
-            if (comm_size > 8 && size <= 1 * 1024 * 1024) {
-                return { reduce_scatter_scaleout_algo::direct };
-            }
-        }
-        else {
-            // full precision data types and other
-            if (size <= 1 * 1024 * 1024) {
-                return { reduce_scatter_scaleout_algo::direct };
-            }
+        if (comm_size > 8 && size <= 1024 * 1024) {
+            return { reduce_scatter_scaleout_algo::direct };
         }
     }
+    else if (ccl_dtype == ccl::datatype::bfloat16) {
+        // half precision data types: bf16
+        if (comm_size <= 8 && size <= 1024 * 1024) {
+            return { reduce_scatter_scaleout_algo::direct };
+        }
+        if (comm_size > 8 && size <= 1 * 1024 * 1024) {
+            return { reduce_scatter_scaleout_algo::direct };
+        }
+    }
+    else {
+        // full precision data types and other
+        if (size <= 1 * 1024 * 1024) {
+            return { reduce_scatter_scaleout_algo::direct };
+        }
+    }
+    //    }
     // medium/large message size
     if (comm_size <= 64) {
         return reduce_scatter_select_large_algorithm(size, comm_size);
@@ -576,6 +559,7 @@ static sycl_allgatherv_tune_attr allgatherv_auto_select_tune_attr(size_t size,
         return { allgatherv_scaleout_algo::ring };
     }
 
+    // experimental values, should be reviewed later
     if (comm_size < 4 && (size < 512 * 1024 || size > 128 * 1024 * 1024) ||
         comm_size >= 4 && comm_size < 8 && (size < 2 * 1024 * 1024 || size > 32 * 1024 * 1024) ||
         comm_size >= 8 && (size < 2 * 1024 * 1024 || size > 9 * 1024 * 1024)) {
@@ -633,4 +617,50 @@ size_t allgatherv_select_chunk_size(allgatherv_scaleout_algo algo, size_t size, 
     }
     // error protection
     return std::min(auto_pipeline_chunk_size, max_pipeline_chunk_size);
+}
+
+// alltoall
+static sycl_alltoall_tune_attr alltoall_auto_select_tune_attr(size_t size,
+                                                              size_t comm_size,
+                                                              ccl_datatype ccl_dtype) {
+    if (ccl::global_data::env().sycl_enable_direct_gpu_rdma) {
+        // for BMG
+        if (size <= 256 * 1024 * 1024)
+            return { alltoall_scaleout_algo::scatter };
+        else
+            return { alltoall_scaleout_algo::gdr_only_pairwise };
+    }
+
+    if (ccl::global_data::env().atl_transport != ccl_atl_ofi) {
+        return { alltoall_scaleout_algo::direct };
+    }
+
+    return { alltoall_scaleout_algo::fallback };
+}
+
+sycl_alltoall_tune_attr alltoall_select_tune_attr(size_t size,
+                                                  size_t comm_size,
+                                                  ccl_datatype ccl_dtype) {
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "auto") {
+        return alltoall_auto_select_tune_attr(size, comm_size, ccl_dtype);
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "direct") {
+        return { alltoall_scaleout_algo::direct };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "pairwise") {
+        return { alltoall_scaleout_algo::pairwise };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "scatter") {
+        return { alltoall_scaleout_algo::scatter };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "gdr-only-pairwise") {
+        return { alltoall_scaleout_algo::gdr_only_pairwise };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "numa-gdr-only") {
+        return { alltoall_scaleout_algo::numa_gdr_only };
+    }
+    if (ccl::global_data::env().sycl_alltoall_scaleout_algo == "numa-gdr-split") {
+        return { alltoall_scaleout_algo::numa_gdr_split };
+    }
+    CCL_THROW("unsupported selection");
 }

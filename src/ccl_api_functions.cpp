@@ -18,6 +18,8 @@
 #include "oneapi/ccl/api_functions.hpp"
 #include "comm/comm.hpp"
 #include "oneapi/ccl/exception.hpp"
+#include "coll/group/group.hpp"
+#include "common/window/window_impl.hpp"
 
 #if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 #include "comm/comm_interface.hpp"
@@ -147,6 +149,81 @@ void group_start() {
 
 void group_end() {
     group_impl::end();
+}
+
+/******************** MEMORY CALLS ********************/
+
+void CCL_API mem_alloc(const stream& op_stream, size_t size, void** ptr) {
+#if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
+    impl_dispatch disp;
+    auto global_stream = disp(op_stream);
+    sycl::queue q = global_stream->get_native_stream();
+    *ptr = sycl::malloc_device<char>(size, q);
+#else
+    *ptr = nullptr;
+#endif
+}
+
+void CCL_API mem_free(const stream& op_stream, void* ptr) {
+#if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
+    impl_dispatch disp;
+    auto global_stream = disp(op_stream);
+    sycl::queue q = global_stream->get_native_stream();
+    sycl::free(ptr, q);
+#endif
+}
+
+/******************** BUFFER REGISTRATION CALLS ********************/
+
+void comm_register(const communicator& comm, void* buffer, size_t size, void** handle) {
+    LOG_DEBUG("registering buffer: ", buffer, ", size: ", size);
+
+#if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
+    impl_dispatch disp;
+    // Get the underlying comm implementation to access the ccl_comm
+    auto& comm_impl = disp(comm);
+
+    static_cast<ccl_comm*>(comm_impl.get())->buffer_register(buffer, size, handle);
+#else
+    *handle = NULL;
+#endif
+}
+
+void comm_deregister(const communicator& comm, void* handle) {
+    LOG_DEBUG("deregistering buffer. handle:", handle);
+
+#if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
+    impl_dispatch disp;
+    // Get the underlying comm implementation to access the ccl_comm
+    auto& comm_impl = disp(comm);
+
+    static_cast<ccl_comm*>(comm_impl.get())->buffer_deregister(handle);
+#endif
+}
+
+/******************** WINDOW REGISTRATION CALLS ********************/
+
+window comm_window_register(const communicator& comm, void* buffer, size_t size, int win_flags) {
+    LOG_DEBUG("registering window, buffer: ", buffer, ", size: ", size);
+
+    impl_dispatch disp;
+    // Get the underlying comm implementation to access the ccl_comm
+    auto& comm_impl = disp(comm);
+
+    // Create the opaque window implementation
+    auto impl = std::make_shared<ccl_window_impl>(
+        static_cast<ccl_comm*>(comm_impl.get()), buffer, size, win_flags);
+
+    // Return the opaque wrapper (window class)
+    return window(std::move(impl));
+}
+
+void comm_window_deregister(const communicator& comm, window& win) {
+    LOG_DEBUG("deregistering window");
+
+    // Reset the window's internal implementation
+    // The destructor of ccl_window_impl will handle cleanup
+    win = window(window::impl_value_t(nullptr));
 }
 
 /******************** OPERATION ********************/

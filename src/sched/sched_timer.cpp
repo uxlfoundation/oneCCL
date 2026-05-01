@@ -65,6 +65,7 @@ namespace profile {
 namespace itt {
 
 static constexpr unsigned max_entry_name_length = 64;
+static constexpr const char* comm_id_meta_name = "comm_id";
 
 /* -------------------------------- Task API -------------------------------- */
 
@@ -96,6 +97,29 @@ void task_begin(const char* name, const char* meta_name, uint64_t value) {
     }
 
     __itt_metadata_add(domain, __itt_null, string_cache[meta_name], __itt_metadata_u64, 1, &value);
+}
+
+void task_begin(const char* name, const char* meta_name, uint64_t value, uint64_t comm_id) {
+    auto it = string_cache.find(name);
+    if (it == string_cache.end()) {
+        string_cache[name] = __itt_string_handle_create(name);
+    }
+    __itt_task_begin(domain, __itt_null, __itt_null, string_cache[name]);
+
+    it = string_cache.find(meta_name);
+    if (it == string_cache.end()) {
+        string_cache[meta_name] = __itt_string_handle_create(meta_name);
+    }
+
+    __itt_metadata_add(domain, __itt_null, string_cache[meta_name], __itt_metadata_u64, 1, &value);
+
+    it = string_cache.find(comm_id_meta_name);
+    if (it == string_cache.end()) {
+        string_cache[comm_id_meta_name] = __itt_string_handle_create(comm_id_meta_name);
+    }
+
+    __itt_metadata_add(
+        domain, __itt_null, string_cache[comm_id_meta_name], __itt_metadata_u64, 1, &comm_id);
 }
 
 void task_end() {

@@ -19,13 +19,9 @@
 
 #include "coll/algorithms/utils/tvisa/include/gen_visa_templates.hpp"
 
-#define divUp(x, m) (((x) + (m)-1) / (m))
-
-#define alignUp(x, c) (divUp((x), (c)) * (c))
-
-#include "coll/algorithms/utils/rt64.hpp"
-#include "coll/algorithms/utils/rt64_128.hpp"
+#include "coll/algorithms/utils/protocol/proto_base.hpp"
+#include "coll/algorithms/utils/protocol/proto_rt64.hpp"
+#include "coll/algorithms/utils/protocol/proto_rt64_128.hpp"
 
 #include "ring_transmit.hpp"
-
-extern uint32_t pattern_counter;
+#include "twoshots_transmit.hpp"

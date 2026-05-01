@@ -125,9 +125,7 @@ ccl::event broadcast_large_impl_tmp(const void* send_buf,
     return ccl::event::create_from_native(ret_event);
 }
 
-// NE is the number of ranks in even_comm and
-// NP is the number of ranks in pair_comm
-template <typename T, int NE, int NP>
+template <typename T>
 ccl::event broadcast_large_impl(const void* send_buf,
                                 void* recv_buf,
                                 size_t count,

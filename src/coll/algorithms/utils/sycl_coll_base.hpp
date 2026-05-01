@@ -24,6 +24,7 @@
 #include <sycl/sycl.hpp>
 #include <sycl/ext/intel/esimd.hpp>
 #include "common/log/log.hpp"
+#include "umf/ipc.hpp"
 
 #if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 #include "comm/comm_interface.hpp"
@@ -35,6 +36,11 @@
 #include "ccl_api_functions_generators.hpp"
 #include "common/global/global.hpp"
 #include "common/api_wrapper/mpi_api_wrapper.hpp"
+#include "MT/shared_resource.hpp"
+
+namespace syclext = sycl::ext::oneapi;
+namespace syclexp = sycl::ext::oneapi::experimental;
+namespace sycliexp = sycl::ext::intel::experimental;
 
 // TODO: timers can re used, but place in more general place
 class timer {
@@ -234,18 +240,20 @@ std::array<T *, N> get_ipc_ptrs(std::shared_ptr<ccl_comm> comm,
 
     for (int i = 1; i < size; ++i) {
         int peer_rank = (rank + i) % size;
-        int global_peer_rank = comm->get_global_rank(peer_rank);
+        // ipc_handle_map is indexed by node_comm local rank (not global rank)
+        // since handles were exchanged via node_comm allgather
+        int map_key = peer_rank;
 
-        if (ipc_handle_map[global_peer_rank].size() <= handle_index) {
+        if (ipc_handle_map[map_key].size() <= handle_index) {
             CCL_THROW("handle_index is not expected: ",
                       handle_index,
-                      ", count of ipc handles per rank",
-                      ipc_handle_map[global_peer_rank].size(),
-                      ", global peer rank: ",
-                      global_peer_rank);
+                      ", count of ipc handles per rank: ",
+                      ipc_handle_map[map_key].size(),
+                      ", peer rank: ",
+                      peer_rank);
         }
 
-        umf_ipc_handle_t ipc_handle = ipc_handle_map[global_peer_rank][handle_index];
+        umf_ipc_handle_t ipc_handle = ipc_handle_map[map_key][handle_index];
         int dev_id = get_device_index(q, sycl_device);
         void *ptr = nullptr;
 
@@ -326,40 +334,50 @@ sycl::event gpu_recv_plain(sycl::queue &q,
                            ccl_comm *comm,
                            const ccl::vector_class<sycl::event> &deps);
 
-class ccl_kernel_barrier_data {
-public:
-    static constexpr int slots = 3;
+void do_ipc_exchangeExt(
+    // shared_resources &resources,
+    ccl_comm *comm,
+    std::unordered_map<int, pthread_barrier_t> &barrier_waits,
+    std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> &hash_table,
+    ccl_stream *stream,
+    std::vector<void *> ptrs,
+    int exchange_id = 0,
+    bool is_pt2pt = false);
 
-    ccl_kernel_barrier_data() = default;
-    ccl_kernel_barrier_data(const ccl_kernel_barrier_data &) = default;
-    ccl_kernel_barrier_data &operator=(const ccl_kernel_barrier_data &) = default;
+template <typename T, int N>
+std::array<T *, N> get_ipc_ptrsExt(
+    ccl::shared_resources &resources,
+    std::shared_ptr<ccl_comm> comm,
+    std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> &hash_table,
+    const int comm_index,
+    const int handle_index,
+    void *local_ptr,
+    int exchange_id = 0,
+    std::shared_ptr<ccl_comm> even_comm = nullptr,
+    std::shared_ptr<ccl_comm> pair_comm = nullptr) {
+    std::array<T *, N> remote_ptrs = {};
+    const int rank = comm->rank();
+    const int size = comm->size();
 
-    void set_sync_ptrs(size_t *ptrs) {
-        m_sync_ptrs = ptrs;
+    remote_ptrs[rank] = (T *)local_ptr;
+    for (int i = 1; i < size; i++) {
+        int peer_rank = (rank + i) % size;
+        int peer_rank_node = peer_rank;
+        if (comm_index > 0) {
+            int ranks[2] = { even_comm->rank(), pair_comm->rank() };
+            ranks[comm_index - 1] = peer_rank;
+            peer_rank_node = resources.get_node_rank(ranks, pair_comm->size());
+            // peer_rank_node = get_node_rank(ranks, pair_comm->size());
+        }
+        if (hash_table.find(exchange_id) != hash_table.end() &&
+            hash_table[exchange_id].find(peer_rank_node) != hash_table[exchange_id].end()) {
+            const auto &ptr = hash_table[exchange_id][peer_rank_node][handle_index];
+            remote_ptrs[peer_rank] = (T *)ptr;
+        }
+        CCL_ASSERT(remote_ptrs[peer_rank] != NULL);
     }
-
-    // advance to the next slot
-    ccl_kernel_barrier_data inc_slot(int count = 1) {
-        m_count += count;
-        return *this;
-    }
-
-    // get current slot pointer
-    size_t *get_sync_ptr() const {
-        size_t curr_slot = m_count % slots;
-        return m_sync_ptrs + curr_slot;
-    }
-
-    // reset data in the farthest slot
-    void reset_sync_data() {
-        size_t reset_slot = (m_count + (slots - 1)) % slots;
-        m_sync_ptrs[reset_slot] = 0;
-    }
-
-private:
-    size_t *m_sync_ptrs;
-    size_t m_count = 0;
-};
+    return remote_ptrs;
+}
 
 std::pair<ccl_sched *, ze_handle_exchange_entry *> do_ipc_exchange(ccl_comm *comm,
                                                                    ccl_stream *stream,
@@ -379,6 +397,8 @@ void *get_tmp_buf(int index, ccl_comm *comm = nullptr);
 
 std::array<void *, MAX_NODE_RANKS> get_remote_node_tmp_buf(int index, ccl_comm *comm = nullptr);
 
+std::array<void *, MAX_NODE_RANKS> get_remote_numa_tmp_buf(int index, ccl_comm *comm = nullptr);
+
 std::array<void *, MAX_GPUS> get_remote_even_tmp_buf(int index, ccl_comm *comm = nullptr);
 
 std::array<void *, MAX_TILES> get_remote_pair_tmp_buf(int index, ccl_comm *comm = nullptr);
@@ -387,11 +407,10 @@ size_t get_tmp_buf_size_per_rank();
 
 std::vector<sycl::event> get_sycl_events(const ccl::vector_class<ccl::event> &deps);
 
-sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
-                           sycl::queue q,
-                           const std::vector<sycl::event> &dep_events,
-                           bool use_cpu);
-
+sycl::event invoke_p2p_barrier(const std::shared_ptr<ccl_comm> comm,
+                               sycl::queue q,
+                               const std::vector<sycl::event> &dep_events,
+                               bool use_cpu);
 int get_num_lce();
 
 sycl::queue get_mce_queue(sycl::queue q);
@@ -450,16 +469,100 @@ std::array<T *, N> get_ipc_ptrs(std::shared_ptr<ccl_comm> comm,
         std::move(comm), handle_index, local_ptr, sched, q, dummy_copy, to_cache);
 }
 
+/* for window registration */
+
+template <typename T, int N>
+std::array<T *, N> get_ipc_ptrs(std::vector<void *> &registered_ptrs,
+                                ccl_comm *comm,
+                                std::shared_ptr<ccl_comm> subcomm,
+                                void *local_ptr) {
+    std::array<T *, N> remote_ptrs;
+
+    ccl_comm *node_comm = comm->get_node_comm().get();
+    const int rank = subcomm->rank();
+    const int size = subcomm->size();
+    remote_ptrs[rank] = (T *)local_ptr;
+
+    std::unordered_map<int, int> rank_map{};
+    if (node_comm->id() != subcomm->id()) {
+        for (int idx = 0; idx < node_comm->size(); idx++) {
+            rank_map.insert({ node_comm->get_global_rank(idx), idx });
+        }
+    }
+    for (int i = 1; i < subcomm->size(); i++) {
+        int peer_rank = (rank + i) % subcomm->size();
+        int map_rank = peer_rank;
+        if (node_comm->id() != subcomm->id()) {
+            map_rank = subcomm->get_global_rank(peer_rank);
+            auto rank_it = rank_map.find(map_rank);
+            CCL_THROW_IF_NOT(rank_it != rank_map.end(),
+                             "rank mapping is missing for global rank ",
+                             map_rank,
+                             ", node_comm id: ",
+                             node_comm->id(),
+                             ", subcomm id: ",
+                             subcomm->id());
+            map_rank = rank_it->second;
+        }
+        remote_ptrs[peer_rank] = (T *)registered_ptrs[map_rank];
+    }
+    return remote_ptrs;
+}
+
+/* invokers used as a wrapper for sycl::parallel_for */
+
+template <typename Lambda>
+void static_for_each_tile(Lambda &&lambda, const int TILES) {
+    assert(TILES > 0 && TILES <= MAX_NODE_RANKS);
+    // dispatch at compile time
+    switch (TILES) {
+        case 1: lambda.template operator()<1>(); break;
+        case 2: lambda.template operator()<2>(); break;
+        case 3: lambda.template operator()<3>(); break;
+        case 4: lambda.template operator()<4>(); break;
+        case 5: lambda.template operator()<5>(); break;
+        case 6: lambda.template operator()<6>(); break;
+        case 7: lambda.template operator()<7>(); break;
+        case 8: lambda.template operator()<8>(); break;
+        case 9: lambda.template operator()<9>(); break;
+        case 10: lambda.template operator()<10>(); break;
+        case 11: lambda.template operator()<11>(); break;
+        case 12: lambda.template operator()<12>(); break;
+        case 13: lambda.template operator()<13>(); break;
+        case 14: lambda.template operator()<14>(); break;
+        case 15: lambda.template operator()<15>(); break;
+        case 16: lambda.template operator()<16>(); break;
+        default: throw ccl::exception("unsupported number of tiles " + std::to_string(TILES));
+    }
+}
+
+template <typename Lambda>
+void static_for_each_gpu(Lambda &&lambda, const int GPUS) {
+    assert(GPUS > 0 && GPUS <= MAX_GPUS);
+    // dispatch at compile time
+    switch (GPUS) {
+        case 1: lambda.template operator()<1>(); break;
+        case 2: lambda.template operator()<2>(); break;
+        case 3: lambda.template operator()<3>(); break;
+        case 4: lambda.template operator()<4>(); break;
+        case 5: lambda.template operator()<5>(); break;
+        case 6: lambda.template operator()<6>(); break;
+        case 7: lambda.template operator()<7>(); break;
+        case 8: lambda.template operator()<8>(); break;
+        default: throw ccl::exception("unsupported number of gpus " + std::to_string(GPUS));
+    }
+}
+
 /* Invokers used in scale-up code */
 
-template <int NE, int NP, typename L>
-ccl::event invoke_collective_type(L lambda, ccl::datatype dtype) {
+template <typename L>
+ccl::event invoke_collective(L lambda, ccl::datatype dtype) {
     ccl::event e;
     switch (dtype) {
-        case ccl::datatype::int16: e = lambda.template operator()<short, NE, NP>(); break;
+        case ccl::datatype::int16: e = lambda.template operator()<short>(); break;
         case ccl::datatype::float16:
 #ifdef CCL_SYCL_VEC_SUPPORT_FP16
-            e = lambda.template operator()<sycl::half, NE, NP>();
+            e = lambda.template operator()<sycl::half>();
 #else
             CCL_THROW(
                 "The Sycl compilers do not support Sycl::vec kernels with float16, please switch to ESIMD kernels, or build oneCCL with the latest version of cmake and oneAPI compiler");
@@ -467,52 +570,55 @@ ccl::event invoke_collective_type(L lambda, ccl::datatype dtype) {
             break;
         case ccl::datatype::bfloat16:
 #ifdef CCL_SYCL_VEC_SUPPORT_BF16
-            e = lambda.template operator()<sycl::ext::oneapi::bfloat16, NE, NP>();
+            e = lambda.template operator()<sycl::ext::oneapi::bfloat16>();
 #else
             CCL_THROW(
                 "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
 #endif
             break;
-        case ccl::datatype::int8: e = lambda.template operator()<int8_t, NE, NP>(); break;
-        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t, NE, NP>(); break;
-        case ccl::datatype::float32: e = lambda.template operator()<float, NE, NP>(); break;
-        case ccl::datatype::float64: e = lambda.template operator()<double, NE, NP>(); break;
-        case ccl::datatype::int32: e = lambda.template operator()<int, NE, NP>(); break;
-        case ccl::datatype::int64: e = lambda.template operator()<int64_t, NE, NP>(); break;
-        case ccl::datatype::uint64: e = lambda.template operator()<uint64_t, NE, NP>(); break;
-        case ccl::datatype::uint32: e = lambda.template operator()<uint32_t, NE, NP>(); break;
+        case ccl::datatype::int8: e = lambda.template operator()<int8_t>(); break;
+        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t>(); break;
+        case ccl::datatype::float32: e = lambda.template operator()<float>(); break;
+        case ccl::datatype::float64: e = lambda.template operator()<double>(); break;
+        case ccl::datatype::int32: e = lambda.template operator()<int>(); break;
+        case ccl::datatype::int64: e = lambda.template operator()<int64_t>(); break;
+        case ccl::datatype::uint64: e = lambda.template operator()<uint64_t>(); break;
+        case ccl::datatype::uint32: e = lambda.template operator()<uint32_t>(); break;
         default: CCL_THROW("unsupported datatype ", dtype); break;
     }
     return e;
 }
 
-template <int NP, typename L>
-ccl::event invoke_collective_size(L lambda, int even_comm_size, ccl::datatype dtype) {
-    ccl::event e;
-    switch (even_comm_size) {
-        case 1: e = invoke_collective_type<1, NP>(lambda, dtype); break;
-        case 2: e = invoke_collective_type<2, NP>(lambda, dtype); break;
-        case 3: e = invoke_collective_type<3, NP>(lambda, dtype); break;
-        case 4: e = invoke_collective_type<4, NP>(lambda, dtype); break;
-        case 5: e = invoke_collective_type<5, NP>(lambda, dtype); break;
-        case 6: e = invoke_collective_type<6, NP>(lambda, dtype); break;
-        case 7: e = invoke_collective_type<7, NP>(lambda, dtype); break;
-        case 8: e = invoke_collective_type<8, NP>(lambda, dtype); break;
-        default: CCL_THROW("unsupported even_comm size ", even_comm_size); break;
-    }
-    return e;
-}
-
 template <typename L>
-ccl::event invoke_collective(L lambda, ccl_comm *global_comm, ccl::datatype dtype) {
-    std::shared_ptr<ccl_comm> pair_comm = global_comm->get_pair_comm();
-    std::shared_ptr<ccl_comm> even_comm = global_comm->get_even_comm();
-
-    ccl::event e;
-    switch (pair_comm->size()) {
-        case 1: e = invoke_collective_size<1>(lambda, even_comm->size(), dtype); break;
-        case 2: e = invoke_collective_size<2>(lambda, even_comm->size(), dtype); break;
-        default: CCL_THROW("unsupported pair_comm size ", pair_comm->size()); break;
+sycl::event invoke_collective_sycl(L lambda, ccl::datatype dtype) {
+    sycl::event e;
+    switch (dtype) {
+        case ccl::datatype::int16: e = lambda.template operator()<short>(); break;
+        case ccl::datatype::float16:
+#ifdef CCL_SYCL_VEC_SUPPORT_FP16
+            e = lambda.template operator()<sycl::half>();
+#else
+            CCL_THROW(
+                "The Sycl compilers do not support Sycl::vec kernels with float16, please switch to ESIMD kernels, or build oneCCL with the latest version of cmake and oneAPI compiler");
+#endif
+            break;
+        case ccl::datatype::bfloat16:
+#ifdef CCL_SYCL_VEC_SUPPORT_BF16
+            e = lambda.template operator()<sycl::ext::oneapi::bfloat16>();
+#else
+            CCL_THROW(
+                "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
+#endif
+            break;
+        case ccl::datatype::int8: e = lambda.template operator()<int8_t>(); break;
+        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t>(); break;
+        case ccl::datatype::float32: e = lambda.template operator()<float>(); break;
+        case ccl::datatype::float64: e = lambda.template operator()<double>(); break;
+        case ccl::datatype::int32: e = lambda.template operator()<int>(); break;
+        case ccl::datatype::int64: e = lambda.template operator()<int64_t>(); break;
+        case ccl::datatype::uint64: e = lambda.template operator()<uint64_t>(); break;
+        case ccl::datatype::uint32: e = lambda.template operator()<uint32_t>(); break;
+        default: CCL_THROW("unsupported datatype ", dtype); break;
     }
     return e;
 }
@@ -616,7 +722,7 @@ const T *ptr_offset(const T *ptr, size_t offset) {
 }
 
 inline bool is_aligned(const void *buf, const size_t count, const int dsize, const int alignment) {
-    return dsize >= 4 || ((size_t)buf % alignment == 0 && (count * dsize) % alignment == 0);
+    return (size_t)buf % alignment == 0 && (count * dsize) % alignment == 0;
 }
 
 inline bool is_aligned(const void *send_buf,
@@ -624,14 +730,11 @@ inline bool is_aligned(const void *send_buf,
                        const size_t count,
                        const int dsize,
                        const int alignment) {
-    return dsize >= 4 || ((size_t)send_buf % alignment == 0 && (size_t)recv_buf % alignment == 0 &&
-                          (count * dsize) % alignment == 0);
+    return (size_t)send_buf % alignment == 0 && (size_t)recv_buf % alignment == 0 &&
+           (count * dsize) % alignment == 0;
 }
 
 inline bool all_aligned(std::vector<void *> ptrs, size_t count, int dsize, size_t alignment) {
-    if (dsize >= 4 && dsize >= alignment) {
-        return true;
-    }
     if ((count * dsize) % alignment) {
         return false;
     }
@@ -644,9 +747,6 @@ inline bool all_aligned(std::vector<void *> ptrs, size_t count, int dsize, size_
 }
 
 inline bool all_aligned(void **ptrs, int ptr_count, size_t count, int dsize, size_t alignment) {
-    if (dsize >= 4 && dsize >= alignment) {
-        return true;
-    }
     if ((count * dsize) % alignment) {
         return false;
     }
@@ -665,21 +765,6 @@ inline bool can_use_full_vector(const void *send_buf,
                                 const int alignment = 4) {
     return dsize >= 4 || is_aligned(send_buf, recv_buf, count, dsize, alignment) &&
                              ccl::global_data::env().sycl_full_vector;
-}
-
-inline bool use_recording_path(const sycl::queue &q) {
-    return ccl::global_data::env().sycl_force_recording_path ||
-           q.ext_oneapi_get_state() == sycl::ext::oneapi::experimental::queue_state::recording;
-}
-
-inline bool use_recording_path(const ccl_stream *stream) {
-    if (stream) {
-        return use_recording_path(stream->get_native_stream());
-    }
-    if (ccl::global_data::env().sycl_force_recording_path) {
-        LOG_WARN("trying to force recording on null stream; falling back to non-recording");
-    }
-    return false;
 }
 
 inline sycl::event get_last_event(const sycl::queue &q) {
@@ -779,6 +864,26 @@ constexpr inline size_t get_num_elements() {
 
 inline bool is_pof2(size_t x) {
     return x && !(x & (x - 1));
+}
+
+inline size_t calculate_chunking_pack_count(size_t chunk_size,
+                                            size_t count,
+                                            int typesize,
+                                            size_t &max_pack_count) {
+    size_t nchunks;
+    // chunk_size is 0 means chunking is disabled
+    if (chunk_size == 0 || count * typesize <= chunk_size) {
+        max_pack_count = count;
+    }
+    else {
+        // make sure chunk can pack the whole dtype element
+        int align_typesize = std::max(4, typesize);
+        chunk_size = chunk_size / align_typesize * align_typesize;
+        max_pack_count = chunk_size / typesize;
+        CCL_ASSERT(max_pack_count > 0);
+    }
+    nchunks = (count + max_pack_count - 1) / max_pack_count;
+    return nchunks;
 }
 
 sycl::event sycl_average(sycl::queue &q,

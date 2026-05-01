@@ -15,6 +15,11 @@
 #
 add_library(ccl_openmp SHARED openmp_ext.cpp)
 
+if(NOT TARGET ccl)
+	add_library(ccl INTERFACE)
+	target_link_libraries(ccl INTERFACE -l:libccl.so.1)
+endif()
+
 target_include_directories(ccl_openmp PUBLIC ${SRC_INCLUDE_DIRS})
 target_link_libraries(ccl_openmp PUBLIC OpenMP::OpenMP_CXX ccl)
 

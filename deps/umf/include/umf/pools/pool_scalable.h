@@ -53,6 +53,17 @@ umf_result_t
 umfScalablePoolParamsSetKeepAllMemory(umf_scalable_pool_params_handle_t hParams,
                                       bool keepAllMemory);
 
+/// @brief  Set custom name of the scalable pool used in traces.
+/// @param  hParams handle to the parameters of the scalable pool.
+/// @param  name custom name. Must not be NULL. Name longer than 63 characters
+///         will be truncated.
+/// \details Name should contain only [a-zA-Z0-9_-] characters.
+/// Other names are deprecated and may limit CTL functionality.
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+umf_result_t
+umfScalablePoolParamsSetName(umf_scalable_pool_params_handle_t hParams,
+                             const char *name);
+
 /// @brief  Return \p ops structure containing pointers to the scalable pool implementation.
 /// @return pointer to the \p umf_memory_pool_ops_t struct.
 const umf_memory_pool_ops_t *umfScalablePoolOps(void);

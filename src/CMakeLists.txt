@@ -60,25 +60,17 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
 
         coll/algorithms/allgatherv/sycl/allgatherv_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_small_sycl.cpp
-        coll/algorithms/allgatherv/sycl/allgatherv_medium_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_large_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_scaleout_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_pcie.cpp
 
         coll/algorithms/alltoall/sycl/alltoall_sycl.cpp
+        coll/algorithms/alltoall/sycl/alltoall_pcie.cpp
         coll/algorithms/alltoall/sycl/alltoall_large_sycl.cpp
+        coll/algorithms/alltoall/sycl/alltoall_scaleout_sycl.cpp
 
         coll/algorithms/allreduce/sycl/allreduce_small_sycl.cpp
-        coll/algorithms/allreduce/sycl/allreduce_medium_sycl.cpp
-        coll/algorithms/allreduce/sycl/allreduce_medium_sycl_fp16.cpp
-        coll/algorithms/allreduce/sycl/allreduce_medium_sycl_bf16.cpp
-        coll/algorithms/allreduce/sycl/allreduce_medium_sycl_fp32.cpp
-        coll/algorithms/allreduce/sycl/allreduce_medium_sycl_int32.cpp
         coll/algorithms/allreduce/sycl/allreduce_large_sycl.cpp
-        coll/algorithms/allreduce/sycl/allreduce_large_sycl_fp16.cpp
-        coll/algorithms/allreduce/sycl/allreduce_large_sycl_bf16.cpp
-        coll/algorithms/allreduce/sycl/allreduce_large_sycl_fp32.cpp
-        coll/algorithms/allreduce/sycl/allreduce_large_sycl_int32.cpp
         coll/algorithms/allreduce/sycl/allreduce_sycl.cpp
         coll/algorithms/allreduce/sycl/allreduce_scaleout_sycl.cpp
         coll/algorithms/allreduce/sycl/allreduce_ring_ll256.cpp
@@ -86,12 +78,7 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
 
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.cpp
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_small_sycl.cpp
-        coll/algorithms/reduce_scatter/sycl/reduce_scatter_medium_sycl.cpp
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl.cpp
-        coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_int32.cpp
-        coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_fp32.cpp
-        coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_fp16.cpp
-        coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_bf16.cpp
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_scaleout_sycl.cpp
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_pcie.cpp
 
@@ -99,15 +86,42 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         coll/algorithms/broadcast/sycl/broadcast_small_sycl.cpp
         coll/algorithms/broadcast/sycl/broadcast_large_sycl.cpp
         coll/algorithms/broadcast/sycl/broadcast_scaleout_sycl.cpp
+        coll/algorithms/broadcast/sycl/broadcast_pcie.cpp
+
+        coll/algorithms/barrier/sycl/barrier_sycl.cpp
 
         coll/algorithms/recv/sycl/recv_sycl.cpp
+        coll/algorithms/recv/sycl/recv_pcie.cpp
         coll/algorithms/send/sycl/send_sycl.cpp
+        coll/algorithms/send/sycl/send_pcie.cpp
 
         coll/algorithms/utils/sycl_coll_base.cpp
         coll/algorithms/utils/sycl_pipe_send.cpp
         coll/algorithms/utils/sycl_selection.cpp
         coll/algorithms/utils/sycl_ll256.cpp
+        coll/algorithms/utils/simple_ipc.cpp
     )
+    if (ENABLE_ESIMD)
+        list(APPEND EXTENSIONS_SRC
+            coll/algorithms/allgatherv/sycl/allgatherv_medium_sycl.cpp
+
+            coll/algorithms/allreduce/sycl/allreduce_medium_sycl.cpp
+            coll/algorithms/allreduce/sycl/allreduce_medium_sycl_fp16.cpp
+            coll/algorithms/allreduce/sycl/allreduce_medium_sycl_bf16.cpp
+            coll/algorithms/allreduce/sycl/allreduce_medium_sycl_fp32.cpp
+            coll/algorithms/allreduce/sycl/allreduce_medium_sycl_int32.cpp
+            coll/algorithms/allreduce/sycl/allreduce_large_sycl_fp16.cpp
+            coll/algorithms/allreduce/sycl/allreduce_large_sycl_bf16.cpp
+            coll/algorithms/allreduce/sycl/allreduce_large_sycl_fp32.cpp
+            coll/algorithms/allreduce/sycl/allreduce_large_sycl_int32.cpp
+
+            coll/algorithms/reduce_scatter/sycl/reduce_scatter_medium_sycl.cpp
+            coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_int32.cpp
+            coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_fp32.cpp
+            coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_fp16.cpp
+            coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_bf16.cpp
+        )
+    endif(ENABLE_ESIMD)
     if (ENABLE_UMF)
         list(APPEND EXTENSIONS_SRC
             umf/ipc.cpp
@@ -135,6 +149,19 @@ set(CCL_SRC
     atl/util/pm/pmi_rt/pmi_simple.cpp
     atl/util/pm/pmi_rt/pmi/simple_pmi.c
     atl/util/pm/pmi_rt/pmi/simple_pmiutil.c
+
+    occp/inc/futex.cpp
+    occp/inc/sockaddr.cpp
+    occp/inc/utils.cpp
+    occp/infra/acceptor.cpp
+    occp/infra/asio.cpp
+    occp/infra/socket.cpp
+    occp/occp/coordinator.cpp
+    occp/occp/occp_client.cpp
+    occp/occp/occp_commands.cpp
+    occp/occp/occp_server.cpp
+    occp/protocol/occp.cpp
+    occp/protocol/protocol.cpp
 
     coll/attr/ccl_common_op_attrs.cpp
     coll/attr/ccl_allgather_op_attr.cpp
@@ -184,7 +211,9 @@ set(CCL_SRC
     comm/atl_tag.cpp
     comm/mt_comm.cpp
     comm/comm.cpp
+    comm/comm_id_allocator.cpp
     comm/comm_selector.cpp
+    comm/windows.cpp
 
     common/context/context.cpp
     common/datatype/datatype.cpp
@@ -277,6 +306,7 @@ set(CCL_SRC
     ccl_cpp_environment.cpp
     ccl_cpp_kvs.cpp
     ccl_cpp_stream.cpp
+    ccl_cpp_window.cpp
     ccl_cpp_utils.cpp
     ccl_empty_attr.cpp
     ccl_empty_coll_attr.cpp
@@ -285,6 +315,8 @@ set(CCL_SRC
     ccl_empty_init_attr.cpp
     ccl_empty_kvs_attr.cpp
     ccl_empty_stream.cpp
+
+    common/window/window_impl.cpp
 
     ${EXTENSIONS_SRC})
 
@@ -337,6 +369,12 @@ endif()
 
 list(APPEND SRC_INCLUDE_DIRS
      ${PROJECT_SOURCE_DIR}/include
+     ${PROJECT_SOURCE_DIR}/src
+     ${PROJECT_SOURCE_DIR}/src/atl
+     ${PROJECT_SOURCE_DIR}/src/occp
+     ${PROJECT_SOURCE_DIR}/src/occp/inc
+     ${PROJECT_SOURCE_DIR}/src/occp/infra
+     ${PROJECT_SOURCE_DIR}/src/occp/protocol
      ${PROJECT_SOURCE_DIR}/src
      ${PROJECT_SOURCE_DIR}/src/atl
      ${LEVEL_ZERO_INCLUDE_DIR}

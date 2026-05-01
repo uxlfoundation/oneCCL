@@ -483,6 +483,83 @@ void CCL_API group_start();
 void CCL_API group_end();
 /** @} */ // end of group_calls
 
+/******************** memory ********************/
+
+/** @defgroup memory
+ * @{
+ */
+
+/**
+ * \ingroup memory
+ * \brief Allocate device memory
+ * @param op_stream stream which specify the device to allocate the memory
+ * @param size total size
+ * @param ptr returns allocated device memory
+ */
+void CCL_API mem_alloc(const stream& op_stream, size_t size, void** ptr);
+
+/**
+ * \ingroup memory
+ * \brief free device memory
+ * @param op_stream stream where the memory was allocated
+ * @param ptr the device memory to free
+ */
+void CCL_API mem_free(const stream& op_stream, void* ptr);
+/** @} */ // end of memory
+
+/******************** Buffer Registration ********************/
+
+/** @defgroup registration
+ * @{
+ */
+
+/**
+ * \ingroup registration
+ * \brief Register a buffer with the communicator
+ * @param comm communicator to register the buffer with
+ * @param buffer pointer to the memory buffer
+ * @param size size of the buffer in bytes
+ * @return opaque handle
+ */
+void CCL_API comm_register(const communicator& comm, void* buffer, size_t size, void** handle);
+
+/**
+ * \ingroup registration
+ * \brief Deregister a previously registered buffer
+ * @param comm communicator the buffer was registered with
+ * @param buffer handle to deregister
+ */
+void CCL_API comm_deregister(const communicator& comm, void* handle);
+/** @} */ // end of registration
+
+/******************** WINDOW ********************/
+
+/** @defgroup window
+ * @{
+ */
+
+/**
+ * \ingroup window
+ * \brief Register a memory window with the communicator
+ * @param comm communicator to register the window with
+ * @param buffer pointer to the memory buffer
+ * @param size size of the buffer in bytes
+ * @return opaque window handle
+ */
+window CCL_API comm_window_register(const communicator& comm,
+                                    void* buffer,
+                                    size_t size,
+                                    int win_flags);
+
+/**
+ * \ingroup window
+ * \brief Deregister a previously registered memory window
+ * @param comm communicator the window was registered with
+ * @param win window to deregister (will be reset after deregistration)
+ */
+void CCL_API comm_window_deregister(const communicator& comm, window& win);
+/** @} */ // end of window
+
 /******************** OPERATION ********************/
 
 /** @defgroup operation

@@ -95,9 +95,7 @@ public:
                            size_t len,
                            atl_datatype_t dtype,
                            atl_reduction_t op,
-                           atl_req_t& req) override {
-        return ATL_STATUS_UNSUPPORTED;
-    }
+                           atl_req_t& req) override;
 
     atl_status_t alltoall(size_t ep_idx,
                           const void* send_buf,
@@ -118,9 +116,7 @@ public:
         return ATL_STATUS_UNSUPPORTED;
     }
 
-    atl_status_t barrier(size_t ep_idx, atl_req_t& req) override {
-        return ATL_STATUS_UNSUPPORTED;
-    }
+    atl_status_t barrier(size_t ep_idx, atl_req_t& req) override;
 
     atl_status_t bcast(size_t ep_idx, void* buf, size_t len, int root, atl_req_t& req) override {
         return ATL_STATUS_UNSUPPORTED;
@@ -143,9 +139,7 @@ public:
                                 size_t recv_len,
                                 atl_datatype_t dtype,
                                 atl_reduction_t op,
-                                atl_req_t& req) override {
-        return ATL_STATUS_UNSUPPORTED;
-    }
+                                atl_req_t& req) override;
 
     atl_status_t read(size_t ep_idx,
                       void* buf,
@@ -187,4 +181,7 @@ private:
     atl_status_t init_transport(bool is_new);
 
     uint64_t tag_counter = 0;
+    uint64_t tag_counter_barrier = 0;
+    uint64_t tag_counter_allreduce = 0;
+    uint64_t tag_counter_reduce_scatter = 0;
 };

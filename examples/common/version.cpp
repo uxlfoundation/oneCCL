@@ -41,7 +41,8 @@ int main() {
 
     printf("\noneCCL specification version: %s\n", ONECCL_SPEC_VERSION);
 
-    if (CCL_MAJOR_VERSION == version.major && CCL_MINOR_VERSION <= version.minor) {
+    if (static_cast<int>(CCL_MAJOR_VERSION) == static_cast<int>(version.major) &&
+        static_cast<int>(CCL_MINOR_VERSION) <= static_cast<int>(version.minor)) {
         printf("\nVersions are compatible\n");
     }
     else {

@@ -17,6 +17,8 @@
 
 #include "coll/algorithms/utils/sycl_selection.hpp"
 
+#ifdef CCL_ENABLE_ESIMD
+
 #define SYCL_ALLGATHERV_FUNCTIONS(MSGSIZE) \
     void init_allgatherv_##MSGSIZE(ccl::datatype dtype, \
                                    sycl::queue& queue, \
@@ -34,6 +36,8 @@
 
 SYCL_ALLGATHERV_FUNCTIONS(small)
 SYCL_ALLGATHERV_FUNCTIONS(medium)
+
+#endif // CCL_ENABLE_ESIMD
 
 namespace ccl {
 namespace v1 {
@@ -123,6 +127,8 @@ ccl::event allgatherv_scaleout_sycl_direct(sycl::queue& q,
                                            void* recv_buf,
                                            const ccl::vector_class<size_t>& recv_counts,
                                            const ccl::vector_class<size_t>& recv_offsets,
+                                           size_t orig_count,
+                                           size_t offset,
                                            ccl::datatype dtype,
                                            ccl_comm* comm,
                                            const ccl::vector_class<ccl::event>& deps,

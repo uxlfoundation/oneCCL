@@ -32,7 +32,8 @@ static std::map<ipc_exchange_mode, std::string> ipc_exchange_names = {
 #ifdef CCL_ENABLE_DRM
     std::make_pair(ipc_exchange_mode::drmfd, "drmfd"),
 #endif // CCL_ENABLE_DRM
-    std::make_pair(ipc_exchange_mode::pidfd, "pidfd")
+    std::make_pair(ipc_exchange_mode::pidfd, "pidfd"),
+    std::make_pair(ipc_exchange_mode::none, "none"),
 };
 
 // RAII

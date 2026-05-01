@@ -75,17 +75,14 @@ void topo_manager::build_host_info(int size, int rank, int global_current_id) {
 
     ccl::global_data::get().shared_data->resize_all_hostnames_raw(max_hostname_len * comm_size,
                                                                   global_current_id);
-    char my_hostname[max_hostname_len] = { 0 };
+    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
 
+    char my_hostname[max_hostname_len] = { 0 };
     gethostname(my_hostname, max_hostname_len - 1);
-    LOG_DEBUG("rank: ",
-              comm_rank,
-              ", size: ",
-              comm_size,
-              ", host: ",
-              my_hostname,
-              ", current_global_id: ",
-              global_current_id);
+    LOG_DEBUG("rank: ", comm_rank, ", size: ", comm_size, ", host: ", my_hostname);
+    // my_hostname,
+    // ", current_global_id: ",
+    // global_current_id);
 
     allgather(
         size,
@@ -220,11 +217,89 @@ void topo_manager::base_init(int size,
 
     is_single_card = (is_single_node && (comm_size <= topo_manager::max_ranks_per_card) &&
                       no_invalid_colors && all_same_colors);
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    if (device.get()->get_native().get_backend() == utils::get_level_zero_backend()) {
+        ze_base_init(size, rank, global_current_id, device, context);
+    }
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
+
     // TODO:
     // if (comm_rank == 0) {
     //     LOG_INFO("rank_info_vec: ", ccl::to_string(ccl::global_data::get().shared_data->get_rank_info_vec_glob(), host_info_vec));
     // }
 }
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+void topo_manager::ze_base_init(int size,
+                                int rank,
+                                int global_current_id,
+                                const std::shared_ptr<ccl::device>& device,
+                                const std::shared_ptr<ccl::context>& context) {
+    int comm_rank = rank;
+    int comm_size = size;
+
+    ze_device = sycl::get_native<utils::get_level_zero_backend()>(device.get()->get_native());
+    CCL_THROW_IF_NOT(ze_device, "null ze device");
+    ZE_CALL(zeDeviceGetProperties, (ze_device, &dev_props));
+
+    // exchange ze specific rank info
+    topo_ze_rank_info ze_rank_info{};
+    ze_rank_info_vec.resize(comm_size);
+
+    ze_rank_info.device_uuid = dev_props.uuid;
+
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+    ze_pci_ext_properties_t pci_prop = ccl::ze::default_pci_property;
+    ze_result_t ret = zeDevicePciGetPropertiesExt(ze_device, &pci_prop);
+    if (ret == ZE_RESULT_SUCCESS) {
+        ze_rank_info.pci_addr = pci_prop.address;
+    }
+    else {
+        LOG_INFO("can not retrieve ze pci properties");
+    }
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
+
+    ZE_CALL(zeDeviceGetSubDevices, (ze_device, &ze_rank_info.subdev_count, nullptr));
+    ze_rank_info.subdev_id = dev_props.subdeviceId;
+    ze_rank_info.dev_prop_flags = dev_props.flags;
+
+    // MT-specific allgather for ze_rank_info
+    allgather(size,
+              rank,
+              &ze_rank_info,
+              ze_rank_info_vec.data(),
+              sizeof(ze_rank_info),
+              global_current_id);
+
+    // build p2p connectivity info
+    const auto& node_devices = global_data::get().ze_data->devices;
+    std::vector<ze_device_handle_t> node_devices_filtered;
+    for (const auto& node_device : node_devices) {
+        node_devices_filtered.push_back(node_device.device);
+    }
+
+    if (!node_devices_filtered.empty()) {
+        p2p_matrix = build_p2p_matrix(node_devices_filtered);
+        is_p2p_access_enabled = check_p2p_access();
+        atomics_matrix = build_p2p_atomics_matrix(node_devices_filtered);
+        is_p2p_atomics_enabled = check_p2p_atomics();
+        LOG_DEBUG("MT topo_manager: p2p matrix built, p2p_access_enabled=",
+                  is_p2p_access_enabled,
+                  " p2p_atomics_enabled=",
+                  is_p2p_atomics_enabled,
+                  ", number of node devices: ",
+                  node_devices.size());
+    }
+    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
+
+    if (comm_rank == 0) {
+        LOG_INFO("MT ze_rank_info_vec: ", ccl::to_string(ze_rank_info_vec, host_info_vec));
+    }
+
+    is_oversubscription_detected = oversubscription_detected(ze_rank_info_vec, host_info_vec);
+}
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
 void topo_manager::post_init(int size, int rank, int global_current_id) {
     for (int rank = 0; rank < size; rank++) {

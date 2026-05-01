@@ -56,6 +56,7 @@ void set_thread_name(const std::string& name);
 
 void task_begin(const char* name);
 void task_begin(const char* name, const char* meta_name, uint64_t value);
+void task_begin(const char* name, const char* meta_name, uint64_t value, uint64_t comm_id);
 void task_end();
 
 static constexpr __itt_event invalid_event = -1;

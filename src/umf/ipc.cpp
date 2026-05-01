@@ -184,4 +184,46 @@ int create_level_zero_pool(sycl::queue q,
     return 0;
 }
 
+// Global pool for device allocations (created on first use)
+static umf_memory_pool_handle_t global_device_pool = nullptr;
+
+umf_memory_pool_handle_t get_or_create_umf_pool(sycl::queue& q) {
+    if (global_device_pool != nullptr) {
+        return global_device_pool;
+    }
+
+    sycl::device dev = q.get_device();
+    ze_device_handle_t ze_dev = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(dev);
+
+    if (create_level_zero_pool(q, ze_dev, &global_device_pool) != 0) {
+        CCL_THROW("Failed to create global UMF device pool");
+    }
+
+    return global_device_pool;
+}
+
+void* umf_alloc_device(sycl::queue& q, size_t size) {
+    umf_memory_pool_handle_t pool = get_or_create_umf_pool(q);
+    void* ptr = umfPoolMalloc(pool, size);
+    if (!ptr) {
+        CCL_THROW("umfPoolMalloc failed for size: ", size);
+    }
+    return ptr;
+}
+
+void* umf_alloc_device_aligned(sycl::queue& q, size_t alignment, size_t size) {
+    umf_memory_pool_handle_t pool = get_or_create_umf_pool(q);
+    void* ptr = umfPoolAlignedMalloc(pool, size, alignment);
+    if (!ptr) {
+        CCL_THROW("umfPoolAlignedMalloc failed for size: ", size, ", alignment: ", alignment);
+    }
+    return ptr;
+}
+
+void umf_free(void* ptr) {
+    if (ptr && global_device_pool) {
+        umfPoolFree(global_device_pool, ptr);
+    }
+}
+
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE && CCL_ENABLE_UMF

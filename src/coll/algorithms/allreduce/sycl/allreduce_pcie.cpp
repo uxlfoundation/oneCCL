@@ -20,17 +20,19 @@
 #include "coll/algorithms/allreduce/sycl/allreduce_pcie.hpp"
 #endif // CCL_ENABLE_SYCL
 
-ccl::event allreduce_ll_ring(const void *src,
-                             void *dst,
-                             size_t count,
-                             ccl::datatype dtype,
-                             ccl::reduction reduction,
-                             ccl_comm *comm,
-                             ccl_stream *global_stream,
-                             bool &done) {
+template <template <typename, template <typename, int> class, bool, int> class Transmit>
+ccl::event allreduce_ll(const void *src,
+                        void *dst,
+                        size_t count,
+                        ccl::datatype dtype,
+                        ccl::reduction reduction,
+                        ccl_comm *comm,
+                        ccl_stream *global_stream,
+                        bool &done) {
     sycl::event sycl_e;
     sycl::queue q = global_stream->get_native_stream();
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+    bool recording = use_recording_path(q);
     const int comm_size = node_comm->size();
     const int comm_rank = node_comm->rank();
 
@@ -38,7 +40,6 @@ ccl::event allreduce_ll_ring(const void *src,
     size_t dt_sz = ccl_dtype.size();
 
     bool p2p = node_comm->get_topo_manager().has_p2p_access();
-    uint32_t pattern = comm->get_rt_pattern(pattern_type::collective, -1);
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
@@ -48,28 +49,84 @@ ccl::event allreduce_ll_ring(const void *src,
     auto lambda = [&]<typename T, template <typename, int> class Proto>(int NRanks) {
         T *peerbuf0[NRanks];
         T *peerbuf1[NRanks];
-        for (int i = 0; i < NRanks; i++) {
-            peerbuf0[i] = (T *)get_remote_node_tmp_buf(0, comm)[i];
-            peerbuf1[i] = (T *)get_remote_node_tmp_buf(1, comm)[i];
+        T *ipcbuf0;
+        T *ipcbuf1;
+        if (ccl::global_data::env().sycl_ll_buffer_global) {
+            // large buffer
+            for (int i = 0; i < NRanks; i++) {
+                peerbuf0[i] = (T *)get_remote_node_tmp_buf(0, comm)[i];
+                peerbuf1[i] = (T *)get_remote_node_tmp_buf(1, comm)[i];
+            }
+            ipcbuf0 = (T *)get_tmp_buf(0, comm);
+            ipcbuf1 = (T *)get_tmp_buf(1, comm);
         }
-        T *ipcbuf0 = (T *)get_tmp_buf(0, comm);
-        T *ipcbuf1 = (T *)get_tmp_buf(1, comm);
-        sycl::event e = AllReduce<T, Proto, RingTransmit>::launch(NRanks,
-                                                                  (T *)src,
-                                                                  (T *)dst,
-                                                                  ipcbuf0,
-                                                                  ipcbuf1,
-                                                                  peerbuf0,
-                                                                  peerbuf1,
-                                                                  count,
-                                                                  comm_rank,
-                                                                  pattern,
-                                                                  q,
-                                                                  p2p,
-                                                                  done);
-        comm->update_rt_pattern(pattern_type::collective, -1, pattern);
+        else {
+            // small buffer
+            auto [local_tmp_buf, remote_ptrs] = recording ? node_comm->get_all_tmp_bufs_gpu(true)
+                                                          : node_comm->get_all_tmp_bufs(true);
+            for (int i = 0; i < NRanks; i++) {
+                peerbuf0[i] = (T *)remote_ptrs[i];
+                peerbuf1[i] = (T *)((char *)remote_ptrs[i] + node_comm->get_tmp_buf_size() / 2);
+            }
+            ipcbuf0 = (T *)local_tmp_buf;
+            ipcbuf1 = (T *)((char *)local_tmp_buf + node_comm->get_tmp_buf_size() / 2);
+        }
+
+        sycl::event e;
+
+        if (recording) {
+            e = AllReduce<T, Proto, Transmit, true>::launch(
+                comm->get_node_comm()->get_pattern_data_gpu(),
+                NRanks,
+                (T *)src,
+                (T *)dst,
+                ipcbuf0,
+                ipcbuf1,
+                // TODO it can also be a two-shot transmit !
+                RingTransmit<int, Rt64_128_PCIE, true>::ringSize / sizeof(T),
+                peerbuf0,
+                peerbuf1,
+                count,
+                reduction,
+                comm_rank,
+                -1,
+                comm->global_current_id,
+                q,
+                pattern_type::collective,
+                node_comm,
+                p2p,
+                done);
+        }
+        else {
+            e = AllReduce<T, Proto, Transmit, false>::launch(
+                comm->get_node_comm()->get_pattern_data(),
+                NRanks,
+                (T *)src,
+                (T *)dst,
+                ipcbuf0,
+                ipcbuf1,
+                // TODO it can also be a two-shot transmit !
+                RingTransmit<int, Rt64_128_PCIE, false>::ringSize / sizeof(T),
+                peerbuf0,
+                peerbuf1,
+                count,
+                reduction,
+                comm_rank,
+                -1,
+                comm->global_current_id,
+                q,
+                pattern_type::collective,
+                node_comm,
+                p2p,
+                done);
+        }
         return e;
     };
+
+    if (ccl::global_data::env().sycl_ll_buffer_global) {
+        const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
+        sycl::event barrier_event = invoke_barrier(node_comm, q, {}, is_cpu_barrier);
+    }
 
     if (count * dt_sz <= ccl::global_data::env().sycl_allreduce_ll_threshold) {
         // small ring with LL
@@ -97,3 +154,21 @@ ccl::event allreduce_ll_ring(const void *src,
     }
     return ccl::event::create_from_native(sycl_e);
 }
+
+template ccl::event allreduce_ll<RingTransmit>(const void *,
+                                               void *,
+                                               size_t,
+                                               ccl::datatype,
+                                               ccl::reduction,
+                                               ccl_comm *,
+                                               ccl_stream *,
+                                               bool &);
+
+template ccl::event allreduce_ll<TwoShotsTransmit>(const void *,
+                                                   void *,
+                                                   size_t,
+                                                   ccl::datatype,
+                                                   ccl::reduction,
+                                                   ccl_comm *,
+                                                   ccl_stream *,
+                                                   bool &);

@@ -16,6 +16,7 @@
 #include "common/global/global.hpp"
 #include "sched/entry/ze/cache/ze_cache.hpp"
 #include "sched/ze/ze_list_manager.hpp"
+#include "comm/comm.hpp"
 
 using namespace ccl;
 using namespace ccl::ze;

@@ -13,6 +13,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#ifdef CCL_ENABLE_ESIMD
 #include "coll/algorithms/allreduce/sycl/allreduce_large_sycl.hpp"
 
 #define MAX_RANK 16
@@ -89,8 +90,10 @@ ccl::event run_allreduce_large(ccl::datatype dtype,
     }
     return e;
 }
+#endif // CCL_ENABLE_ESIMD
 
 #include "coll/algorithms/allreduce/sycl/allreduce_large_sycl_impl.hpp"
+#include "coll/algorithms/allreduce/sycl/allreduce_large_sycl_ring.hpp"
 
 ccl::event allreduce_large(const void *send_buf,
                            void *recv_buf,
@@ -113,6 +116,59 @@ ccl::event allreduce_large(const void *send_buf,
     sycl_ptrs_type sycl_ptrs;
     std::shared_ptr<ccl_comm> pair_comm = comm->get_pair_comm();
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+
+    // BMG
+    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family) && pair_comm->size() == 1) {
+        std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+        bool is_tmp_used = ccl::global_data::env().sycl_allreduce_tmp_buf;
+        if (is_tmp_used) {
+            LOG_DEBUG("invoking allreduce_large_su_ring_write_no_ipc");
+            auto lambda = [&]<typename T>() {
+                return allreduce_large_su_ring_write_no_ipc<T>(
+                    send_buf, recv_buf, count, dtype, reduction, comm, global_stream, deps);
+            };
+            sycl::event e = invoke_collective_sycl(lambda, dtype);
+            return ccl::event::create_from_native(e);
+        }
+        else {
+            std::vector<void *> registered_send_ptrs =
+                comm->get_registered_ptrs(send_buf, count * ccl_dtype.size());
+            std::vector<void *> registered_recv_ptrs =
+                comm->get_registered_ptrs(recv_buf, count * ccl_dtype.size());
+            if (registered_send_ptrs.size() && registered_recv_ptrs.size()) {
+                sycl_ptrs.node_ptrs_rd = get_ipc_ptrs<void, MAX_NODE_RANKS>(
+                    registered_send_ptrs, comm, node_comm, (void *)send_buf);
+                sycl_ptrs.node_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(
+                    registered_recv_ptrs, comm, node_comm, (void *)recv_buf);
+            }
+            else {
+                std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
+                auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+
+                sycl_ptrs.node_ptrs_rd =
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, (void *)send_buf, sched);
+                sycl_ptrs.node_ptrs_wr =
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 1, recv_buf, sched);
+
+                delete exchange_entry;
+                delete sched;
+            }
+            auto lambda = [&]<typename T>() {
+                return allreduce_large_su_ring<T>(send_buf,
+                                                  recv_buf,
+                                                  count,
+                                                  dtype,
+                                                  reduction,
+                                                  comm,
+                                                  global_stream,
+                                                  sycl_ptrs,
+                                                  deps);
+            };
+            sycl::event e = invoke_collective_sycl(lambda, dtype);
+            return ccl::event::create_from_native(e);
+        }
+    }
 
     // use full vector (>= 8 bytes) if buffers are 4 byte aligned
     // we dont have to take into account of the count while calculating alignment,
@@ -138,34 +194,64 @@ ccl::event allreduce_large(const void *send_buf,
     }
 
     if (!is_use_tmp) {
-        std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
-        // UMF: umf doesn't support user's allocation through the sycl yet.
-        //      Once it is supported, we can use  UMF as exchnage mechanism for allreduce_large
-        auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+        std::vector<void *> registered_send_ptrs =
+            comm->get_registered_ptrs(send_buf, count * ccl_dtype.size());
+        std::vector<void *> registered_recv_ptrs =
+            comm->get_registered_ptrs(recv_buf, count * ccl_dtype.size());
+        if (registered_send_ptrs.size() && registered_recv_ptrs.size()) {
+            sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(
+                registered_send_ptrs, comm, even_comm, (void *)send_buf);
+            sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_GPUS>(
+                registered_recv_ptrs, comm, even_comm, (void *)recv_buf);
+            // use full vector (>= 8 bytes) if remote buffers are 4 byte aligned
+            use_full_vector =
+                use_full_vector &&
+                all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), 0, 0, 4) &&
+                all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), 0, 0, 4);
 
-        sycl_ptrs.xelink_ptrs_rd =
-            get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
-        sycl_ptrs.xelink_ptrs_wr =
-            get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, (void *)recv_buf, sched);
-        // use full vector (>= 8 bytes) if remote buffers are 4 byte aligned
-        use_full_vector =
-            use_full_vector &&
-            all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), 0, 0, 4) &&
-            all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), 0, 0, 4);
-
-        if (pair_comm->size() > 1) {
-            assert(pair_comm->size() == MAX_TILES);
-            int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-            sycl_ptrs.mdfi_ptr_rd = get_ipc_ptrs<void, MAX_TILES>(
-                pair_comm, 0, (void *)send_buf, sched)[peer_pair_rank];
-            sycl_ptrs.mdfi_ptr_wr = get_ipc_ptrs<void, MAX_TILES>(
-                pair_comm, 1, (void *)recv_buf, sched)[peer_pair_rank];
-            use_full_vector = use_full_vector && all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, 0, 0, 4) &&
-                              all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, 0, 0, 4);
+            if (pair_comm->size() > 1) {
+                assert(pair_comm->size() == MAX_TILES);
+                int peer_pair_rank = pair_comm->rank() ? 0 : 1;
+                sycl_ptrs.mdfi_ptr_rd = get_ipc_ptrs<void, MAX_TILES>(
+                    registered_send_ptrs, comm, pair_comm, (void *)send_buf)[peer_pair_rank];
+                sycl_ptrs.mdfi_ptr_wr = get_ipc_ptrs<void, MAX_TILES>(
+                    registered_recv_ptrs, comm, pair_comm, (void *)recv_buf)[peer_pair_rank];
+                use_full_vector = use_full_vector &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, 0, 0, 4) &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, 0, 0, 4);
+            }
         }
+        else {
+            std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
+            // UMF: umf doesn't support user's allocation through the sycl yet.
+            //      Once it is supported, we can use  UMF as exchnage mechanism for allreduce_large
+            auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
 
-        delete exchange_entry;
-        delete sched;
+            sycl_ptrs.xelink_ptrs_rd =
+                get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
+            sycl_ptrs.xelink_ptrs_wr =
+                get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, (void *)recv_buf, sched);
+            // use full vector (>= 8 bytes) if remote buffers are 4 byte aligned
+            use_full_vector =
+                use_full_vector &&
+                all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), 0, 0, 4) &&
+                all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), 0, 0, 4);
+
+            if (pair_comm->size() > 1) {
+                assert(pair_comm->size() == MAX_TILES);
+                int peer_pair_rank = pair_comm->rank() ? 0 : 1;
+                sycl_ptrs.mdfi_ptr_rd = get_ipc_ptrs<void, MAX_TILES>(
+                    pair_comm, 0, (void *)send_buf, sched)[peer_pair_rank];
+                sycl_ptrs.mdfi_ptr_wr = get_ipc_ptrs<void, MAX_TILES>(
+                    pair_comm, 1, (void *)recv_buf, sched)[peer_pair_rank];
+                use_full_vector = use_full_vector &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, 0, 0, 4) &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, 0, 0, 4);
+            }
+
+            delete exchange_entry;
+            delete sched;
+        }
     }
     else {
         // 0 index is used for tmp work buffer and
@@ -181,32 +267,32 @@ ccl::event allreduce_large(const void *send_buf,
         }
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
+    auto lambda = [&]<typename T>() {
         if (use_full_vector) {
-            return allreduce_large_impl<T, NE, NP, true>(send_buf,
-                                                         recv_buf,
-                                                         count,
-                                                         dtype,
-                                                         reduction,
-                                                         comm,
-                                                         global_stream,
-                                                         sycl_ptrs,
-                                                         deps,
-                                                         is_use_tmp);
+            return allreduce_large_impl<T, true>(send_buf,
+                                                 recv_buf,
+                                                 count,
+                                                 dtype,
+                                                 reduction,
+                                                 comm,
+                                                 global_stream,
+                                                 sycl_ptrs,
+                                                 deps,
+                                                 is_use_tmp);
         }
         else {
-            return allreduce_large_impl<T, NE, NP, false>(send_buf,
-                                                          recv_buf,
-                                                          count,
-                                                          dtype,
-                                                          reduction,
-                                                          comm,
-                                                          global_stream,
-                                                          sycl_ptrs,
-                                                          deps,
-                                                          is_use_tmp);
+            return allreduce_large_impl<T, false>(send_buf,
+                                                  recv_buf,
+                                                  count,
+                                                  dtype,
+                                                  reduction,
+                                                  comm,
+                                                  global_stream,
+                                                  sycl_ptrs,
+                                                  deps,
+                                                  is_use_tmp);
         }
     };
 
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

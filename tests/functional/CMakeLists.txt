@@ -23,6 +23,11 @@ project(${PROJECT_NAME})
 message(STATUS "FT CMAKE_PROJECT_NAME: ${CMAKE_PROJECT_NAME}")
 message(STATUS "FT PROJECT_NAME: ${PROJECT_NAME}")
 
+if(NOT TARGET ccl)
+	add_library(ccl INTERFACE)
+	target_link_libraries(ccl INTERFACE -l:libccl.so.1)
+endif()
+
 #set default build type
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release")

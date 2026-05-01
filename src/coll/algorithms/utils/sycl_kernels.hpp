@@ -17,25 +17,206 @@
 
 #include "common/global/global.hpp"
 // for ccl_kernel_barrier_data and ccl_comm_barrier_data definitions
-#include "coll/algorithms/utils/sycl_coll_base.hpp"
-#include "comm/comm.hpp"
+#include "coll/algorithms/utils/consts.hpp"
 // reduction types
 #include "coll/reduction/reduction.hpp"
+#include "coll/algorithms/utils/tvisa/include/gen_visa_templates.hpp"
 
-namespace ccl::v1 {
-struct impl_dispatch {
-    template <class Object>
-    const typename Object::impl_value_t &operator()(const Object &obj) const {
-        return obj.get_impl();
-    }
-};
-}; // namespace ccl::v1
+#define __LscFlushCache() \
+    { __asm__ __volatile__("lsc_fence.ugm.evict.gpu"); }
 
 struct sycl_ptrs_type {
     void *mdfi_ptr_rd{ nullptr }, *mdfi_ptr_wr{ nullptr };
     std::array<void *, MAX_GPUS> xelink_ptrs_rd, xelink_ptrs_wr;
     std::array<void *, MAX_NODE_RANKS> node_ptrs_rd, node_ptrs_wr;
 };
+
+inline bool use_recording_path(const sycl::queue &q) {
+    return ccl::global_data::env().sycl_force_recording_path ||
+           q.ext_oneapi_get_state() == sycl::ext::oneapi::experimental::queue_state::recording;
+}
+
+inline bool use_recording_path(const ccl_stream *stream) {
+    if (stream) {
+        return use_recording_path(stream->get_native_stream());
+    }
+    if (ccl::global_data::env().sycl_force_recording_path) {
+        // LOG_WARN("trying to force recording on null stream; falling back to non-recording");
+        CCL_THROW("recording null stream"); // TODO WARN or THROW ?
+    }
+    return false;
+}
+
+class ccl_kernel_barrier_data {
+public:
+    static constexpr int slots = 3;
+
+    ccl_kernel_barrier_data() = default;
+    ccl_kernel_barrier_data(const ccl_kernel_barrier_data &) = default;
+    ccl_kernel_barrier_data &operator=(const ccl_kernel_barrier_data &) = default;
+
+    void set_sync_ptrs(size_t *ptrs) {
+        m_sync_ptrs = ptrs;
+    }
+
+    // advance to the next slot
+    ccl_kernel_barrier_data inc_slot(int count = 1) {
+        m_count += count;
+        return *this;
+    }
+
+    // get current slot pointer
+    size_t *get_sync_ptr() const {
+        size_t curr_slot = m_count % slots;
+        return m_sync_ptrs + curr_slot;
+    }
+
+    // reset data in the farthest slot
+    void reset_sync_data() {
+        size_t reset_slot = (m_count + (slots - 1)) % slots;
+        m_sync_ptrs[reset_slot] = 0;
+    }
+
+private:
+    size_t *m_sync_ptrs;
+    size_t m_count = 0;
+};
+
+class alignas(CACHELINE_SIZE) ccl_comm_barrier_data {
+private:
+    int m_rank;
+    int m_size;
+    size_t m_count = slots - 1;
+    size_t *d_count = nullptr;
+    bool m_is_set = false;
+    bool m_use_remote_atomics;
+    std::array<size_t *, MAX_NODE_RANKS> m_remote_ptrs{};
+    std::array<size_t *, MAX_NODE_RANKS> d_remote_ptrs{};
+
+public:
+    static constexpr int slots = 3;
+
+    // setting use_remote_atomics is postponed in coll_init
+    // until topo manager is created.
+    ccl_comm_barrier_data(int rank, int size)
+            : m_rank(rank),
+              m_size(size),
+              m_use_remote_atomics(false) {}
+
+    int rank() const {
+        return m_rank;
+    }
+
+    int size() const {
+        return m_size;
+    }
+
+    bool is_set() const {
+        return m_is_set;
+    }
+
+    bool use_remote_atomics() const {
+        return m_use_remote_atomics;
+    }
+
+    void set_remote_atomics(bool use_remote_atomics) {
+        m_use_remote_atomics = use_remote_atomics;
+    }
+
+    size_t inc(size_t n) {
+        m_count += n;
+        return m_count;
+    }
+
+    size_t count() const {
+        return m_count / slots;
+    }
+
+    int slot() const {
+        return m_count % slots;
+    }
+
+    std::array<size_t *, MAX_NODE_RANKS> remote_ptrs() const {
+        return m_remote_ptrs;
+    }
+
+    size_t inc_gpu(size_t n) {
+        *d_count = *d_count + n;
+        return *d_count;
+    }
+
+    size_t count_gpu() const {
+        return *d_count / slots;
+    }
+
+    int slot_gpu() const {
+        return *d_count % slots;
+    }
+
+    std::array<size_t *, MAX_NODE_RANKS> remote_ptrs_gpu() const {
+        return d_remote_ptrs;
+    }
+
+    void set_count_gpu(size_t *count) {
+        d_count = count;
+    }
+
+    void set_remote_ptrs(std::array<size_t *, MAX_NODE_RANKS> ptrs,
+                         std::array<size_t *, MAX_NODE_RANKS> gpu_barrier_ptrs) {
+        assert(!is_set());
+        m_is_set = true;
+        m_remote_ptrs = ptrs;
+        d_remote_ptrs = gpu_barrier_ptrs;
+    }
+};
+
+class alignas(CACHELINE_SIZE) ccl_comm_flag_data {
+private:
+    int m_rank;
+    int m_size;
+    size_t *d_count = nullptr;
+    std::array<size_t *, MAX_NODE_RANKS> d_remote_ptrs{};
+
+public:
+    static constexpr int slots = 4;
+
+    ccl_comm_flag_data(int rank, int size) : m_rank(rank), m_size(size) {}
+
+    int rank() const {
+        return m_rank;
+    }
+
+    int size() const {
+        return m_size;
+    }
+
+    size_t inc(size_t n) {
+        *d_count = *d_count + n;
+        return *d_count;
+    }
+
+    size_t count() const {
+        return *d_count / slots;
+    }
+
+    int slot() const {
+        return *d_count % slots;
+    }
+
+    std::array<size_t *, MAX_NODE_RANKS> remote_ptrs() const {
+        return d_remote_ptrs;
+    }
+
+    void set_count(size_t *count) {
+        d_count = count;
+    }
+
+    void set_remote_ptrs(std::array<size_t *, MAX_NODE_RANKS> ptrs) {
+        d_remote_ptrs = ptrs;
+    }
+};
+
+/* COPY KERNELS */
 
 template <typename T, int N, int vec_size>
 inline void copy_data(std::array<void *, MAX_GPUS> dst,
@@ -95,26 +276,6 @@ inline void copy_and_modify_data(std::array<void *, MAX_GPUS> dst,
     }
 }
 
-template <typename T, int vec_size, int M>
-inline void copy_data(void *dst, const void *src, const size_t count, const sycl::nd_item<1> it) {
-    const size_t idx = it.get_global_linear_id();
-    using AT = sycl::vec<T, vec_size>;
-
-    constexpr int vec_size_cp = vec_size * M;
-    const size_t packed_count = count / vec_size_cp;
-
-    if (idx < packed_count) {
-        using MAT = sycl::marray<AT, M>;
-        ((MAT *)dst)[idx] = ((MAT *)src)[idx];
-    }
-    else {
-        const size_t new_idx = idx + (vec_size_cp - 1) * packed_count;
-        if (new_idx < count) {
-            ((T *)dst)[new_idx] = ((T *)src)[new_idx];
-        }
-    }
-}
-
 // local barrier within gpu similar to q.ext_oneapi_submit_barrier()
 inline void kernel_barrier(size_t *sync_ptr, const sycl::nd_item<1> it) {
     sycl::sub_group sg = it.get_sub_group();
@@ -136,13 +297,199 @@ inline void kernel_barrier(size_t *sync_ptr, const sycl::nd_item<1> it) {
     }
 }
 
+inline void p2p_barrier(ccl_comm_flag_data flag_data,
+                        const sycl::nd_item<1> it,
+                        const bool use_subgroups = false,
+                        const bool use_root_sync = false) {
+    const size_t idx = it.get_global_linear_id();
+    sycl::sub_group sg = it.get_sub_group();
+    const size_t sidx = sg.get_local_id();
+
+    const int comm_rank = flag_data.rank();
+    const int comm_size = flag_data.size();
+    const int dest_rank = (comm_rank + 1) % comm_size;
+
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+    __LscFlushCache();
+#endif
+
+    if (idx == 0) {
+        flag_data.inc(1);
+    }
+
+    if (use_root_sync) {
+        sycl::group_barrier(it.ext_oneapi_get_root_group());
+    }
+    else {
+        sycl::group_barrier(it.get_group());
+    }
+
+    size_t flag_count = flag_data.count();
+    const int buffer_idx = flag_data.slot();
+    std::array<size_t *, MAX_NODE_RANKS> sync_remote_ptrs = flag_data.remote_ptrs();
+
+    sycl::atomic_fence(sycl::memory_order::release, sycl::memory_scope::system);
+
+    // write flag to remote gpu memory
+    if (idx == 0) {
+        // TODO: should every thread writing do release fence
+        //sycl::atomic_fence(sycl::memory_order::release, sycl::memory_scope::system);
+
+#if defined(CCL_SYCL_ENABLE_ARCB) && defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+        char *dst = (char *)&(sync_remote_ptrs[dest_rank][buffer_idx]);
+        //__LscStoreUnCached(dst, flag_count);
+        lscStore<16, CacheCtrl::L1UC_L3UC>(dst, flag_count);
+
+        // assemby seems to be slower
+        /*
+        sycl::atomic_fence(sycl::memory_order::seq_cst, sycl::memory_scope::system);
+        char* addr = (char*)&(sync_remote_ptrs[comm_rank][buffer_idx]);
+        size_t val = 0;
+        while(val < flag_count) {
+            __LscLoadUnCached(val, addr);
+        }
+        */
+#else
+        sync_remote_ptrs[dest_rank][buffer_idx] = flag_count;
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+        __LscFlushCache();
+#endif
+#endif
+    }
+
+    // read flag from local gpu memory
+    const size_t use_idx = use_subgroups == 1 ? sidx : idx;
+    if (use_idx == 0) {
+        sycl::atomic_ref<size_t,
+                         sycl::memory_order::relaxed,
+                         sycl::memory_scope::device,
+                         sycl::access::address_space::global_space>
+            atomic_p(sync_remote_ptrs[comm_rank][buffer_idx]);
+
+        size_t val = atomic_p.load();
+        while (val < flag_count) {
+            val = atomic_p.load();
+        }
+    }
+
+    sycl::atomic_fence(sycl::memory_order::acquire, sycl::memory_scope::system);
+
+    if (!use_subgroups) {
+        if (use_root_sync) {
+            sycl::group_barrier(it.ext_oneapi_get_root_group());
+        }
+        else {
+            sycl::group_barrier(it.get_group());
+        }
+    }
+}
+
+// communication barrier for PCIe-based system when remote atomics
+// does not work. This is used for BMG with vISA instruction set
+template <bool use_root_sync = false>
+inline void comm_barrier_visa(ccl_comm_barrier_data barrier_data,
+                              const sycl::nd_item<1> it,
+                              const bool gpu_counter_increase = false) {
+    const size_t idx = it.get_global_linear_id();
+    sycl::sub_group sg = it.get_sub_group();
+    const size_t sidx = sg.get_local_id();
+
+    const int comm_rank = barrier_data.rank();
+    const int comm_size = barrier_data.size();
+
+    if (gpu_counter_increase) {
+        // flush cache before the sycl barrier
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+        __LscFlushCache();
+#endif
+        if (idx == 0) {
+            barrier_data.inc_gpu(1);
+        }
+        if constexpr (use_root_sync) {
+            // similar to oneCCL kernel_barrier
+            sycl::group_barrier(it.ext_oneapi_get_root_group());
+        }
+        // this works because there is only a single workgroup
+        // the barrier does not work between workgroups
+        // and multiple workgroups yield incorrect results
+        else {
+            sycl::group_barrier(it.get_group());
+        }
+    }
+
+    const size_t barrier_count =
+        gpu_counter_increase ? barrier_data.count_gpu() : barrier_data.count();
+    const int buffer_idx = gpu_counter_increase ? barrier_data.slot_gpu() : barrier_data.slot();
+    std::array<size_t *, MAX_NODE_RANKS> sync_remote_ptrs =
+        gpu_counter_increase ? barrier_data.remote_ptrs_gpu() : barrier_data.remote_ptrs();
+
+    // all threads do release fence
+    sycl::atomic_fence(sycl::memory_order::release, sycl::memory_scope::system);
+    // flush data to make sure all data goes out
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+    if (!gpu_counter_increase) {
+        __LscFlushCache();
+    }
+#endif
+
+    // increment count in all remote ranks
+    // write flag without caching
+    if (idx < (size_t)comm_size) {
+        const size_t i = idx;
+
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+        char *dst = (char *)&(sync_remote_ptrs[i][buffer_idx * comm_size + comm_rank]);
+        lscStore<16, CacheCtrl::L1UC_L3UC>(dst, barrier_count);
+#else
+        sync_remote_ptrs[i][buffer_idx * comm_size + comm_rank] = barrier_count;
+#endif
+    }
+
+#if 0 && defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+    __LscFlushCache();
+#endif
+
+    if (sidx < (size_t)comm_size) {
+#if 0
+        // slower with assembly
+        char* addr = (char*)&(sync_remote_ptrs[comm_rank][buffer_idx * comm_size + sidx]);
+        size_t val = 0;
+        while (val < barrier_count) {
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+            __LscLoadUnCached(val, addr);
+#endif
+        }
+#else
+        // local atmoic read
+        sycl::atomic_ref<size_t,
+                         sycl::memory_order::relaxed,
+                         sycl::memory_scope::device,
+                         sycl::access::address_space::global_space>
+            atomic_p(sync_remote_ptrs[comm_rank][buffer_idx * comm_size + sidx]);
+
+        size_t val = atomic_p.load();
+        while (val < barrier_count) {
+            val = atomic_p.load();
+        }
+#endif
+    }
+
+    sycl::atomic_fence(sycl::memory_order::acquire, sycl::memory_scope::system);
+}
+
 // communication barrier across ranks (gpus)
+template <bool use_root_sync = false>
 inline void comm_barrier(ccl_comm_barrier_data barrier_data,
                          const sycl::nd_item<1> it,
                          const bool use_gpu = true,
                          const bool gpu_counter_increase = false) {
     if (!use_gpu)
         return;
+
+    if (!barrier_data.use_remote_atomics()) {
+        comm_barrier_visa<use_root_sync>(barrier_data, it, gpu_counter_increase);
+        return;
+    }
 
     const size_t idx = it.get_global_linear_id();
     sycl::sub_group sg = it.get_sub_group();
@@ -155,10 +502,15 @@ inline void comm_barrier(ccl_comm_barrier_data barrier_data,
         if (idx == 0) {
             barrier_data.inc_gpu(1);
         }
+        if constexpr (use_root_sync) {
+            sycl::group_barrier(it.ext_oneapi_get_root_group());
+        }
         // this works because there is only a single workgroup
         // the barrier does not work between workgroups
         // and multiple workgroups yield incorrect results
-        it.barrier();
+        else {
+            sycl::group_barrier(it.get_group());
+        }
     }
 
     const size_t barrier_count =
@@ -209,6 +561,7 @@ static inline sycl::event kernel_memcpy(sycl::queue &q,
                                         int *recv_buf_idx_ptr,
                                         size_t count,
                                         size_t dsize,
+                                        size_t tmp_buf_size,
                                         const std::vector<sycl::event> &dep_events) {
     constexpr size_t wg_size = 32;
     constexpr size_t sg_size = 32;
@@ -233,67 +586,70 @@ static inline sycl::event kernel_memcpy(sycl::queue &q,
                     return 1;
             }
         };
-        auto kernel_memcpy_captured_typed =
-            [&q, &dep_events, recv_buf, send_buf_idx_ptr, recv_buf_idx_ptr]<typename Type>(
-                const Type *send_buf, size_t bytes) {
-                const size_t items = bytes / sizeof(Type);
-                const size_t nof_workgroups = items / wg_size + 1;
-                const size_t loop_size = nof_workgroups * wg_size;
-                return q.submit([=](sycl::handler &h) {
-                    h.depends_on(dep_events);
-                    h.parallel_for<oneccl_kernel_memcpy_typed<Type>>(
-                        sycl::nd_range<1>(loop_size, wg_size),
-                        [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                            size_t idx = it.get_global_linear_id();
-                            if (idx < items) {
-                                size_t offset_recv_items =
-                                    (recv_buf_idx_ptr ? *recv_buf_idx_ptr : 0) *
-                                    ccl_tmp_bufs::buf_size / sizeof(Type);
-                                size_t offset_send_items =
-                                    (send_buf_idx_ptr ? *send_buf_idx_ptr : 0) *
-                                    ccl_tmp_bufs::buf_size / sizeof(Type);
-                                Type *recv_buf_offset =
-                                    static_cast<Type *>(recv_buf) + offset_recv_items;
-                                const Type *send_buf_offset =
-                                    static_cast<const Type *>(send_buf) + offset_send_items;
-                                *(recv_buf_offset + idx) = *(send_buf_offset + idx);
-                            }
-                        });
-                });
-            };
-        auto kernel_memcpy_captured = [ptr_to_datasize, &kernel_memcpy_captured_typed](
-                                          const void *send_buf, void *recv_buf, size_t bytes) {
-            const void *send_ptr_end = (static_cast<const uint8_t *>(send_buf) + bytes);
-            size_t start_send_size = ptr_to_datasize(send_buf);
-            size_t end_send_size = ptr_to_datasize(send_ptr_end);
-            const void *recv_ptr_end = (static_cast<const uint8_t *>(recv_buf) + bytes);
-            size_t start_recv_size = ptr_to_datasize(recv_buf);
-            size_t end_recv_size = ptr_to_datasize(recv_ptr_end);
-            size_t min_size = start_send_size;
-            if (end_send_size < min_size) {
-                min_size = end_send_size;
-            }
-            if (start_recv_size < min_size) {
-                min_size = start_recv_size;
-            }
-            if (end_recv_size < min_size) {
-                min_size = end_recv_size;
-            }
-            switch (min_size) {
-                case 8:
-                    return kernel_memcpy_captured_typed(static_cast<const uint64_t *>(send_buf),
-                                                        bytes);
-                case 4:
-                    return kernel_memcpy_captured_typed(static_cast<const uint32_t *>(send_buf),
-                                                        bytes);
-                case 2:
-                    return kernel_memcpy_captured_typed(static_cast<const uint16_t *>(send_buf),
-                                                        bytes);
-                default:
-                    return kernel_memcpy_captured_typed(static_cast<const uint8_t *>(send_buf),
-                                                        bytes);
-            }
+        auto kernel_memcpy_captured_typed = [&q,
+                                             &dep_events,
+                                             recv_buf,
+                                             send_buf_idx_ptr,
+                                             recv_buf_idx_ptr,
+                                             tmp_buf_size]<typename Type>(const Type *send_buf,
+                                                                          size_t bytes) {
+            const size_t items = bytes / sizeof(Type);
+            const size_t nof_workgroups = items / wg_size + 1;
+            const size_t loop_size = nof_workgroups * wg_size;
+            return q.submit([=](sycl::handler &h) {
+                h.depends_on(dep_events);
+                h.parallel_for<oneccl_kernel_memcpy_typed<Type>>(
+                    sycl::nd_range<1>(loop_size, wg_size),
+                    [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
+                        size_t idx = it.get_global_linear_id();
+                        if (idx < items) {
+                            size_t offset_recv_items = (recv_buf_idx_ptr ? *recv_buf_idx_ptr : 0) *
+                                                       tmp_buf_size / sizeof(Type);
+                            size_t offset_send_items = (send_buf_idx_ptr ? *send_buf_idx_ptr : 0) *
+                                                       tmp_buf_size / sizeof(Type);
+                            Type *recv_buf_offset =
+                                static_cast<Type *>(recv_buf) + offset_recv_items;
+                            const Type *send_buf_offset =
+                                static_cast<const Type *>(send_buf) + offset_send_items;
+                            *(recv_buf_offset + idx) = *(send_buf_offset + idx);
+                        }
+                    });
+            });
         };
+        auto kernel_memcpy_captured =
+            [ptr_to_datasize, &kernel_memcpy_captured_typed, tmp_buf_size](
+                const void *send_buf, void *recv_buf, size_t bytes) {
+                const void *send_ptr_end = (static_cast<const uint8_t *>(send_buf) + bytes);
+                size_t start_send_size = ptr_to_datasize(send_buf);
+                size_t end_send_size = ptr_to_datasize(send_ptr_end);
+                const void *recv_ptr_end = (static_cast<const uint8_t *>(recv_buf) + bytes);
+                size_t start_recv_size = ptr_to_datasize(recv_buf);
+                size_t end_recv_size = ptr_to_datasize(recv_ptr_end);
+                size_t min_size = start_send_size;
+                if (end_send_size < min_size) {
+                    min_size = end_send_size;
+                }
+                if (start_recv_size < min_size) {
+                    min_size = start_recv_size;
+                }
+                if (end_recv_size < min_size) {
+                    min_size = end_recv_size;
+                }
+                switch (min_size) {
+                    case 8:
+                        return kernel_memcpy_captured_typed(static_cast<const uint64_t *>(send_buf),
+                                                            bytes);
+                    case 4:
+                        return kernel_memcpy_captured_typed(static_cast<const uint32_t *>(send_buf),
+                                                            bytes);
+                    case 2:
+                        return kernel_memcpy_captured_typed(static_cast<const uint16_t *>(send_buf),
+                                                            bytes);
+                    default:
+                        return kernel_memcpy_captured_typed(static_cast<const uint8_t *>(send_buf),
+                                                            bytes);
+                }
+            };
         return kernel_memcpy_captured(send_buf, recv_buf, bytes);
     }
     else {
@@ -307,9 +663,9 @@ static inline sycl::event kernel_memcpy(sycl::queue &q,
                     size_t idx = it.get_global_linear_id();
                     if (idx < bytes) {
                         size_t offset_recv_bytes =
-                            (recv_buf_idx_ptr ? *recv_buf_idx_ptr : 0) * ccl_tmp_bufs::buf_size;
+                            (recv_buf_idx_ptr ? *recv_buf_idx_ptr : 0) * tmp_buf_size;
                         size_t offset_send_bytes =
-                            (send_buf_idx_ptr ? *send_buf_idx_ptr : 0) * ccl_tmp_bufs::buf_size;
+                            (send_buf_idx_ptr ? *send_buf_idx_ptr : 0) * tmp_buf_size;
                         void *recv_buf_offset = static_cast<void *>(
                             static_cast<uint8_t *>(recv_buf) + offset_recv_bytes);
                         const void *send_buf_offset = static_cast<const void *>(
@@ -606,6 +962,7 @@ inline sycl::event pre_operation_invoke(sycl::queue &q,
                                         const bool is_recording,
                                         int *tmp_buf_idx,
                                         const ccl_reduction_data reduction,
+                                        size_t tmp_buf_size,
                                         const std::vector<sycl::event> &dep_events) {
     constexpr int wg_size = SGS, sg_size = SGS;
     const size_t kernel_threads = count / VS + count % VS;
@@ -616,7 +973,7 @@ inline sycl::event pre_operation_invoke(sycl::queue &q,
             sycl::nd_range<1>(kernel_size, wg_size), [=](sycl::nd_item<1> it) {
                 void *buf_local = buf;
                 if (is_recording) {
-                    size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
+                    size_t offset_bytes = *tmp_buf_idx * tmp_buf_size;
                     buf_local = (void *)((uintptr_t)buf + offset_bytes);
                 }
                 pre_operation<T, VS>(buf_local, count, reduction, it);
@@ -860,6 +1217,29 @@ inline void reduce_base(const void *send,
 
 /* REDUCE GENERAL KERNEL */
 
+template <typename T, int vec_size, int M>
+inline void copy_data_internal(void *dst,
+                               const void *src,
+                               const size_t count,
+                               const sycl::nd_item<1> it) {
+    const size_t idx = it.get_global_linear_id();
+    using AT = sycl::vec<T, vec_size>;
+
+    constexpr int vec_size_cp = vec_size * M;
+    const size_t packed_count = count / vec_size_cp;
+
+    if (idx < packed_count) {
+        using MAT = sycl::marray<AT, M>;
+        ((MAT *)dst)[idx] = ((MAT *)src)[idx];
+    }
+    else {
+        const size_t new_idx = idx + (vec_size_cp - 1) * packed_count;
+        if (new_idx < count) {
+            ((T *)dst)[new_idx] = ((T *)src)[new_idx];
+        }
+    }
+}
+
 template <typename T,
           int N,
           int vec_size,
@@ -884,7 +1264,7 @@ inline void reduce_base_general(const void *send,
 
     if (use_local_barrier) {
         // copy data from send buffer to local temp buffer
-        copy_data<T, vec_size, M>(tmp, send, count_cp, it);
+        copy_data_internal<T, vec_size, M>(tmp, send, count_cp, it);
 
         // local barrier within gpu
         kernel_barrier(kernel_barrier_data.get_sync_ptr(), it);

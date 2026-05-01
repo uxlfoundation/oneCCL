@@ -131,7 +131,7 @@ LDFLAGS="-ldl"
 MPILIBNAME="mpi"
 
 # MPIVERSION is the version of the MPICH2 library that mpicc is intended for
-MPIVERSION="2021.17"
+MPIVERSION="2021.18"
 #
 # Internal variables
 # Show is set to echo to cause the compilation command to be echoed instead
@@ -467,7 +467,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ "$static_mpi" = yes ] ; then
-    if [ "$ilp64" = yes ]; then
+    if [ "$use_mpi_abi" = yes ]; then
         echo "Error: the -mpi-abi option is not supported for static builds."
         exit 1
     fi

@@ -75,6 +75,7 @@
 #include "coll/algorithms/allgatherv/sycl/allgatherv_sycl.hpp"
 #include "coll/algorithms/alltoall/sycl/alltoall_sycl.hpp"
 #include "coll/algorithms/broadcast/sycl/broadcast_sycl.hpp"
+#include "coll/algorithms/barrier/sycl/barrier_sycl.hpp"
 #include "coll/algorithms/recv/sycl/recv_sycl.hpp"
 #include "coll/algorithms/send/sycl/send_sycl.hpp"
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
@@ -115,6 +116,14 @@ ccl_request* exec_single_rank_inplace_coll(const ccl_coll_param& param) {
     return nullptr;
 }
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
+
+bool is_using_arc_card(const ccl_stream* stream) {
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    return is_arc_card(ccl::ze::get_device_family(stream->get_ze_device()));
+#else
+    return false;
+#endif
+}
 
 ccl_request* exec_single_rank_coll(const ccl_coll_param& param) {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1159,11 +1168,11 @@ ccl::event ccl_allgather(const void* send_buf,
             "|CCL_SYCL| allgather selects sycl-kernels count: ", count, ", datatype: ", dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
-        auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allgatherv_attr>();
         const ccl::vector_class<size_t> recv_counts(comm->size(), count);
         collective = [=, &deps]() -> ccl::event {
             bool done = false;
+            sycl::queue q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::allgather_sycl(q,
                                                        send_buf,
                                                        count,
@@ -1269,10 +1278,10 @@ ccl::event ccl_allgatherv(const void* send_buf,
                   dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
-        auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allgatherv_attr>();
         collective = [=, &deps]() -> ccl::event {
             bool done = false;
+            auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::allgather_sycl(q,
                                                        send_buf,
                                                        send_count,
@@ -1374,10 +1383,10 @@ ccl::event ccl_allreduce(const void* send_buf,
             "|CCL_SYCL| allreduce selects sycl-kernels count: ", count, ", datatype: ", dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
-        auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allreduce_attr>();
         collective = [=, &deps]() -> ccl::event {
             bool done = false;
+            auto q = op_stream->get_native_stream();
             ccl::event ccl_event = allreduce_sycl(q,
                                                   send_buf,
                                                   recv_buf,
@@ -1480,10 +1489,10 @@ ccl::event ccl_alltoall(const void* send_buf,
             "|CCL_SYCL| alltoall selects sycl-kernels send_count: ", count, ", datatype: ", dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
-        auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::alltoall_attr>();
         collective = [=, &deps]() -> ccl::event {
             bool done = false;
+            auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::alltoall_sycl(q,
                                                       send_buf,
                                                       recv_buf,
@@ -1621,10 +1630,48 @@ ccl::event ccl_barrier(ccl_comm* comm,
         comm, "barrier", ccl::reduction::none, ccl::datatype::uint8, 0, comm_event_session);
 #endif
 
-    auto collective = [comm, stream, &deps]() -> ccl::event {
+    std::function<ccl::event()> collective = [comm, stream, &deps]() -> ccl::event {
         auto req = ccl_barrier_impl(comm, stream, deps);
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    ccl_selector_param param = ccl_selector_param::create(ccl_coll_barrier,
+                                                          0,
+                                                          ccl::datatype::int32,
+                                                          comm,
+                                                          const_cast<ccl_stream*>(stream),
+                                                          NULL,
+                                                          ccl::reduction::custom,
+                                                          false, // is_vector_buf
+                                                          false, // is_sycl_buf
+                                                          CCL_INVALID_PEER_RANK_IDX, // peer_rank
+                                                          {}, // hint_algo
+                                                          false); // is_scaleout
+
+    if (can_use_sycl_kernels(param)) {
+        if (comm->is_multi_thread_instance() == true) {
+            CCL_THROW("barrier is not supported for multithreaded communicator yet");
+        }
+
+        LOG_DEBUG("|CCL_SYCL| barrier selects sycl-kernels");
+
+        ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
+        auto dummy_unused_attr = ccl::create_operation_attr<ccl::barrier_attr>();
+        collective = [=, &deps]() -> ccl::event {
+            bool done = false;
+            auto q = op_stream->get_native_stream();
+            ccl::event ccl_event =
+                ccl::barrier_sycl(q, comm, op_stream, dummy_unused_attr, deps, done);
+            if (done) {
+                if (ccl::global_data::env().enable_op_sync) {
+                    ccl_event.wait();
+                }
+                return ccl_event;
+            }
+            return collective();
+        };
+    }
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
         new ccl::host_event_impl(req, group_impl::is_group_active));
@@ -1719,10 +1766,10 @@ ccl::event ccl_broadcast(void* buf,
             "|CCL_SYCL| broadcast selects sycl-kernels count: ", count, ", datatype: ", dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
-        auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::broadcast_attr>();
         collective = [=, &deps]() -> ccl::event {
             bool done = false;
+            auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::broadcast_sycl(
                 q, buf, buf, count, dtype, root, comm, op_stream, dummy_unused_attr, deps, done);
             if (done) {
@@ -1815,10 +1862,10 @@ ccl::event ccl_broadcast(void* send_buf,
             "|CCL_SYCL| broadcast selects sycl-kernels count: ", count, ", datatype: ", dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
-        auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::broadcast_attr>();
         collective = [=, &deps]() -> ccl::event {
             bool done = false;
+            auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::broadcast_sycl(q,
                                                        send_buf,
                                                        recv_buf,
@@ -1987,10 +2034,10 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
                   ", datatype: ",
                   dtype);
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
-        auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::reduce_scatter_attr>();
         collective = [=, &deps]() -> ccl::event {
             bool done = false;
+            auto q = op_stream->get_native_stream();
             ccl::event ccl_event = reduce_scatter_sycl(q,
                                                        send_buf,
                                                        recv_buf,
@@ -2068,7 +2115,10 @@ ccl::event ccl_recv(void* recv_buf,
         comm, "recv", ccl::reduction::none, dtype, count, comm_event_session);
 #endif
 
-    CCL_THROW_RECORDING(stream, "|CCL_SYCL| ccl_recv does not support sycl_graph recording");
+    if (!is_using_arc_card(stream)) {
+        CCL_THROW_RECORDING(stream,
+                            "|CCL_SYCL| ccl_recv does not support sycl_graph recording on PVC");
+    }
     std::function<ccl::event()> recv_operation =
         [recv_buf, count, dtype, peer, attr, comm, stream, &deps]() -> ccl::event {
         auto req = ccl_recv_impl(recv_buf, count, dtype, peer, attr, comm, stream, deps);
@@ -2172,7 +2222,10 @@ ccl::event ccl_send(const void* send_buf,
         comm, "send", ccl::reduction::none, dtype, send_count, comm_event_session);
 #endif
 
-    CCL_THROW_RECORDING(stream, "|CCL_SYCL| ccl_send does not support sycl_graph recording");
+    if (!is_using_arc_card(stream)) {
+        CCL_THROW_RECORDING(stream,
+                            "|CCL_SYCL| ccl_send does not support sycl_graph recording on PVC");
+    }
     std::function<ccl::event()> send_operation =
         [send_buf, send_count, dtype, peer_rank, attr, comm, stream, &deps]() -> ccl::event {
         auto req = ccl_send_impl(send_buf, send_count, dtype, peer_rank, attr, comm, stream, deps);
