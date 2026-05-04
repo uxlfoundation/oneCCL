@@ -30,10 +30,10 @@ ccl::event broadcast_small(const void* send_buf,
         LOG_DEBUG("invoking broadcast_small");
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
-        return broadcast_small_impl<T, NE, NP>(
+    auto lambda = [&]<typename T>() {
+        return broadcast_small_impl<T>(
             send_buf, recv_buf, count, dtype, root, comm, global_stream, deps);
     };
 
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

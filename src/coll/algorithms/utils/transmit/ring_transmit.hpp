@@ -15,60 +15,37 @@
 */
 #pragma once
 
+#include "coll/algorithms/utils/transmit/work_size_data.hpp"
+#include "common/utils/rounding.hpp"
+#include "work_size_data.hpp"
+
 //
 // For those do not have sub-group level independent forward progress
 // or PCIE connection without switch (remote polling).
 //
-//
-// When split barrier is not supported, signal become null,
-// wait will be both signal and wait.
-static inline void sbarrier_signal_compat(bool p2p) {
-#if defined(CCL_SYCL_ENABLE_ARCB) && defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-    if (!p2p)
-        sbarrier_signal();
-#endif
-}
 
-static inline void sbarrier_wait_compat(bool p2p) {
-#if defined(CCL_SYCL_ENABLE_ARCB) && defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
-    if (!p2p)
-        sbarrier_wait();
-#endif
-}
-
-template <typename T, template <typename, int> class Proto, int SubGroupSize = 16>
-class RingTransmit : public Proto<T, SubGroupSize> {
+template <typename T,
+          template <typename, int>
+          class Proto,
+          bool LoadSeqNoInRuntime,
+          int SubGroupSize = 16>
+class RingTransmit {
 protected:
-    static constexpr int parallel_sg = 1;
     using ProtoT = Proto<T, SubGroupSize>;
-
-    using typename ProtoT::message_t;
-    using ProtoT::wireCapacityInType;
-
-    using ProtoT::wireTransSize;
-    using ProtoT::wireTransElems;
-
-    using ProtoT::loadInput;
-    using ProtoT::shuffleData;
-    using ProtoT::insertFlags;
-    using ProtoT::sendMessages;
-    using ProtoT::recvMessages;
-    using ProtoT::accumMessages;
-    using ProtoT::restoreData;
-    using ProtoT::storeOutput;
-    using ProtoT::wireCapacity;
+    using message_t = typename ProtoT::message_t;
 
 public:
+    const int parallel_sg;
     constexpr static size_t nSlot = 4;
 #if defined(CCL_SYCL_ENABLE_ARCB)
     constexpr static size_t maxLaunch = 64 * 20;
 #else
     constexpr static size_t maxLaunch = 64 * 64;
 #endif
-    constexpr static size_t ringSize = maxLaunch * wireTransSize * nSlot;
+    constexpr static size_t ringSize = maxLaunch * ProtoT::wireTransSize * nSlot;
     static_assert(ringSize <= 4 * 1024 * 1024ull * SubGroupSize / 16);
 
-    typedef T (*ringPtr)[nSlot][maxLaunch][wireTransElems];
+    typedef T (*ringPtr)[nSlot][maxLaunch][ProtoT::wireTransElems];
 
 public:
     RingTransmit(int nranks,
@@ -79,16 +56,20 @@ public:
                  T* const peerBuf1[],
                  ssize_t workSize,
                  int rank,
-                 uint32_t seqNo, // Serve as flag for checking
+                 uint32_t* seqNoPtr, // Serves as gpu-based flag (sycl graph)
+                 uint32_t seqNo, // Serves as const flag for checking (not recording)
                  bool p2p)
-            : NRanks(nranks),
+            : nRanks(nranks),
+              parallel_sg(1),
               workElems(workSize / sizeof(T)),
               rank(rank),
-              seqNo(seqNo),
+              seqNoPtr(seqNoPtr),
+              seqNo_(seqNo),
               p2p(p2p) {
-        auto next = (rank + 1) % NRanks;
+        auto next = (rank + 1) % nRanks;
         ingress = input;
         egress = input;
+        has_offsets = false;
 
         scatterSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf0[next]);
         gatherSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf1[next]);
@@ -100,202 +81,190 @@ public:
     RingTransmit(int nranks,
                  T* input,
                  T* output,
+                 const size_t* offs,
                  T* scatterBuf,
                  T* gatherBuf,
                  T* const peerBuf0[],
                  T* const peerBuf1[],
                  ssize_t workSize,
                  int rank,
-                 uint32_t seqNo, // Serve as flag for checking
+                 uint32_t* seqNoPtr, // Serves as gpu-based flag (sycl graph)
+                 uint32_t seqNo, // Serves as const flag for checking (not recording)
+                 ccl::reduction reduction,
                  bool p2p)
-            : NRanks(nranks),
+            : nRanks(nranks),
+              parallel_sg(1),
               workElems(workSize / sizeof(T)),
               rank(rank),
-              seqNo(seqNo),
+              seqNoPtr(seqNoPtr),
+              seqNo_(seqNo),
+              reduction(reduction),
               p2p(p2p) {
-        auto next = (rank + 1) % NRanks;
-        ingress = input;
-        egress = output;
-
-        scatterSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf0[next]);
-        gatherSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf1[next]);
-
-        localScatterSink = reinterpret_cast<ringPtr>((uintptr_t)scatterBuf);
-        localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
+        init_ring_buffers(input, output, offs, scatterBuf, gatherBuf, peerBuf0, peerBuf1, nranks);
     }
 
-    template <int __dummy__>
-    inline void run(size_t inputOffset, size_t tStep, ssize_t workLeft) {
-        runAllreduce(inputOffset, tStep, workLeft);
-    }
+    RingTransmit(int nranks,
+                 T* input,
+                 T* output,
+                 const size_t* offs,
+                 T* scatterBuf,
+                 T* gatherBuf,
+                 T* const peerBuf0[],
+                 T* const peerBuf1[],
+                 ssize_t workSize,
+                 int rank,
+                 uint32_t* seqNoPtr,
+                 uint32_t seqNo,
+                 bool p2p)
+            : RingTransmit(nranks,
+                           input,
+                           output,
+                           offs,
+                           scatterBuf,
+                           gatherBuf,
+                           peerBuf0,
+                           peerBuf1,
+                           workSize,
+                           rank,
+                           seqNoPtr,
+                           seqNo,
+                           ccl::reduction::sum,
+                           p2p) {}
 
-    inline void send(int wireId,
-                     int peer,
-                     size_t offset,
-                     uint32_t flag,
-                     uint32_t slot,
-                     ssize_t nelems) {
-        message_t v;
-        auto* ptr = ingress + peer * workElems + offset;
-        loadInput(v, ptr, nelems);
-
-        shuffleData(v);
-        insertFlags(v, flag);
-
-        sendMessages(scatterSink[peer][slot][wireId], v);
-        sbarrier_signal_compat(p2p);
-    }
-
-    inline void loadRecvReduceSend(int wireId,
-                                   int peer,
-                                   size_t offset,
-                                   uint32_t flag,
-                                   uint32_t slot,
-                                   ssize_t nelems) {
-        message_t v;
-        message_t messages;
-
-        auto* ptr = ingress + peer * workElems + offset;
-        loadInput(v, ptr, nelems);
-
-        bool retry;
-        sbarrier_wait_compat(p2p);
-        do {
-            retry = false;
-            retry |= recvMessages(messages, localScatterSink[peer][slot][wireId], flag);
-        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
-
-        shuffleData(v);
-        accumMessages(v, messages);
-        insertFlags(v, flag);
-
-        sendMessages(scatterSink[peer][slot][wireId], v);
-        sbarrier_signal_compat(p2p);
-    }
-
-    inline void loadRecvReduceSendWrtback(int wireId,
-                                          int peer,
-                                          size_t offset,
-                                          uint32_t flag,
-                                          uint32_t slot,
-                                          ssize_t nelems) {
-        message_t v;
-        message_t messages;
-
-        auto* ptr = ingress + peer * workElems + offset;
-        loadInput(v, ptr, nelems);
-
-        bool retry;
-        sbarrier_wait_compat(p2p);
-        do {
-            retry = false;
-            retry |= recvMessages(messages, localScatterSink[peer][slot][wireId], flag);
-        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
-
-        shuffleData(v);
-        accumMessages(v, messages);
-
-        insertFlags(v, flag);
-        sendMessages(gatherSink[peer][slot][wireId], v);
-        sbarrier_signal_compat(p2p);
-
-        restoreData(v);
-
-        ptr = egress + peer * workElems + offset;
-        storeOutput(ptr, v, nelems);
-    }
-
-    inline void recvSendWrtback(int wireId,
-                                int peer,
-                                size_t offset,
-                                uint32_t flag,
-                                uint32_t slot,
-                                ssize_t nelems) {
-        message_t v;
-
-        bool retry;
-        sbarrier_wait_compat(p2p);
-        do {
-            retry = false;
-            retry |= recvMessages(v, localGatherSink[peer][slot][wireId], flag);
-        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
-
-        insertFlags(v, flag);
-        sendMessages(gatherSink[peer][slot][wireId], v);
-        sbarrier_signal_compat(p2p);
-
-        restoreData(v);
-
-        auto* ptr = egress + peer * workElems + offset;
-        storeOutput(ptr, v, nelems);
-    }
-
-    inline void recvWrtback(int wireId,
-                            int peer,
-                            size_t offset,
-                            uint32_t flag,
-                            uint32_t slot,
-                            ssize_t nelems) {
-        message_t v;
-
-        sbarrier_wait_compat(p2p);
-        bool retry;
-        do {
-            retry = false;
-            retry |= recvMessages(v, localGatherSink[peer][slot][wireId], flag);
-        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
-
-        restoreData(v);
-
-        auto* ptr = egress + peer * workElems + offset;
-        storeOutput(ptr, v, nelems);
-    }
-
-    inline void loadRecvReduceWrtback(int wireId,
-                                      int peer,
-                                      size_t offset,
-                                      uint32_t flag,
-                                      uint32_t slot,
-                                      ssize_t nelems) {
-        message_t v;
-        message_t messages;
-
-        auto* ptr = ingress + peer * workElems + offset;
-        loadInput(v, ptr, nelems);
-
-        bool retry;
-        sbarrier_wait_compat(p2p);
-        do {
-            retry = false;
-            retry |= recvMessages(messages, localScatterSink[peer][slot][wireId], flag);
-        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
-
-        shuffleData(v);
-        accumMessages(v, messages);
-
-        insertFlags(v, flag);
-        restoreData(v);
-
-        ptr = egress + offset;
-        storeOutput(ptr, v, nelems);
-    }
-
-    inline void runAllreduce(size_t inputOffset, size_t tStep, ssize_t workLeft) {
+    inline void runAllreduce(size_t inputOffset,
+                             size_t tStep,
+                             ssize_t workLeft,
+                             WorkSizeData<message_t> workSizeData,
+                             AccessGranularity gr) {
         if (workLeft <= 0) {
             // threads without work paticipate in exactly same number of
             // barrier as those threads with actual work
-            sbarrier_signal_compat(p2p);
-            for (uint32_t i = 1; i < NRanks - 1; ++i) {
-                sbarrier_wait_compat(p2p);
-                sbarrier_signal_compat(p2p);
+            ProtoT::sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < nRanks - 1; ++i) {
+                ProtoT::sbarrier_wait_compat(p2p);
+                ProtoT::sbarrier_signal_compat(p2p);
             }
-            sbarrier_wait_compat(p2p);
-            sbarrier_signal_compat(p2p);
-            for (uint32_t i = 1; i < NRanks - 1; ++i) {
-                sbarrier_wait_compat(p2p);
-                sbarrier_signal_compat(p2p);
+            ProtoT::sbarrier_wait_compat(p2p);
+            ProtoT::sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < nRanks - 1; ++i) {
+                ProtoT::sbarrier_wait_compat(p2p);
+                ProtoT::sbarrier_signal_compat(p2p);
             }
-            sbarrier_wait_compat(p2p);
+            ProtoT::sbarrier_wait_compat(p2p);
+            return;
+        }
+
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        size_t offset = inputOffset / sizeof(T);
+        uint32_t seqNo = getSeqNo();
+        size_t flag = seqNo + tStep / nSlot;
+        size_t slot = (seqNo + tStep) % nSlot;
+
+        size_t* offset_ptr = has_offsets ? offsets : NULL;
+
+        uint32_t p_idx = 0;
+        ssize_t peer = (rank + p_idx) % nRanks;
+
+        // Step 0
+        ProtoT::send(ingress,
+                     scatterSink[peer][slot][wireId],
+                     wireId,
+                     peer,
+                     0,
+                     workSizeData.GetOffset(peer) + offset,
+                     flag,
+                     slot,
+                     workSizeData.GetNElems(peer) - offset,
+                     p2p,
+                     gr);
+
+        // Step 1 to N-1
+#pragma unroll
+        for (int i = 1; i < nRanks - 1; ++i) {
+            p_idx = (p_idx + nRanks - 1) % nRanks;
+            peer = (rank + p_idx) % nRanks;
+            ProtoT::loadRecvReduceSend(ingress,
+                                       localScatterSink[peer][slot][wireId],
+                                       scatterSink[peer][slot][wireId],
+                                       wireId,
+                                       peer,
+                                       0,
+                                       workSizeData.GetOffset(peer) + offset,
+                                       flag,
+                                       slot,
+                                       workSizeData.GetNElems(peer) - offset,
+                                       reduction,
+                                       p2p,
+                                       gr);
+        }
+
+        // Step N
+        p_idx = (p_idx + nRanks - 1) % nRanks;
+        peer = (rank + p_idx) % nRanks;
+        ProtoT::loadRecvReduceSendWrtback(ingress,
+                                          localScatterSink[peer][slot][wireId],
+                                          gatherSink[peer][slot][wireId],
+                                          egress,
+                                          wireId,
+                                          peer,
+                                          0,
+                                          workSizeData.GetOffset(peer) + offset,
+                                          flag,
+                                          slot,
+                                          workSizeData.GetNElems(peer) - offset,
+                                          reduction,
+                                          p2p,
+                                          gr);
+
+        // write back
+#pragma unroll
+        for (uint32_t i = 1; i < nRanks - 1; ++i) {
+            p_idx = (p_idx + nRanks - 1) % nRanks; // 0
+            peer = (rank + p_idx) % nRanks;
+            ProtoT::recvSendWrtback(localGatherSink[peer][slot][wireId],
+                                    gatherSink[peer][slot][wireId],
+                                    egress,
+                                    offset_ptr,
+                                    wireId,
+                                    peer,
+                                    0,
+                                    workSizeData.GetOffset(peer) + offset,
+                                    flag,
+                                    slot,
+                                    workSizeData.GetNElems(peer) - offset,
+                                    p2p,
+                                    gr);
+        }
+
+        p_idx = (p_idx + nRanks - 1) % nRanks;
+        peer = (rank + p_idx) % nRanks;
+        ProtoT::recvWrtback(localGatherSink[peer][slot][wireId],
+                            egress,
+                            offset_ptr,
+                            wireId,
+                            peer,
+                            0,
+                            workSizeData.GetOffset(peer) + offset,
+                            flag,
+                            slot,
+                            workSizeData.GetNElems(peer) - offset,
+                            p2p,
+                            gr);
+    }
+
+    inline void runAllgather(size_t inputOffset,
+                             size_t tStep,
+                             ssize_t workLeft,
+                             AccessGranularity gr) {
+        if (workLeft <= 0) {
+            ProtoT::sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < nRanks - 1; ++i) {
+                ProtoT::sbarrier_wait_compat(p2p);
+                ProtoT::sbarrier_signal_compat(p2p);
+            }
+            ProtoT::sbarrier_wait_compat(p2p);
             return;
         }
 
@@ -303,50 +272,155 @@ public:
             sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
 
         auto offset = inputOffset / sizeof(T);
+        uint32_t seqNo = getSeqNo();
+        auto flag = seqNo + tStep / nSlot;
+        auto slot = (seqNo + tStep) % nSlot;
+        auto nelems = workLeft / sizeof(T);
+        auto offset_ptr = has_offsets ? offsets : NULL;
+
+        message_t v;
+
+        uint32_t p_idx = 0;
+        int peer = (rank + p_idx) % nRanks;
+
+        auto* ptr = ingress + offset;
+        ProtoT::loadInput(v, ptr, nelems, gr);
+
+        auto* o_ptr = egress + offset;
+        if (has_offsets)
+            o_ptr = (T*)((char*)o_ptr + offsets[peer]);
+        else
+            o_ptr = o_ptr + peer * workElems;
+
+        if (ptr != o_ptr)
+            ProtoT::storeOutput(o_ptr, v, nelems, gr);
+
+        ProtoT::shuffleData(v);
+        ProtoT::insertFlags(v, flag);
+        ProtoT::sendMessages(gatherSink[peer][slot][wireId], v);
+
+        ProtoT::sbarrier_signal_compat(p2p);
+
+#pragma unroll
+        for (uint32_t i = 1; i < nRanks - 1; ++i) {
+            p_idx = (p_idx + nRanks - 1) % nRanks; // 0
+            peer = (rank + p_idx) % nRanks;
+            ProtoT::recvSendWrtback(localGatherSink[peer][slot][wireId],
+                                    gatherSink[peer][slot][wireId],
+                                    egress,
+                                    offset_ptr,
+                                    wireId,
+                                    peer,
+                                    workElems,
+                                    offset,
+                                    flag,
+                                    slot,
+                                    nelems,
+                                    p2p,
+                                    gr);
+        }
+
+        p_idx = (p_idx + nRanks - 1) % nRanks;
+        peer = (rank + p_idx) % nRanks;
+
+        ProtoT::recvWrtback(localGatherSink[peer][slot][wireId],
+                            egress,
+                            offset_ptr,
+                            wireId,
+                            peer,
+                            workElems,
+                            offset,
+                            flag,
+                            slot,
+                            nelems,
+                            p2p,
+                            gr);
+    }
+
+    inline void runReduceScatter(size_t inputOffset,
+                                 size_t tStep,
+                                 ssize_t workLeft,
+                                 ssize_t workSizeData,
+                                 AccessGranularity gr) {
+        if (workLeft <= 0) {
+            ProtoT::sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < nRanks - 1; ++i) {
+                ProtoT::sbarrier_wait_compat(p2p);
+                ProtoT::sbarrier_signal_compat(p2p);
+            }
+            ProtoT::sbarrier_wait_compat(p2p);
+            return;
+        }
+
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        auto offset = inputOffset / sizeof(T);
+        uint32_t seqNo = getSeqNo();
         auto flag = seqNo + tStep / nSlot;
         auto slot = (seqNo + tStep) % nSlot;
         auto nelems = workLeft / sizeof(T);
 
-        uint32_t p_idx = 0;
-        int peer = (rank + p_idx) % NRanks;
+        int p_idx = -1;
+        int peer = (rank + nRanks + p_idx) % nRanks;
 
         // Step 0
-        send(wireId, peer, offset, flag, slot, nelems);
+        ProtoT::send(ingress,
+                     scatterSink[peer][slot][wireId],
+                     wireId,
+                     peer,
+                     workElems,
+                     offset,
+                     flag,
+                     slot,
+                     nelems,
+                     p2p,
+                     gr);
 
         // Step 1 to N-1
 #pragma unroll
-        for (int i = 1; i < NRanks - 1; ++i) {
-            p_idx = (p_idx - 1) % NRanks;
-            peer = (rank + p_idx) % NRanks;
-            loadRecvReduceSend(wireId, peer, offset, flag, slot, nelems);
+        for (int i = 1; i < nRanks - 1; ++i) {
+            p_idx = (p_idx + nRanks - 1) % nRanks;
+            peer = (rank + p_idx) % nRanks;
+            ProtoT::loadRecvReduceSend(ingress,
+                                       localScatterSink[peer][slot][wireId],
+                                       scatterSink[peer][slot][wireId],
+                                       wireId,
+                                       peer,
+                                       workElems,
+                                       offset,
+                                       flag,
+                                       slot,
+                                       nelems,
+                                       reduction,
+                                       p2p,
+                                       gr);
         }
 
         // Step N
-        p_idx = (p_idx - 1) % NRanks;
-        peer = (rank + p_idx) % NRanks;
-        loadRecvReduceSendWrtback(wireId, peer, offset, flag, slot, nelems);
-
-        // write back
-#pragma unroll
-        for (uint32_t i = 1; i < NRanks - 1; ++i) {
-            p_idx = (p_idx - 1) % NRanks; // 0
-            peer = (rank + p_idx) % NRanks;
-            recvSendWrtback(wireId, peer, offset, flag, slot, nelems);
-        }
-
-        p_idx = (p_idx - 1) % NRanks;
-        peer = (rank + p_idx) % NRanks;
-        recvWrtback(wireId, peer, offset, flag, slot, nelems);
+        p_idx = (p_idx + nRanks - 1) % nRanks;
+        peer = (rank + p_idx) % nRanks;
+        ProtoT::loadRecvReduceWrtback(ingress,
+                                      localScatterSink[peer][slot][wireId],
+                                      egress,
+                                      wireId,
+                                      peer,
+                                      workElems,
+                                      offset,
+                                      flag,
+                                      slot,
+                                      nelems,
+                                      reduction,
+                                      p2p,
+                                      gr);
     }
 
-    inline void runAllgather(size_t inputOffset, size_t tStep, ssize_t workLeft) {
+    inline void runBroadcast(int root,
+                             size_t inputOffset,
+                             size_t tStep,
+                             ssize_t workLeft,
+                             AccessGranularity gr) {
         if (workLeft <= 0) {
-            sbarrier_signal_compat(p2p);
-            for (uint32_t i = 1; i < NRanks - 1; ++i) {
-                sbarrier_wait_compat(p2p);
-                sbarrier_signal_compat(p2p);
-            }
-            sbarrier_wait_compat(p2p);
             return;
         }
 
@@ -354,49 +428,169 @@ public:
             sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
 
         auto inputOffInType = inputOffset / sizeof(T);
+        uint32_t seqNo = getSeqNo();
+        auto flag = seqNo + tStep;
+        auto slot = (seqNo + tStep) % nSlot;
+        auto nelems = workLeft / sizeof(T);
+
+        message_t v;
+
+        int peer = (rank + 1) % nRanks;
+
+        if (rank == root) {
+            // recv
+            if (tStep >= nSlot) {
+                // halt to wait for previous step
+                auto prev_flag = seqNo + tStep - nSlot;
+                auto prev_slot = (seqNo + tStep - nSlot) % nSlot;
+                bool retry;
+                do {
+                    retry = false;
+                    retry |= ProtoT::recvMessages(
+                        v, localGatherSink[rank][prev_slot][wireId], prev_flag);
+                } while (
+                    sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+            }
+
+            auto* ptr = ingress + inputOffInType;
+            ProtoT::loadInput(v, ptr, nelems, gr);
+
+            auto* o_ptr = egress + inputOffInType;
+            if (ptr != o_ptr)
+                ProtoT::storeOutput(o_ptr, v, nelems, gr);
+
+            ProtoT::shuffleData(v);
+            ProtoT::insertFlags(v, flag);
+            ProtoT::sendMessages(scatterSink[peer][slot][wireId], v);
+        }
+        else {
+            // recv
+            bool retry;
+            do {
+                retry = false;
+                retry |= ProtoT::recvMessages(v, localScatterSink[rank][slot][wireId], flag);
+            } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+
+            // forward
+            if (peer != root) {
+                ProtoT::sendMessages(scatterSink[peer][slot][wireId], v);
+            }
+            else {
+                ProtoT::sendMessages(gatherSink[peer][slot][wireId], v);
+            }
+
+            ProtoT::restoreData(v);
+            auto* ptr = egress + inputOffInType;
+            ProtoT::storeOutput(ptr, v, nelems, gr);
+        }
+    }
+
+    inline void runSendStart(int my_rank, int peer_rank) {
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        uint32_t seqNo = getSeqNo();
+        auto flag = seqNo;
+        auto slot = seqNo % nSlot;
+
+        message_t v;
+        // wait for receiver to be ready
+        bool retry;
+        do {
+            retry = false;
+            retry |= ProtoT::recvMessages(v, localGatherSink[peer_rank][slot][wireId], flag);
+        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+    }
+
+    inline void runSend(size_t inputOffset,
+                        size_t tStep,
+                        ssize_t workLeft,
+                        int my_rank,
+                        int peer_rank,
+                        AccessGranularity gr) {
+        if (workLeft <= 0)
+            return;
+
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        auto inputOffInType = inputOffset / sizeof(T);
+        uint32_t seqNo = getSeqNo();
+        auto flag = seqNo + tStep / nSlot;
+        auto slot = (seqNo + tStep) % nSlot;
+        auto nelems = workLeft / sizeof(T);
+
+        bool retry;
+        message_t v;
+
+        auto* ptr = ingress + inputOffInType;
+        ProtoT::loadInput(v, ptr, nelems, gr);
+
+        ProtoT::shuffleData(v);
+        ProtoT::insertFlags(v, flag);
+        ProtoT::sendMessages(scatterSink[my_rank][slot][wireId], v);
+
+        do {
+            retry = false;
+            retry |= ProtoT::recvMessages(v, localGatherSink[peer_rank][slot][wireId], flag);
+        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+    }
+
+    inline void runRecvStart(int my_rank, int peer_rank) {
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+        uint32_t seqNo = getSeqNo();
+        auto flag = seqNo;
+        auto slot = seqNo % nSlot;
+        message_t v;
+        ProtoT::insertFlags(v, flag);
+        ProtoT::sendMessages(gatherSink[my_rank][slot][wireId], v);
+    }
+
+    inline void runRecv(size_t outputOffset,
+                        size_t tStep,
+                        ssize_t workLeft,
+                        int my_rank,
+                        int peer_rank,
+                        AccessGranularity gr) {
+        if (workLeft <= 0)
+            return;
+
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        auto offset = outputOffset / sizeof(T);
+        uint32_t seqNo = getSeqNo();
         auto flag = seqNo + tStep / nSlot;
         auto slot = (seqNo + tStep) % nSlot;
         auto nelems = workLeft / sizeof(T);
 
         message_t v;
 
-        uint32_t p_idx = 0;
-        int peer = (rank + p_idx) % NRanks;
+        bool retry;
+        do {
+            retry = false;
+            retry |= ProtoT::recvMessages(v, localScatterSink[peer_rank][slot][wireId], flag);
+        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
 
-        auto* ptr = ingress + inputOffInType;
-        auto* o_ptr = egress + peer * workElems + inputOffInType;
-        loadInput(v, ptr, nelems);
+        ProtoT::insertFlags(v, flag);
+        ProtoT::sendMessages(gatherSink[my_rank][slot][wireId], v);
 
-        if (ptr != o_ptr)
-            storeOutput(o_ptr, v, nelems);
+        ProtoT::restoreData(v);
 
-        shuffleData(v);
-        insertFlags(v, flag);
-        sendMessages(gatherSink[peer][slot][wireId], v);
-
-        sbarrier_signal_compat(p2p);
-
-#pragma unroll
-        for (uint32_t i = 1; i < NRanks - 1; ++i) {
-            p_idx = (p_idx - 1) % NRanks; // 0
-            peer = (rank + p_idx) % NRanks;
-            recvSendWrtback(wireId, peer, inputOffInType, flag, slot, nelems);
-        }
-
-        p_idx = (p_idx - 1) % NRanks;
-        peer = (rank + p_idx) % NRanks;
-
-        recvWrtback(wireId, peer, inputOffInType, flag, slot, nelems);
+        auto* ptr = egress + offset;
+        ProtoT::storeOutput(ptr, v, nelems, gr);
     }
 
-    inline void runReduceScatter(size_t inputOffset, size_t tStep, ssize_t workLeft) {
+    inline void runAllToAll(size_t inputOffset,
+                            size_t tStep,
+                            ssize_t workLeft,
+                            AccessGranularity gr) {
         if (workLeft <= 0) {
-            sbarrier_signal_compat(p2p);
-            for (uint32_t i = 1; i < NRanks - 1; ++i) {
-                sbarrier_wait_compat(p2p);
-                sbarrier_signal_compat(p2p);
+            for (int step = 1; step < nRanks; step++) {
+                ProtoT::sbarrier_signal_compat(p2p);
+                ProtoT::sbarrier_wait_compat(p2p);
             }
-            sbarrier_wait_compat(p2p);
             return;
         }
 
@@ -404,43 +598,112 @@ public:
             sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
 
         auto offset = inputOffset / sizeof(T);
+        uint32_t seqNo = getSeqNo();
         auto flag = seqNo + tStep / nSlot;
         auto slot = (seqNo + tStep) % nSlot;
         auto nelems = workLeft / sizeof(T);
 
-        uint32_t p_idx = -1;
-        int peer = (rank + p_idx + NRanks) % NRanks;
+        message_t v;
 
-        // Step 0
-        send(wireId, peer, offset, flag, slot, nelems);
+        for (int step = 1; step < nRanks; step++) {
+            int send_peer = (rank + step) % nRanks;
+            int recv_peer = (rank + nRanks - step) % nRanks;
+            gatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherSinkArray[send_peer]);
 
-        // Step 1 to N-1
-#pragma unroll
-        for (int i = 1; i < NRanks - 1; ++i) {
-            p_idx = (p_idx - 1) % NRanks;
-            peer = (rank + p_idx) % NRanks;
-            loadRecvReduceSend(wireId, peer, offset, flag, slot, nelems);
+            auto* ptr = ingress + offset;
+            if (has_offsets)
+                ptr = (T*)((char*)ptr + offsets[send_peer]);
+            else
+                ptr = ptr + send_peer * workElems;
+            ProtoT::loadInput(v, ptr, nelems, gr);
+            ProtoT::shuffleData(v);
+            ProtoT::insertFlags(v, flag);
+            ProtoT::sendMessages(gatherSink[rank][slot][wireId], v);
+
+            ProtoT::sbarrier_signal_compat(p2p);
+
+            // recv data
+            ProtoT::sbarrier_wait_compat(p2p);
+            bool retry;
+            do {
+                retry = false;
+                retry |= ProtoT::recvMessages(v, localGatherSink[recv_peer][slot][wireId], flag);
+            } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+
+            ProtoT::restoreData(v);
+
+            ptr = egress + offset;
+            if (has_offsets)
+                ptr = (T*)((char*)ptr + offsets[recv_peer]);
+            else
+                ptr = ptr + recv_peer * workElems;
+            ProtoT::storeOutput(ptr, v, nelems, gr);
         }
-
-        // Step N
-        p_idx = (p_idx - 1) % NRanks;
-        peer = (rank + p_idx) % NRanks;
-        loadRecvReduceWrtback(wireId, peer, offset, flag, slot, nelems);
     }
 
 protected:
+    inline int getSeqNo() {
+        // the variable is a template parameter
+        // should be optimized out
+        if (LoadSeqNoInRuntime) {
+            return *seqNoPtr;
+        }
+        else {
+            return seqNo_;
+        }
+    }
+
+    void init_ring_buffers(T* input,
+                           T* output,
+                           const size_t* offs,
+                           T* scatterBuf,
+                           T* gatherBuf,
+                           T* const peerBuf0[],
+                           T* const peerBuf1[],
+                           int nranks) {
+        auto next = (rank + 1) % nRanks;
+        ingress = input;
+        egress = output;
+
+        has_offsets = false;
+        if (offs) {
+            has_offsets = true;
+            for (int i = 0; i < nranks; i++)
+                offsets[i] = offs[i];
+        }
+
+        if (peerBuf0 == nullptr) {
+            for (int i = 0; i < nranks; i++)
+                gatherSinkArray[i] = reinterpret_cast<ringPtr>((uintptr_t)peerBuf1[i]);
+            localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
+        }
+        else {
+            scatterSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf0[next]);
+            gatherSink = reinterpret_cast<ringPtr>((uintptr_t)peerBuf1[next]);
+
+            localScatterSink = reinterpret_cast<ringPtr>((uintptr_t)scatterBuf);
+            localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
+        }
+    }
+
     T* ingress;
     T* egress;
+    size_t offsets[ARC_MAX_NUM];
+    bool has_offsets;
 
-    int NRanks;
+    int nRanks;
     ssize_t workElems;
     int rank;
-    uint32_t seqNo;
+    uint32_t* seqNoPtr;
+    uint32_t seqNo_;
     bool p2p;
+    ccl::reduction reduction;
 
     ringPtr scatterSink;
     ringPtr gatherSink;
 
     ringPtr localScatterSink;
     ringPtr localGatherSink;
+
+    ringPtr gatherSinkArray[ARC_MAX_NUM];
 };

@@ -20,7 +20,7 @@ REPO=https://github.com/oneapi-src/unified-memory-framework.git
 install_path_root=$(pwd)
 repo_dir=unified-memory-framework
 
-target_version="v1.0.x"
+target_version="v1.1.0"
 
 git clone $REPO
 pushd $repo_dir

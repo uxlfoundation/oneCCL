@@ -146,6 +146,25 @@ typedef enum {
     ATL_DTYPE_BFLOAT16
 } atl_datatype_t;
 
+inline int get_atl_datatype_size(atl_datatype_t dtype) {
+    switch (dtype) {
+        case ATL_DTYPE_INT8:
+        case ATL_DTYPE_UINT8: return 1;
+        case ATL_DTYPE_INT16:
+        case ATL_DTYPE_UINT16:
+        case ATL_DTYPE_FLOAT16:
+        case ATL_DTYPE_BFLOAT16: return 2;
+        case ATL_DTYPE_INT32:
+        case ATL_DTYPE_UINT32:
+        case ATL_DTYPE_FLOAT32: return 4;
+        case ATL_DTYPE_INT64:
+        case ATL_DTYPE_UINT64:
+        case ATL_DTYPE_FLOAT64: return 8;
+    }
+    CCL_THROW("get_atl_datatype_size fails with unknown datatype: ", dtype);
+    return -1;
+}
+
 typedef enum {
     ATL_REDUCTION_SUM,
     ATL_REDUCTION_PROD,
@@ -237,11 +256,12 @@ std::string to_string(atl_attr_t& attr);
 std::ostream& operator<<(std::ostream& str, const atl_req_t& req);
 
 namespace ccl {
-enum class kvs_mode : int { pmi, mpi, pmix_ofi, pmix_ofi_shm };
+enum class kvs_mode : int { pmi, mpi, pmix_ofi, pmix_ofi_shm, occp };
 static std::map<kvs_mode, std::string> kvs_mode_names = {
     std::make_pair(kvs_mode::pmi, "pmi"),
     std::make_pair(kvs_mode::mpi, "mpi"),
     std::make_pair(kvs_mode::pmix_ofi, "pmix_ofi"),
-    std::make_pair(kvs_mode::pmix_ofi_shm, "pmix_ofi_shm")
+    std::make_pair(kvs_mode::pmix_ofi_shm, "pmix_ofi_shm"),
+    std::make_pair(kvs_mode::occp, "occp"),
 };
 } // namespace ccl

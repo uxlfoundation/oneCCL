@@ -19,7 +19,18 @@
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_UMF)
 #include "common/log/log.hpp"
 #include "common/api_wrapper/umf_api_wrapper.hpp"
-#include "coll/coll_util.hpp"
+#include <sycl/sycl.hpp>
+#include <map>
+#include <vector>
+
+// Forward declarations to avoid circular includes
+class ccl_comm;
+class ccl_stream;
+namespace ccl {
+namespace ze {
+struct device_info;
+}
+} // namespace ccl
 typedef struct gpu_umf_ipc_mem_handle_t {
     umf_ipc_handle_t handle;
     size_t size;
@@ -40,4 +51,11 @@ int get_device_index(sycl::queue q, sycl::device target_device);
 int create_level_zero_pool(sycl::queue q,
                            ze_device_handle_t device,
                            umf_memory_pool_handle_t *pool);
+
+// Helper functions for UMF memory allocation
+umf_memory_pool_handle_t get_or_create_umf_pool(sycl::queue &q);
+void *umf_alloc_device(sycl::queue &q, size_t size);
+void *umf_alloc_device_aligned(sycl::queue &q, size_t alignment, size_t size);
+void umf_free(void *ptr);
+
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE && CCL_ENABLE_UMF

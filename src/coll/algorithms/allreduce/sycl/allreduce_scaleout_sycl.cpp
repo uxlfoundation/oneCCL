@@ -131,7 +131,7 @@ ccl::event allreduce_scaleout_sycl(sycl::queue& q,
     bool copy_to_host = ccl::global_data::env().sycl_enable_direct_gpu_rdma ? false : true;
     ze_device_handle_t ze_dev =
         sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
-    if (should_disable_rdma(ze_dev)) {
+    if (should_disable_rdma(ze_dev) || ccl::global_data::env().atl_transport == ccl_atl_ofi) {
         copy_to_host = true;
     }
     allreduce_scaleout_algo algo = tune_attr.algo;
@@ -142,8 +142,10 @@ ccl::event allreduce_scaleout_sycl(sycl::queue& q,
     switch (algo) {
         case allreduce_scaleout_algo::direct:
 #ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin(
-                "allreduce_scaleout_sycl_simple", "send_size", count * ccl_dtype.size());
+            ccl::profile::itt::task_begin("allreduce_scaleout_sycl_simple",
+                                          "send_size",
+                                          count * ccl_dtype.size(),
+                                          comm->unique_id());
 #endif // CCL_ENABLE_ITT
             LOG_DEBUG("|CCL_SYCL| allreduce scaleout selects simple (direct) kernel, count:",
                       count,
@@ -166,8 +168,10 @@ ccl::event allreduce_scaleout_sycl(sycl::queue& q,
             return ccl::event::create_from_native(ev);
         case allreduce_scaleout_algo::rabenseifner:
 #ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin(
-                "allreduce_scaleout_sycl_rabenseifner", "send_size", count * ccl_dtype.size());
+            ccl::profile::itt::task_begin("allreduce_scaleout_sycl_rabenseifner",
+                                          "send_size",
+                                          count * ccl_dtype.size(),
+                                          comm->unique_id());
 #endif // CCL_ENABLE_ITT
             LOG_DEBUG("|CCL_SYCL| allreduce scaleout selects rabenseifner kernel, count:",
                       count,
@@ -193,8 +197,10 @@ ccl::event allreduce_scaleout_sycl(sycl::queue& q,
             return ccl::event::create_from_native(ev);
         case allreduce_scaleout_algo::ring:
 #ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin(
-                "allreduce_scaleout_sycl_ring", "send_size", count * ccl_dtype.size());
+            ccl::profile::itt::task_begin("allreduce_scaleout_sycl_ring",
+                                          "send_size",
+                                          count * ccl_dtype.size(),
+                                          comm->unique_id());
 #endif // CCL_ENABLE_ITT
             LOG_DEBUG("|CCL_SYCL| allreduce scaleout selects ring kernel, count:",
                       count,
@@ -224,7 +230,7 @@ ccl::event allreduce_scaleout_sycl(sycl::queue& q,
 fallback:
 #ifdef CCL_ENABLE_ITT
     ccl::profile::itt::task_begin(
-        "allreduce_scaleout_sycl_simple", "send_size", count * ccl_dtype.size());
+        "allreduce_scaleout_sycl_simple", "send_size", count * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
     LOG_DEBUG("|CCL_SYCL| allreduce scaleout selects default simple (direct) kernel, count:",
               count,

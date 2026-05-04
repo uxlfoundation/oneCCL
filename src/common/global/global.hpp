@@ -20,14 +20,10 @@
 
 #if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
 #include "common/global/ze/ze_data.hpp"
-#ifdef CCL_ENABLE_UMF
-#include "umf/ipc.hpp"
-#endif // CCL_ENABLE_UMF
 #endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 #include "common/utils/utils.hpp"
 #include "hwloc/hwloc_wrapper.hpp"
 #include "internal_types.hpp"
-// TODO: think about the right place
 #include "MT/shared_resource.hpp"
 #include "coll/reduction/reduction.hpp"
 
@@ -123,7 +119,7 @@ private:
     void init_resize_independent_objects();
     void reset_resize_independent_objects();
 
-    int local_proc_idx{ ccl_comm::invalid_rank };
+    int local_proc_idx{ ccl::utils::invalid_rank };
     int local_proc_count{ ccl::utils::invalid_err_code };
     void getenv_local_coord(const char* local_proc_idx_env_name,
                             const char* local_proc_count_env_name);

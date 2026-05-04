@@ -13,6 +13,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#ifdef CCL_ENABLE_ESIMD
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl.hpp"
 
 #define REDUCE_SCATTER_LARGE_API_DECL(TYPE) \
@@ -77,9 +78,11 @@ ccl::event run_reduce_scatter_large(ccl::datatype dtype,
     }
     return e;
 }
+#endif // CCL_ENABLE_ESIMD
 
 #include "coll/algorithms/utils/sycl_selection.hpp"
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_impl.hpp"
+#include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_ring.hpp"
 
 ccl::event reduce_scatter_large(const void *send_buf,
                                 void *recv_buf,
@@ -101,8 +104,22 @@ ccl::event reduce_scatter_large(const void *send_buf,
     }
 
     sycl_ptrs_type sycl_ptrs;
+    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
     std::shared_ptr<ccl_comm> pair_comm = comm->get_pair_comm();
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
+
+    // BMG path
+    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family) && pair_comm->size() == 1) {
+        // tmp_buf flag ignored, since temp buffer is always used,
+        // we don't have an algorithm not using tmp buf
+        bool is_tmp_used = ccl::global_data::env().sycl_reduce_scatter_tmp_buf;
+        auto lambda = [&]<typename T>() {
+            return reduce_scatter_large_su_ring<T>(
+                send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, sycl_ptrs, deps);
+        };
+        sycl::event e = invoke_collective_sycl(lambda, dtype);
+        return ccl::event::create_from_native(e);
+    }
 
     const size_t dsize = ccl::global_data::get().dtypes->get(dtype).size();
     // use full vector (>= 8 bytes) if buffers and data size are 4 byte aligned
@@ -139,10 +156,27 @@ ccl::event reduce_scatter_large(const void *send_buf,
     }
 
     if (!is_tmp_used) {
-        std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
-        auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+        ccl_sched *sched = NULL;
+        ze_handle_exchange_entry *exchange_entry = NULL;
+        const size_t comm_size = node_comm->size();
 
-        sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
+        std::vector<void *> registered_send_ptrs =
+            node_comm->get_registered_ptrs(send_buf, recv_count * dsize * comm_size);
+
+        if (registered_send_ptrs.size()) {
+            LOG_DEBUG("reduce_scatter pointers are registered \n");
+            sycl_ptrs.xelink_ptrs_rd =
+                get_ipc_ptrs<void, MAX_GPUS>(registered_send_ptrs, comm, even_comm, (void *)send_buf);
+        }
+        else {
+            std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
+            auto p = do_ipc_exchange(comm, global_stream, ptrs);
+            sched = p.first;
+            exchange_entry = p.second;
+
+            sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
+        }
+
         // use full vector (>= 8 bytes) if remote buffers and data size are 4 byte aligned
         use_full_vector = use_full_vector &&
                           all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), recv_count, dsize, 4);
@@ -150,8 +184,14 @@ ccl::event reduce_scatter_large(const void *send_buf,
         if (pair_comm->size() > 1) {
             assert(pair_comm->size() == MAX_TILES);
             int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-            sycl_ptrs.mdfi_ptr_rd =
-                get_ipc_ptrs<void, MAX_TILES>(pair_comm, 0, (void *)send_buf, sched)[peer_pair_rank];
+            if (registered_send_ptrs.size()) {
+                sycl_ptrs.mdfi_ptr_rd = get_ipc_ptrs<void, MAX_TILES>(
+                    registered_send_ptrs, comm, pair_comm, (void *)send_buf)[peer_pair_rank];
+            }
+            else {
+                sycl_ptrs.mdfi_ptr_rd =
+                    get_ipc_ptrs<void, MAX_TILES>(pair_comm, 0, (void *)send_buf, sched)[peer_pair_rank];
+            }
             use_full_vector = use_full_vector && all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, recv_count, dsize, 4);
         }
         delete exchange_entry;
@@ -168,32 +208,32 @@ ccl::event reduce_scatter_large(const void *send_buf,
         }
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
+    auto lambda = [&]<typename T>() {
         if (use_full_vector) {
-            return reduce_scatter_large_impl<T, NE, NP, true>(send_buf,
-                                                              recv_buf,
-                                                              recv_count,
-                                                              dtype,
-                                                              reduction,
-                                                              comm,
-                                                              global_stream,
-                                                              sycl_ptrs,
-                                                              deps,
-                                                              is_tmp_used);
+            return reduce_scatter_large_impl<T, true>(send_buf,
+                                                      recv_buf,
+                                                      recv_count,
+                                                      dtype,
+                                                      reduction,
+                                                      comm,
+                                                      global_stream,
+                                                      sycl_ptrs,
+                                                      deps,
+                                                      is_tmp_used);
         }
         else {
-            return reduce_scatter_large_impl<T, NE, NP, false>(send_buf,
-                                                               recv_buf,
-                                                               recv_count,
-                                                               dtype,
-                                                               reduction,
-                                                               comm,
-                                                               global_stream,
-                                                               sycl_ptrs,
-                                                               deps,
-                                                               is_tmp_used);
+            return reduce_scatter_large_impl<T, false>(send_buf,
+                                                       recv_buf,
+                                                       recv_count,
+                                                       dtype,
+                                                       reduction,
+                                                       comm,
+                                                       global_stream,
+                                                       sycl_ptrs,
+                                                       deps,
+                                                       is_tmp_used);
         }
     };
 
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

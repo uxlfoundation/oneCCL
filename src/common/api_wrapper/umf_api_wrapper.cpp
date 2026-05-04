@@ -34,14 +34,31 @@ bool umf_api_init() {
     umf_lib_info.path = ccl::global_data::env().umf_lib_path;
 
     if (umf_lib_info.path.empty()) {
-        umf_lib_info.path = "libumf.so.0";
-    }
-    LOG_DEBUG("UMF lib path: ", umf_lib_info.path);
-
-    int error = load_library(umf_lib_info);
-    if (error != CCL_LOAD_LB_SUCCESS) {
+        // Try multiple library versions in order of preference
+        // This handles different UMF versions that may be installed
+        std::vector<std::string> lib_names = { "libumf.so.1", "libumf.so.0", "libumf.so" };
+        int error = CCL_LOAD_LB_DLOPEN_ERROR;
+        for (const auto& lib_name : lib_names) {
+            umf_lib_info.path = lib_name;
+            LOG_DEBUG("trying UMF lib path: ", umf_lib_info.path);
+            error = load_library(umf_lib_info);
+            if (error == CCL_LOAD_LB_SUCCESS) {
+                LOG_DEBUG("successfully loaded UMF lib: ", umf_lib_info.path);
+                return true;
+            }
+        }
+        // All attempts failed, print error for the last tried library
         print_error(error, umf_lib_info);
         ret = false;
+    }
+    else {
+        LOG_DEBUG("UMF lib path: ", umf_lib_info.path);
+
+        int error = load_library(umf_lib_info);
+        if (error != CCL_LOAD_LB_SUCCESS) {
+            print_error(error, umf_lib_info);
+            ret = false;
+        }
     }
 
     return ret;

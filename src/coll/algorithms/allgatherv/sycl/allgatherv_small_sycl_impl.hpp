@@ -20,7 +20,7 @@
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 
 // Kernel name template for allgatherv_small
-template <typename T, int VS, int SGS, int LB, int GB, int NE, int NP>
+template <typename T, int VS, int SGS, int LB, int GB, int TILES>
 class oneccl_allgatherv_small_gather {};
 
 template <typename T, int N>
@@ -103,6 +103,7 @@ void inline gather(const void* send,
         // special case, the last block is bigger.
         // restrict the compilation for 1 rank case,
         // it is handled ouside of the kernels
+        // used in allreduce scale-out remainder handling
         if constexpr (N > 1) {
             // first N - 1 blocks
             if (use_block && idx < packed_main_count) {
@@ -128,9 +129,7 @@ void inline gather(const void* send,
     }
 }
 
-// NE is the number of ranks in even_comm and
-// NP is the number of ranks in pair_comm
-template <typename T, int NE, int NP>
+template <typename T>
 ccl::event allgatherv_small_impl(sycl::queue& q,
                                  const void* send_buf,
                                  size_t send_count,
@@ -141,8 +140,6 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
                                  ccl_comm* comm,
                                  ccl_stream* global_stream,
                                  const ccl::vector_class<ccl::event>& deps) {
-    constexpr int N = NE * NP;
-
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
 
@@ -178,6 +175,7 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
     const bool use_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
     const bool use_kernel_sync = ccl::global_data::env().sycl_kernel_sync;
     const bool is_recording = use_recording_path(q);
+    const size_t tmp_buf_size = node_comm->get_tmp_buf_size();
 
     auto [local_tmp_buf, remote_ptrs] =
         is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
@@ -224,34 +222,38 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
 
         sycl::event local_event = q.submit([=](sycl::handler& h) {
             h.depends_on(sycl_deps);
-            h.parallel_for<oneccl_allgatherv_small_gather<T, VS, SGS, LB, GB, NE, NP>>(
-                sycl::nd_range<1>(kernel_size, wg_size),
-                [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                    auto local_tmp_buf_cpy = local_tmp_buf;
-                    auto remote_ptrs_cpy = remote_ptrs;
-                    if (is_recording) {
-                        size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
-                        local_tmp_buf_cpy =
-                            static_cast<void*>(static_cast<uint8_t*>(local_tmp_buf) + offset_bytes);
-                        for (size_t rem_idx = 0; rem_idx < remote_ptrs.size(); ++rem_idx) {
-                            remote_ptrs_cpy[rem_idx] =
-                                static_cast<void*>(static_cast<uint8_t*>(remote_ptrs[rem_idx]) + offset_bytes);
-                        }
-                    }
-                    gather<T, N, VS, use_block, LB, GB>(send_buf,
-                                                        local_tmp_buf_cpy,
-                                                        out_ptrs,
-                                                        remote_ptrs_cpy,
-                                                        kernel_barrier_data,
-                                                        comm_barrier_data,
-                                                        send_count,
-                                                        count,
-                                                        last_count,
-                                                        it);
-                    if (is_recording && it.get_global_linear_id() == 0) {
-                        *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
-                    }
-                });
+            static_for_each_tile(
+                [&]<int TILES>() {
+                    h.parallel_for<oneccl_allgatherv_small_gather<T, VS, SGS, LB, GB, TILES>>(
+                        sycl::nd_range<1>(kernel_size, wg_size),
+                        [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
+                            auto local_tmp_buf_cpy = local_tmp_buf;
+                            auto remote_ptrs_cpy = remote_ptrs;
+                            if (is_recording) {
+                                size_t offset_bytes = *tmp_buf_idx * tmp_buf_size;
+                                local_tmp_buf_cpy =
+                                    static_cast<void*>(static_cast<uint8_t*>(local_tmp_buf) + offset_bytes);
+                                for (size_t rem_idx = 0; rem_idx < remote_ptrs.size(); ++rem_idx) {
+                                    remote_ptrs_cpy[rem_idx] = static_cast<void*>(
+                                        static_cast<uint8_t*>(remote_ptrs[rem_idx]) + offset_bytes);
+                                }
+                            }
+                            gather<T, TILES, VS, use_block, LB, GB>(send_buf,
+                                                                    local_tmp_buf_cpy,
+                                                                    out_ptrs,
+                                                                    remote_ptrs_cpy,
+                                                                    kernel_barrier_data,
+                                                                    comm_barrier_data,
+                                                                    send_count,
+                                                                    count,
+                                                                    last_count,
+                                                                    it);
+                            if (is_recording && it.get_global_linear_id() == 0) {
+                                *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
+                            }
+                        });
+                },
+                comm_size);
         });
         return local_event;
     };
@@ -263,8 +265,15 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
     auto memcpy_gather = [=, &q]<int VS>() {
         sycl::event memcpy_event;
         if (is_recording) {
-            memcpy_event =
-                kernel_memcpy(q, send_buf, local_tmp_buf, nullptr, tmp_buf_idx, send_count, dsize, dep_events);
+            memcpy_event = kernel_memcpy(q,
+                                         send_buf,
+                                         local_tmp_buf,
+                                         nullptr,
+                                         tmp_buf_idx,
+                                         send_count,
+                                         dsize,
+                                         node_comm->get_tmp_buf_size(),
+                                         dep_events);
         }
         else {
             memcpy_event = q.submit([=](sycl::handler& h) {

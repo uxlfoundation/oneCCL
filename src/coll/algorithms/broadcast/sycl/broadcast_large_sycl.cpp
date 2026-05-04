@@ -41,11 +41,15 @@ ccl::event broadcast_large(const void* send_buf,
     const bool is_tmp_used = ccl::global_data::env().sycl_broadcast_tmp_buf;
 
     if (!is_tmp_used) {
-        std::vector<void*> ptrs{ (void*)send_buf, recv_buf }; // index 0 and 1
+        // For non-root ranks, send_buf may be nullptr (per spec, only root uses send_buf).
+        // Use recv_buf as a placeholder for IPC exchange on non-root ranks since
+        // only root's send_buf will actually be read from.
+        void* send_buf_for_exchange = (send_buf != nullptr) ? (void*)send_buf : recv_buf;
+        std::vector<void*> ptrs{ send_buf_for_exchange, recv_buf }; // index 0 and 1
         auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
 
         sycl_ptrs.node_ptrs_rd =
-            get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, (void*)send_buf, sched);
+            get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, send_buf_for_exchange, sched);
         sycl_ptrs.node_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 1, recv_buf, sched);
 
         delete exchange_entry;
@@ -55,10 +59,10 @@ ccl::event broadcast_large(const void* send_buf,
         sycl_ptrs.node_ptrs_rd = get_remote_node_tmp_buf(0, comm);
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
-        return broadcast_large_impl<T, NE, NP>(
+    auto lambda = [&]<typename T>() {
+        return broadcast_large_impl<T>(
             send_buf, recv_buf, count, dtype, root, comm, global_stream, sycl_ptrs, deps);
     };
 
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

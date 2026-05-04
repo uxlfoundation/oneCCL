@@ -43,7 +43,6 @@ typedef enum umf_pool_create_flag_t {
 /// @brief Type for combinations of pool creation flags
 typedef uint32_t umf_pool_create_flags_t;
 
-///
 /// @brief Creates new memory pool.
 /// @param ops instance of umf_memory_pool_ops_t
 /// @param provider memory provider that will be used for coarse-grain allocations.
@@ -195,6 +194,24 @@ umf_result_t umfPoolSetTag(umf_memory_pool_handle_t hPool, void *tag,
 /// @param tag [out] tag associated with the memory pool
 /// @return UMF_RESULT_SUCCESS on success.
 umf_result_t umfPoolGetTag(umf_memory_pool_handle_t hPool, void **tag);
+
+///
+/// @brief Trims memory of the pool, removing resources that are not needed
+///        to keep the pool operational.
+/// \details
+///        The minBytesToKeep parameter is a hint to the pool implementation
+///        that it should try to keep at least this number of bytes of
+///        memory in the pool. The pool implementation may also ignore this
+///        parameter and try to trim the whole memory, in which case it
+///        should return UMF_RESULT_SUCCESS. The pool implementation may
+///        also return UMF_RESULT_ERROR_NOT_SUPPORTED if it does not support
+///        trimming memory.
+/// @param hPool pointer to the memory pool
+/// @param minBytesToKeep minimum number of bytes to keep in the pool (if
+///        possible - see details)
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+umf_result_t umfPoolTrimMemory(umf_memory_pool_handle_t hPool,
+                               size_t minBytesToKeep);
 
 #ifdef __cplusplus
 }

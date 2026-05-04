@@ -1,4 +1,5 @@
 /*
+ * SPDX-License-Identifier: BSD-3-Clause
  * Copyright © 2019-2025 Inria.  All rights reserved.
  * See COPYING in top-level directory.
  */
@@ -249,6 +250,16 @@ enum hwloc_local_numanode_flag_e {
    * \hideinitializer
    */
   HWLOC_LOCAL_NUMANODE_FLAG_SMALLER_LOCALITY = (1UL<<1),
+
+  /** \brief Select NUMA nodes whose locality intersects the given cpuset.
+   * This includes larger and smaller localities as well as localities
+   * that are partially included.
+   * For instance, if the locality is one core of both packages, a NUMA node
+   * local to one package is neither larger nor smaller than this locality,
+   * but it intersects it.
+   * \hideinitializer
+   */
+  HWLOC_LOCAL_NUMANODE_FLAG_INTERSECT_LOCALITY = (1UL<<3),
 
   /** \brief Select all NUMA nodes in the topology.
    * The initiator \p initiator is ignored.
@@ -630,8 +641,8 @@ hwloc_memattr_register(hwloc_topology_t topology,
  *
  * \p target_node cannot be \c NULL.
  *
- * \p attribute cannot be ::HWLOC_MEMATTR_FLAG_ID_CAPACITY or
- * ::HWLOC_MEMATTR_FLAG_ID_LOCALITY.
+ * \p attribute cannot be ::HWLOC_MEMATTR_ID_CAPACITY or
+ * ::HWLOC_MEMATTR_ID_LOCALITY.
  *
  * \p flags must be \c 0 for now.
  *

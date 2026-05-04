@@ -1,0 +1,50 @@
+diff --git a/deps/level_zero/include/layers/zel_tracing_register_cb.h b/deps/level_zero/include/layers/zel_tracing_register_cb.h
+index d76d77fd6..89ba50704 100644
+--- a/deps/level_zero/include/layers/zel_tracing_register_cb.h
++++ b/deps/level_zero/include/layers/zel_tracing_register_cb.h
+@@ -2721,30 +2721,6 @@ typedef void (ZE_APICALL *zer_pfnTranslateIdentifierToDeviceHandleCb_t)(
+     void** ppTracerInstanceUserData
+     );
+ 
+-///////////////////////////////////////////////////////////////////////////////
+-/// @brief Callback function parameters for zerGetDefaultContext
+-/// @details Each entry is a pointer to the parameter passed to the function;
+-///     allowing the callback the ability to modify the parameter's value
+-
+-typedef struct _zer_get_default_context_params_t
+-{
+-} zer_get_default_context_params_t;
+-
+-
+-///////////////////////////////////////////////////////////////////////////////
+-/// @brief Callback function-pointer for zerGetDefaultContext
+-/// @param[in] params Parameters passed to this instance
+-/// @param[in] result Return value
+-/// @param[in] pTracerUserData Per-Tracer user data
+-/// @param[in,out] ppTracerInstanceUserData Per-Tracer, Per-Instance user data
+-
+-typedef void (ZE_APICALL *zer_pfnGetDefaultContextCb_t)(
+-    zer_get_default_context_params_t* params,
+-    ze_context_handle_t result,
+-    void* pTracerUserData,
+-    void** ppTracerInstanceUserData
+-    );
+-
+ #if !defined(__GNUC__)
+ #pragma endregion
+ #endif
+@@ -4511,14 +4487,6 @@ zelTracerTranslateIdentifierToDeviceHandleRegisterCallback(
+     zer_pfnTranslateIdentifierToDeviceHandleCb_t pfnTranslateIdentifierToDeviceHandleCb
+     );
+ 
+-
+-ZE_APIEXPORT ze_result_t ZE_APICALL
+-zelTracerGetDefaultContextRegisterCallback(
+-    zel_tracer_handle_t hTracer,
+-    zel_tracer_reg_t callback_type,
+-    zer_pfnGetDefaultContextCb_t pfnGetDefaultContextCb
+-    );
+-
+ #if !defined(__GNUC__)
+ #pragma endregion
+ #endif

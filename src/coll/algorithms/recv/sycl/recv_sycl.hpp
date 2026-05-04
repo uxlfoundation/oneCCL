@@ -31,5 +31,15 @@ ccl::event recv_sycl(sycl::queue q,
                      const pt2pt_attr& attr,
                      const vector_class<event>& deps,
                      bool& done);
+
 } // namespace v1
 } // namespace ccl
+
+ccl::event recv_ll(const void* send_buf,
+                   size_t send_count,
+                   ccl::datatype dtype,
+                   int peer_rank,
+                   ccl_comm* comm,
+                   ccl_stream* global_stream,
+                   const ccl::vector_class<ccl::event>& deps,
+                   bool& done);

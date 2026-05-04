@@ -94,10 +94,10 @@
  * 2019.0.0b0 will have the numeric version 20190000100.
  */
 #ifndef I_MPI_VERSION
-#define I_MPI_VERSION "2021.17.0"
+#define I_MPI_VERSION "2021.18.0"
 #endif
 #ifndef I_MPI_NUMVERSION
-#define I_MPI_NUMVERSION 20211700300
+#define I_MPI_NUMVERSION 20211800300
 #endif
 
 #ifdef MPI_ABI
@@ -1117,9 +1117,14 @@ int MPI_DUP_FN(MPI_Comm oldcomm, int keyval, void *extra_state, void *attribute_
 #ifndef MPICH_SUPPRESS_PROTOTYPES
 int MPI_DUP_FN(MPI_Comm oldcomm, int keyval, void *extra_state, void *attribute_val_in,
                void *attribute_val_out, int *flag) MPICH_API_PUBLIC;
+int MPI_Abi_get_fortran_booleans(int logical_size, void *logical_true, void *logical_false,
+                                 int *is_set) MPICH_API_PUBLIC;
 int MPI_Abi_get_fortran_info(MPI_Info *info) MPICH_API_PUBLIC;
 int MPI_Abi_get_info(MPI_Info *info) MPICH_API_PUBLIC;
 int MPI_Abi_get_version(int *abi_major, int *abi_minor) MPICH_API_PUBLIC;
+int MPI_Abi_set_fortran_booleans(int logical_size, void *logical_true, void *logical_false)
+    MPICH_API_PUBLIC;
+int MPI_Abi_set_fortran_info(MPI_Info info) MPICH_API_PUBLIC;
 int MPI_Comm_toint(MPI_Comm comm) MPICH_API_PUBLIC;
 MPI_Comm MPI_Comm_fromint(int comm) MPICH_API_PUBLIC;
 int MPI_Errhandler_toint(MPI_Errhandler errhandler) MPICH_API_PUBLIC;
@@ -2623,9 +2628,14 @@ int MPI_Register_datarep_c(const char *datarep,
 #endif /* MPICH_SUPPRESS_PROTOTYPES */
 #if !defined(MPI_BUILD_PROFILING)
 /* Begin Skip Prototypes */
+int PMPI_Abi_get_fortran_booleans(int logical_size, void *logical_true, void *logical_false,
+                                  int *is_set) MPICH_API_PUBLIC;
 int PMPI_Abi_get_fortran_info(MPI_Info *info) MPICH_API_PUBLIC;
 int PMPI_Abi_get_info(MPI_Info *info) MPICH_API_PUBLIC;
 int PMPI_Abi_get_version(int *abi_major, int *abi_minor) MPICH_API_PUBLIC;
+int PMPI_Abi_set_fortran_booleans(int logical_size, void *logical_true, void *logical_false)
+    MPICH_API_PUBLIC;
+int PMPI_Abi_set_fortran_info(MPI_Info info) MPICH_API_PUBLIC;
 int PMPI_Comm_toint(MPI_Comm comm) MPICH_API_PUBLIC;
 MPI_Comm PMPI_Comm_fromint(int comm) MPICH_API_PUBLIC;
 int PMPI_Errhandler_toint(MPI_Errhandler errhandler) MPICH_API_PUBLIC;
@@ -4145,6 +4155,30 @@ MPI_File PMPI_File_fromint(int file) MPICH_API_PUBLIC;
 /* End Skip Prototypes */
 #endif /* MPI_BUILD_PROFILING */
 
+#if defined(_WIN32)
+#define MPI_Comm_toint                 PMPI_Comm_toint
+#define MPI_Comm_fromint               PMPI_Comm_fromint
+#define MPI_Errhandler_toint           PMPI_Errhandler_toint
+#define MPI_Errhandler_fromint         PMPI_Errhandler_fromint
+#define MPI_Group_toint                PMPI_Group_toint
+#define MPI_Group_fromint              PMPI_Group_fromint
+#define MPI_Info_toint                 PMPI_Info_toint
+#define MPI_Info_fromint               PMPI_Info_fromint
+#define MPI_Message_toint              PMPI_Message_toint
+#define MPI_Message_fromint            PMPI_Message_fromint
+#define MPI_Op_toint                   PMPI_Op_toint
+#define MPI_Op_fromint                 PMPI_Op_fromint
+#define MPI_Request_toint              PMPI_Request_toint
+#define MPI_Request_fromint            PMPI_Request_fromint
+#define MPI_Session_toint              PMPI_Session_toint
+#define MPI_Session_fromint            PMPI_Session_fromint
+#define MPI_Type_toint                 PMPI_Type_toint
+#define MPI_Type_fromint               PMPI_Type_fromint
+#define MPI_Win_toint                  PMPI_Win_toint
+#define MPI_Win_fromint                PMPI_Win_fromint
+#define MPI_File_toint                 PMPI_File_toint
+#define MPI_File_fromint               PMPI_File_fromint
+#endif /* _WIN32 */
 /* End of MPI bindings */
 /* End Prototypes */
 

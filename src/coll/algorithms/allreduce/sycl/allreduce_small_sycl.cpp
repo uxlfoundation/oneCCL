@@ -13,6 +13,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#ifdef CCL_ENABLE_ESIMD
 #include "coll/algorithms/allreduce/sycl/allreduce_small_sycl.hpp"
 
 #define MAX_RANK 16
@@ -84,6 +85,7 @@ ccl::event run_allreduce_small(ccl::datatype dtype,
     }
     return e;
 }
+#endif // CCL_ENABLE_ESIMD
 
 #include "coll/algorithms/allreduce/sycl/allreduce_small_sycl_impl.hpp"
 
@@ -102,10 +104,10 @@ ccl::event allreduce_small(const void *send_buf,
         LOG_DEBUG("invoking allreduce_small");
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
-        return allreduce_small_impl<T, NE, NP>(
+    auto lambda = [&]<typename T>() {
+        return allreduce_small_impl<T>(
             send_buf, recv_buf, count, dtype, reduction, comm, global_stream, deps);
     };
 
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

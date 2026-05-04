@@ -15,12 +15,13 @@
 */
 #pragma once
 
-#include "coll/coll.hpp"
 #include "comp/comp.hpp"
 
 #include <map>
 #include <unordered_map>
 #include <vector>
+
+class ccl_comm;
 
 enum ccl_cache_key_type {
     ccl_cache_key_full,

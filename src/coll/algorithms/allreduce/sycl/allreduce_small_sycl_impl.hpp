@@ -23,18 +23,16 @@
 #include "coll/reduction/reduction.hpp"
 
 // Kernel name templates for allreduce_small
-template <typename T, int V, int S, int L, int G, int NE, int NP>
+template <typename T, int V, int S, int L, int G, int TILES>
 class oneccl_reduce_base {};
 
-template <typename T, int NE, int NP>
+template <typename T, int TILES>
 class oneccl_reduce_base_general {};
 
-template <typename T, int NE, int NP>
+template <typename T, int TILES>
 class oneccl_copy_data_internal {};
 
-// NE is the number of ranks in even_comm and
-// NP is the number of ranks in pair_comm
-template <typename T, int NE, int NP>
+template <typename T>
 ccl::event allreduce_small_impl(const void *send_buf,
                                 void *recv_buf,
                                 size_t count,
@@ -43,7 +41,6 @@ ccl::event allreduce_small_impl(const void *send_buf,
                                 ccl_comm *comm,
                                 ccl_stream *global_stream,
                                 const ccl::vector_class<ccl::event> &deps) {
-    constexpr int N = NE * NP;
     sycl::queue q = global_stream->get_native_stream();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
@@ -96,7 +93,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
         constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
         const size_t kernel_threads = count / vec_size + count % vec_size;
         const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
-
+        const size_t tmp_buf_size = node_comm->get_tmp_buf_size();
         // total number of hw threads is a multiple of sub_group
         CCL_THROW_IF_NOT(hw_threads % SGS == 0);
         // if synchronization is there, make sure sycl threads can be contained within hw threads
@@ -118,34 +115,40 @@ ccl::event allreduce_small_impl(const void *send_buf,
 
         sycl::event local_event = q.submit([=](sycl::handler &h) {
             h.depends_on(l_dep_events);
-            h.parallel_for<oneccl_reduce_base<T, VS, SGS, LB, GB, NE, NP>>(
-                sycl::nd_range<1>(kernel_size, wg_size),
-                [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                    auto local_tmp_buf_cpy = local_tmp_buf;
-                    auto remote_ptrs_cpy = remote_ptrs;
-                    if (is_recording) {
-                        size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
-                        local_tmp_buf_cpy = static_cast<void *>(
-                            static_cast<uint8_t *>(local_tmp_buf) + offset_bytes);
-                        for (size_t rem_idx = 0; rem_idx < remote_ptrs.size(); ++rem_idx) {
-                            remote_ptrs_cpy[rem_idx] = static_cast<void *>(
-                                static_cast<uint8_t *>(remote_ptrs[rem_idx]) + offset_bytes);
-                        }
-                    }
-                    reduce_base<T, N, VS, use_block, LB, GB, 1, 1, AT>(send_buf,
-                                                                       recv_buf,
-                                                                       local_tmp_buf_cpy,
-                                                                       remote_ptrs_cpy,
-                                                                       remote_ptrs_cpy,
-                                                                       kernel_barrier_data,
-                                                                       comm_barrier_data,
-                                                                       reduction_op,
-                                                                       count,
-                                                                       it);
-                    if (is_recording && it.get_global_linear_id() == 0) {
-                        *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
-                    }
-                });
+            static_for_each_tile(
+                [&]<int TILES>() {
+                    h.parallel_for<oneccl_reduce_base<T, VS, SGS, LB, GB, TILES>>(
+                        sycl::nd_range<1>(kernel_size, wg_size),
+                        [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
+                            auto local_tmp_buf_cpy = local_tmp_buf;
+                            auto remote_ptrs_cpy = remote_ptrs;
+                            if (is_recording) {
+                                size_t offset_bytes = *tmp_buf_idx * tmp_buf_size;
+                                local_tmp_buf_cpy = static_cast<void *>(
+                                    static_cast<uint8_t *>(local_tmp_buf) + offset_bytes);
+                                for (size_t rem_idx = 0; rem_idx < remote_ptrs.size(); ++rem_idx) {
+                                    remote_ptrs_cpy[rem_idx] = static_cast<void *>(
+                                        static_cast<uint8_t *>(remote_ptrs[rem_idx]) +
+                                        offset_bytes);
+                                }
+                            }
+                            reduce_base<T, TILES, VS, use_block, LB, GB, 1, 1, AT>(
+                                send_buf,
+                                recv_buf,
+                                local_tmp_buf_cpy,
+                                remote_ptrs_cpy,
+                                remote_ptrs_cpy,
+                                kernel_barrier_data,
+                                comm_barrier_data,
+                                reduction_op,
+                                count,
+                                it);
+                            if (is_recording && it.get_global_linear_id() == 0) {
+                                *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
+                            }
+                        });
+                },
+                comm_size);
         });
         return local_event;
     };
@@ -156,8 +159,15 @@ ccl::event allreduce_small_impl(const void *send_buf,
         void *local_tmp_buf_cpy = local_tmp_buf;
         sycl::event memcpy_event;
         if (is_recording) {
-            memcpy_event = kernel_memcpy(
-                q, send_buf, local_tmp_buf, nullptr, tmp_buf_idx, count, dsize, dep_events);
+            memcpy_event = kernel_memcpy(q,
+                                         send_buf,
+                                         local_tmp_buf,
+                                         nullptr,
+                                         tmp_buf_idx,
+                                         count,
+                                         dsize,
+                                         node_comm->get_tmp_buf_size(),
+                                         dep_events);
         }
         else {
             memcpy_event = q.submit([=](sycl::handler &h) {
@@ -169,8 +179,14 @@ ccl::event allreduce_small_impl(const void *send_buf,
         if (reduce_has_pre_operation) {
             // first applying pre-operation on each copied data element,
             // supports recording path
-            memcpy_event = pre_operation_invoke<T, VS, 32>(
-                q, local_tmp_buf, count, is_recording, tmp_buf_idx, reduction_op, { memcpy_event });
+            memcpy_event = pre_operation_invoke<T, VS, 32>(q,
+                                                           local_tmp_buf,
+                                                           count,
+                                                           is_recording,
+                                                           tmp_buf_idx,
+                                                           reduction_op,
+                                                           node_comm->get_tmp_buf_size(),
+                                                           { memcpy_event });
         }
 
         sycl::event barrier_event = invoke_barrier(node_comm, q, { memcpy_event }, use_cpu_barrier);
@@ -260,7 +276,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
             const size_t count_per_rank =
                 count_per_rank_tmp + (comm_rank == comm_size - 1 ? count_rem : 0);
 
-            constexpr int vec_size_cp = vec_size * N;
+            const int vec_size_cp = vec_size * comm_size;
             const int wg_size = 16, sg_size = 16;
             const size_t kernel_threads_cp = count / vec_size_cp + count % vec_size_cp;
             const size_t kernel_threads_red = count_per_rank / vec_size + count_per_rank % vec_size;
@@ -285,36 +301,45 @@ ccl::event allreduce_small_impl(const void *send_buf,
 
             kernel_event = q.submit([=](sycl::handler &h) {
                 h.depends_on(dep_events);
-                h.parallel_for<oneccl_reduce_base_general<T, NE, NP>>(
-                    sycl::nd_range<1>(kernel_size, wg_size),
-                    [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                        // <vec_size, use_block, use_local_barrier, use_global_barrier, read_all, multiplier>
-                        reduce_base_general<T, N, vec_size, 1, 1, 1, 0, N>(send_buf,
-                                                                           recv_buf,
-                                                                           local_tmp_buf,
-                                                                           remote_ptrs_rank,
-                                                                           remote_ptrs_rank,
-                                                                           kernel_barrier_data,
-                                                                           comm_barrier_data,
-                                                                           reduction_op,
-                                                                           count,
-                                                                           count_per_rank,
-                                                                           it);
-                    });
+                static_for_each_tile(
+                    [&]<int TILES>() {
+                        h.parallel_for<oneccl_reduce_base_general<T, TILES>>(
+                            sycl::nd_range<1>(kernel_size, wg_size),
+                            [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
+                                // <vec_size, use_block, use_local_barrier, use_global_barrier, read_all, multiplier>
+                                reduce_base_general<T, TILES, vec_size, 1, 1, 1, 0, TILES>(
+                                    send_buf,
+                                    recv_buf,
+                                    local_tmp_buf,
+                                    remote_ptrs_rank,
+                                    remote_ptrs_rank,
+                                    kernel_barrier_data,
+                                    comm_barrier_data,
+                                    reduction_op,
+                                    count,
+                                    count_per_rank,
+                                    it);
+                            });
+                    },
+                    comm_size);
             });
 
             ccl_comm_barrier_data comm_barrier_data_next = node_comm->barrier_inc();
             kernel_event = q.submit([=](sycl::handler &h) {
                 h.depends_on(kernel_event);
-                h.parallel_for<oneccl_copy_data_internal<T, NE, NP>>(
-                    sycl::nd_range<1>(kernel_size, wg_size),
-                    [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                        // global communication barrier across ranks
-                        comm_barrier(comm_barrier_data_next, it);
-
-                        // <vec_size, multiplier>
-                        copy_data<T, vec_size, N>(recv_buf, local_tmp_buf, count, it);
-                    });
+                static_for_each_tile(
+                    [&]<int TILES>() {
+                        h.parallel_for<oneccl_copy_data_internal<T, TILES>>(
+                            sycl::nd_range<1>(kernel_size, wg_size),
+                            [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
+                                // global communication barrier across ranks
+                                comm_barrier(comm_barrier_data_next, it);
+                                // <vec_size, multiplier>
+                                copy_data_internal<T, vec_size, TILES>(
+                                    recv_buf, local_tmp_buf, count, it);
+                            });
+                    },
+                    comm_size);
             });
         }
     }

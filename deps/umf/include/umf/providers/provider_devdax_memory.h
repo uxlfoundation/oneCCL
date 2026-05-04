@@ -56,6 +56,16 @@ umf_result_t umfDevDaxMemoryProviderParamsSetDeviceDax(
 umf_result_t umfDevDaxMemoryProviderParamsSetProtection(
     umf_devdax_memory_provider_params_handle_t hParams, unsigned protection);
 
+/// @brief  Set custom name of the Devdax Memory Provider.
+/// @param  hParams [in]  handle to the parameters of the Devdax Memory Provider.
+/// @param  name [in] custom name. Must not be NULL. Name longer than 63 characters
+///         will be truncated.
+/// \details Name should contain only [a-zA-Z0-9_-] characters.
+/// Other names are deprecated and may limit CTL functionality.
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+umf_result_t umfDevDaxMemoryProviderParamsSetName(
+    umf_devdax_memory_provider_params_handle_t hParams, const char *name);
+
 /// @brief Devdax Memory Provider operation results
 typedef enum umf_devdax_memory_provider_native_error {
     UMF_DEVDAX_RESULT_SUCCESS = UMF_DEVDAX_RESULTS_START_FROM, ///< Success

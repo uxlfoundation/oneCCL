@@ -15,6 +15,7 @@
 */
 #include "common/global/global.hpp"
 #include "common/api_wrapper/ze_api_wrapper.hpp"
+#include "umf/ipc.hpp"
 
 #include <sys/prctl.h>
 #include <sys/types.h>
@@ -35,15 +36,19 @@ static void ze_free_cb(ze_mem_free_params_t* tracer_params,
     *tracer_instance_user_data = NULL;
 }
 
-device_info::device_info(ze_device_handle_t dev, uint32_t parent_idx)
+device_info::device_info(ze_device_handle_t dev, zes_device_handle_t zes_dev, uint32_t parent_idx)
         : device(dev),
+          zes_device(zes_dev),
           parent_idx(parent_idx),
           physical_idx(fd_manager::invalid_physical_idx) {
     ze_device_properties_t dev_props = ccl::ze::default_device_props;
     zeDeviceGetProperties(device, &dev_props);
     uuid = dev_props.uuid;
+    numSlices = dev_props.numSlices;
+    numSubslicesPerSlice = dev_props.numSubslicesPerSlice;
     total_threads = dev_props.numThreadsPerEU * dev_props.numEUsPerSubslice *
                     dev_props.numSubslicesPerSlice * dev_props.numSlices;
+    family = get_device_family(dev);
 
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     ze_pci_ext_properties_t pci_prop = ccl::ze::default_pci_property;
@@ -57,20 +62,44 @@ device_info::device_info(ze_device_handle_t dev, uint32_t parent_idx)
 global_data_desc::global_data_desc() {
     LOG_INFO("initializing level-zero");
 
-    // enables driver initialization and
-    // dependencies for system management
-    setenv("ZES_ENABLE_SYSMAN", "1", 1);
+    if (!ccl::global_data::env().use_zesinit) {
+        setenv("ZES_ENABLE_SYSMAN", "1", 1);
+        LOG_DEBUG(
+            "using legacy sysman mode with ZES_ENABLE_SYSMAN=1, will cast ze_device to zes_device");
+    }
 
+    // Initialize Level Zero Core for GPU operations
     ZE_CALL(zeInit, (ZE_INIT_FLAG_GPU_ONLY));
 
+    // Get Level Zero Core drivers
     uint32_t driver_count{};
     ZE_CALL(zeDriverGet, (&driver_count, nullptr));
     drivers.resize(driver_count);
-
     ZE_CALL(zeDriverGet, (&driver_count, drivers.data()));
     LOG_DEBUG("found drivers: ", drivers.size());
 
     CCL_THROW_IF_NOT(!drivers.empty(), "no ze drivers");
+
+    if (ccl::global_data::env().use_zesinit) {
+        // New sysman API: Initialize Level Zero Sysman and get separate driver handles
+        ze_result_t zes_init_result = zesInit(0);
+        if (zes_init_result != ZE_RESULT_SUCCESS) {
+            LOG_WARN(
+                "Could not initialize Sysman API using `zesInit`. "
+                "Sysman API was probably initialized externally using legacy ZES_ENABLE_SYSMAN flag. "
+                "oneCCL will falback to legacy behavior");
+            ccl::global_data::env().use_zesinit = 0;
+        }
+    }
+
+    if (ccl::global_data::env().use_zesinit) {
+        // Get Level Zero Sysman drivers (separate handles, no casting)
+        uint32_t zes_driver_count{};
+        ZE_CALL(zesDriverGet, (&zes_driver_count, nullptr));
+        zes_drivers.resize(zes_driver_count);
+        ZE_CALL(zesDriverGet, (&zes_driver_count, zes_drivers.data()));
+        LOG_DEBUG("found sysman drivers: ", zes_drivers.size());
+    }
 
     contexts.resize(drivers.size());
     for (size_t i = 0; i < drivers.size(); ++i) {
@@ -78,13 +107,125 @@ global_data_desc::global_data_desc() {
         ZE_CALL(zeContextCreate, (drivers.at(i), &desc, &contexts.at(i)));
         CCL_THROW_IF_NOT(contexts[i], "ze context is null");
 
+        // Get Level Zero Core devices
         uint32_t device_count{};
         ZE_CALL(zeDeviceGet, (drivers.at(i), &device_count, nullptr));
         std::vector<ze_device_handle_t> devs(device_count);
         ZE_CALL(zeDeviceGet, (drivers.at(i), &device_count, devs.data()));
 
+        // Get Level Zero Sysman devices (separate handles OR casting for legacy mode)
+        std::vector<zes_device_handle_t> zes_devs;
+
+        if (ccl::global_data::env().use_zesinit) {
+            // New sysman API: Get separate zes_device handles
+            LOG_DEBUG("enumerate devices for driver_idx ",
+                      i,
+                      ", ze_driver ",
+                      drivers.at(i),
+                      ", ze_device_count ",
+                      device_count,
+                      ", zes_driver_count ",
+                      zes_drivers.size());
+
+            if (i < zes_drivers.size()) {
+                uint32_t zes_device_count{};
+                ZE_CALL(zesDeviceGet, (zes_drivers.at(i), &zes_device_count, nullptr));
+                zes_devs.resize(zes_device_count);
+                ZE_CALL(zesDeviceGet, (zes_drivers.at(i), &zes_device_count, zes_devs.data()));
+
+                LOG_DEBUG("sysman devices fetched for driver_idx ",
+                          i,
+                          ", zes_driver ",
+                          zes_drivers.at(i),
+                          ", zes_device_count ",
+                          zes_device_count);
+            }
+            else {
+                LOG_WARN("ze_data: no matching sysman driver for ze driver_idx ",
+                         i,
+                         ", ze_driver_count ",
+                         drivers.size(),
+                         ", zes_driver_count ",
+                         zes_drivers.size(),
+                         ", all zes_device handles for this driver will be nullptr");
+            }
+        }
+        else {
+            // Legacy mode: zes_device will be cast from ze_device for each device
+            LOG_DEBUG("enumerate devices for driver_idx ",
+                      i,
+                      ", ze_driver ",
+                      drivers.at(i),
+                      ", ze_device_count ",
+                      device_count,
+                      " (legacy mode: zes_device cast from ze_device)");
+        }
+
+        const size_t driver_devices_base = devices.size();
         for (uint32_t idx = 0; idx < device_count; idx++) {
-            devices.push_back(device_info(devs[idx], idx));
+            zes_device_handle_t zes_dev = nullptr;
+
+            if (ccl::global_data::env().use_zesinit) {
+                // New sysman API approach: match devices by UUID
+                bool matched_by_uuid = false;
+
+                ze_device_properties_t ze_dev_props = ccl::ze::default_device_props;
+                ZE_CALL(zeDeviceGetProperties, (devs[idx], &ze_dev_props));
+
+                if (i < zes_drivers.size()) {
+                    zes_uuid_t uuid = {};
+                    ze_bool_t on_subdevice = false;
+                    uint32_t subdevice_id = -1;
+                    std::memcpy(&uuid.id, &ze_dev_props.uuid, ZE_MAX_DEVICE_UUID_SIZE);
+
+                    ZE_CALL(zesDriverGetDeviceByUuidExp,
+                            (zes_drivers.at(i), uuid, &zes_dev, &on_subdevice, &subdevice_id));
+                    if (zes_dev != nullptr) {
+                        matched_by_uuid = true;
+                    }
+                    else {
+                        LOG_WARN("ze_data: zesDriverGetDeviceByUuidExp failed"
+                                 ", driver_idx ",
+                                 i,
+                                 ", root_idx ",
+                                 idx,
+                                 ", ze_device ",
+                                 devs[idx],
+                                 ", ze_uuid ",
+                                 ccl::ze::to_string(ze_dev_props.uuid),
+                                 ", will fallback to index mapping");
+                    }
+                }
+
+                if (!matched_by_uuid) {
+                    // We could not match device by uuid, very unlikely.
+                    // We can try matching by using the same index in ze devices array
+                    // in zes devices array
+                    zes_dev = idx < zes_devs.size() ? zes_devs[idx] : nullptr;
+                }
+
+                if (zes_dev == nullptr) {
+                    LOG_WARN("root device has nullptr zes_device"
+                             ", driver_idx ",
+                             i,
+                             ", root_idx ",
+                             idx,
+                             ", ze_device ",
+                             devs[idx],
+                             ", ze_uuid ",
+                             ccl::ze::to_string(ze_dev_props.uuid),
+                             ", zes_devs_size ",
+                             zes_devs.size(),
+                             ", matched_by_uuid ",
+                             matched_by_uuid);
+                }
+            }
+            else {
+                // Legacy mode: Cast ze_device to zes_device_handle_t
+                zes_dev = (zes_device_handle_t)devs[idx];
+            }
+
+            devices.push_back(device_info(devs[idx], zes_dev, idx));
         }
 
         for (uint32_t idx = 0; idx < device_count; idx++) {
@@ -96,7 +237,18 @@ global_data_desc::global_data_desc() {
             ZE_CALL(zeDeviceGetSubDevices, (dev, &subdevice_count, subdevs.data()));
 
             for (uint32_t subdev_idx = 0; subdev_idx < subdevice_count; subdev_idx++) {
-                devices.push_back(device_info(subdevs[subdev_idx], idx));
+                zes_device_handle_t subdev_zes = nullptr;
+
+                if (ccl::global_data::env().use_zesinit) {
+                    // New sysman API: inherit parent's zes_device for subdevices
+                    subdev_zes = devices[driver_devices_base + idx].zes_device;
+                }
+                else {
+                    // Legacy mode: Cast ze_device to zes_device_handle_t
+                    subdev_zes = (zes_device_handle_t)subdevs[subdev_idx];
+                }
+
+                devices.push_back(device_info(subdevs[subdev_idx], subdev_zes, idx));
             }
         }
     }

@@ -14,6 +14,7 @@
  limitations under the License.
 */
 #include "common/utils/comm_profile.hpp"
+#include "comm/comm.hpp"
 #include <chrono>
 
 #ifdef CCL_ENABLE_PROFILING

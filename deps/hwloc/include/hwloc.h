@@ -1,4 +1,5 @@
 /*
+ * SPDX-License-Identifier: BSD-3-Clause
  * Copyright © 2009 CNRS
  * Copyright © 2009-2025 Inria.  All rights reserved.
  * Copyright © 2009-2012 Université Bordeaux
@@ -47,6 +48,8 @@
  * See hwloc/inlines.h for the actual inline code of some functions below.
  * See hwloc/export.h for exporting topologies to XML or to synthetic descriptions.
  * See hwloc/distances.h for querying and modifying distances between objects.
+ * See hwloc/memattrs.h for querying and modifying memory attributes such as Bandwidth.
+ * See hwloc/cpukinds.h for querying and modifying kinds of CPU cores.
  * See hwloc/diff.h for manipulating differences between similar topologies.
  */
 
@@ -157,6 +160,7 @@ HWLOC_DECLSPEC unsigned hwloc_get_api_version(void);
  *
  * Each bit may be converted into a PU object using
  * hwloc_get_pu_obj_by_os_index().
+ * \sa faq_indexes
  */
 typedef hwloc_bitmap_t hwloc_cpuset_t;
 /** \brief A non-modifiable ::hwloc_cpuset_t. */
@@ -169,6 +173,7 @@ typedef hwloc_const_bitmap_t hwloc_const_cpuset_t;
  * ::hwloc_bitmap_t (see hwloc/bitmap.h).
  * Each bit may be converted into a NUMA node object using
  * hwloc_get_numanode_obj_by_os_index().
+ * \sa faq_indexes
  *
  * When binding memory on a system without any NUMA node,
  * the single main memory bank is considered as NUMA node #0.

@@ -21,6 +21,11 @@ project(${PROJECT_NAME})
 message(STATUS "PROJECT_NAME: ${PROJECT_NAME}")
 message(STATUS "PROJECT_SOURCE_DIR: ${PROJECT_SOURCE_DIR}")
 
+if(NOT TARGET ccl)
+	add_library(ccl INTERFACE)
+	target_link_libraries(ccl INTERFACE -l:libccl.so.1)
+endif()
+
 if (NOT DEFINED ENV{COMPUTE_BACKEND})
     message(STATUS "COMPUTE_BACKEND is not defined")
 else()

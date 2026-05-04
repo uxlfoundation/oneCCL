@@ -381,6 +381,8 @@ ccl::status ccl_coll_build_topo_alltoallv(ccl_sched* main_sched,
     std::vector<size_t> send_counts, recv_counts, send_offsets, recv_offsets;
     size_t total_send_count = 0, total_recv_count = 0;
     size_t total_send_bytes = 0, total_recv_bytes = 0;
+    static ccl_buffer dummy_buf =
+        sched->alloc_buffer({ 1, ccl::buffer_type::ze, ccl::buffer_place::device });
 
     ccl_coll_calculate_alltoallv_counts(coll_param,
                                         send_counts,
@@ -400,7 +402,7 @@ ccl::status ccl_coll_build_topo_alltoallv(ccl_sched* main_sched,
         CCL_THROW_IF_NOT(send_counts == recv_counts, "unexpected send_counts");
         for (int idx = 0; idx < comm_size; idx++) {
             if (recv_counts[idx] == 0) {
-                recv_bufs[idx].set(nullptr, 0, 0);
+                recv_bufs[idx] = dummy_buf;
             }
             else {
                 recv_bufs[idx].set(coll_param.get_send_buf(), total_recv_bytes, recv_offsets[idx]);
@@ -411,7 +413,7 @@ ccl::status ccl_coll_build_topo_alltoallv(ccl_sched* main_sched,
         tmp_bufs.resize(comm_size);
         for (int idx = 0; idx < comm_size; idx++) {
             if (send_counts[idx] == 0) {
-                tmp_bufs[idx].set(nullptr, 0, 0);
+                tmp_bufs[idx] = dummy_buf;
             }
             else {
                 ccl::alloc_param alloc_param(send_counts[idx] * dtype.size(),
@@ -426,14 +428,14 @@ ccl::status ccl_coll_build_topo_alltoallv(ccl_sched* main_sched,
                          "unexpected send_counts");
         for (int idx = 0; idx < comm_size; idx++) {
             if (send_counts[idx] == 0) {
-                send_bufs[idx].set(nullptr, 0, 0);
+                send_bufs[idx] = dummy_buf;
             }
             else {
                 send_bufs[idx].set(coll_param.get_send_buf(), total_send_bytes, send_offsets[idx]);
             }
 
             if (recv_counts[idx] == 0) {
-                recv_bufs[idx].set(nullptr, 0, 0);
+                recv_bufs[idx] = dummy_buf;
             }
             else {
                 recv_bufs[idx].set(coll_param.get_recv_buf(), total_recv_bytes, recv_offsets[idx]);
@@ -644,7 +646,9 @@ ccl::status ccl_coll_build_topo_alltoallv(ccl_sched* main_sched,
                     auto peer_rank = (card_idx * tile_count + tile_idx);
                     if (peer_rank == comm->rank())
                         continue;
-                    if (counts[peer_rank] == 0)
+
+                    auto global_peer_rank = comm->get_global_rank(peer_rank);
+                    if (counts[global_peer_rank] == 0)
                         continue;
 
                     copy_attr attr{};
@@ -659,21 +663,16 @@ ccl::status ccl_coll_build_topo_alltoallv(ccl_sched* main_sched,
                     attr.hint_queue_index = copy_engine_idx;
                     attr.direction = copy_direction::c2c;
 
-                    if (!is_single_node) {
-                        // in order to get the correct offset for peer rank for example(2)
-                        peer_rank = peer_rank + (r2r_comm->rank() * node_comm->size());
-                    }
-
-                    auto src = bufs[peer_rank];
+                    auto src = bufs[global_peer_rank];
                     auto dst = ccl_buffer();
                     if (is_read) {
                         src = ccl_buffer();
-                        dst = bufs[peer_rank];
+                        dst = bufs[global_peer_rank];
                         LOG_DEBUG("ze_copy: read copy is enabled")
                     }
 
                     auto entry = entry_factory::create<ze_copy_entry>(
-                        sched, src, dst, counts[peer_rank], dtype, attr, wait_events);
+                        sched, src, dst, counts[global_peer_rank], dtype, attr, wait_events);
                     parallel_copy_events.push_back(entry->entry_event);
                 }
             }

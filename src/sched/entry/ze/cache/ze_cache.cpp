@@ -474,7 +474,8 @@ void mem_handle_cache::handle_desc::close_handle() const {
         CCL_THROW("error at zeMemCloseIpcHandle, code: ", to_string(res));
     }
 
-    if (ccl::global_data::env().ze_ipc_exchange != ccl::ze::ipc_exchange_mode::sockets) {
+    if (ccl::global_data::env().ze_ipc_exchange != ccl::ze::ipc_exchange_mode::sockets &&
+        ccl::global_data::env().ze_ipc_exchange != ccl::ze::ipc_exchange_mode::none) {
         close_handle_fd(handle);
     }
 }
@@ -576,6 +577,8 @@ void ipc_handle_cache::push(ze_context_handle_t context,
     ZE_CALL(zeMemGetIpcHandle, (context, ipc_desc.ptr, &out_value->handle));
 
     out_value->mem_id = ipc_desc.mem_id;
+    // every call to zeMemGetIpcHandle results in increment of
+    // global_handle_id to be unique
     out_value->handle_id = global_handle_id++;
 
     cache.insert({ key, *out_value });

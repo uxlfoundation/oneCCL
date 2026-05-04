@@ -23,6 +23,7 @@
 #include "comm/atl_tag.hpp"
 #include "common/log/log.hpp"
 #include "common/stream/stream.hpp"
+
 #include "common/utils/tree.hpp"
 #include "common/utils/utils.hpp"
 #include "oneapi/ccl/types.hpp"
@@ -42,7 +43,13 @@
 #include "common/global/ze/ze_fd_manager.hpp"
 #include "sched/entry/ze/ze_primitives.hpp"
 #include "sched/entry/ze/ze_handle_exchange_entry.hpp"
+#include "coll/algorithms/utils/sycl_kernels.hpp"
+#include "coll/algorithms/utils/consts.hpp"
+#include "comm/windows.hpp"
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
+#ifdef CCL_ENABLE_UMF
+#include "umf/ipc.hpp"
+#endif
 #include "types_generator_defines.hpp"
 #include "topology/topo_manager.hpp"
 #include "unordered_coll/unordered_coll.hpp"
@@ -55,6 +62,9 @@ enum class pattern_type { collective, send, recv };
 using ccl_rank2rank_map = std::vector<int>;
 
 class ikvs_wrapper;
+
+using ll_pattern_t = uint32_t;
+using ll_storage_pattern_t = uint16_t;
 
 inline ccl_stream* get_stream_ptr(const ccl::stream::impl_value_t& stream) {
     if (stream.get() && stream->is_sycl_device_stream())
@@ -71,6 +81,15 @@ namespace v1 {
 class kvs_interface;
 }
 } // namespace ccl
+
+void comm_barrier(const std::shared_ptr<ccl_comm> comm);
+
+#ifdef CCL_ENABLE_SYCL
+sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
+                           sycl::queue q,
+                           const std::vector<sycl::event>& dep_events,
+                           bool use_cpu);
+#endif
 
 // comm-specific environment
 // based on global environment
@@ -106,83 +125,183 @@ private:
 };
 
 #ifdef CCL_ENABLE_SYCL
-constexpr size_t MAX_TILES = ccl::topo_manager::max_ranks_per_card;
-constexpr size_t MAX_GPUS = ccl::topo_manager::max_ranks_per_plane;
-constexpr size_t MAX_NODE_RANKS =
-    ccl::topo_manager::max_ranks_per_card * ccl::topo_manager::max_ranks_per_plane;
-class alignas(CACHELINE_SIZE) ccl_comm_barrier_data {
+
+struct LLPatternDataInternal {
+    ll_storage_pattern_t pattern_array[ARC_MAX_NUM + 1];
+    ll_pattern_t tmp_pattern_counter{}; // tb used by the kernel, val before inc
+    int32_t pattern_reset_due = 0;
+    size_t buf_count;
+    bool zero_now;
+};
+
+struct LLPatternData {
+    LLPatternDataInternal* ll_pattern_data_internal = nullptr;
+    // WARNING this class only stores `LLPatternDataInternal`
+    // the memory has to be managed externally !
+    void init(size_t buf_count) const {
+        for (int i = 0; i < ARC_MAX_NUM + 1; i++) {
+            ll_pattern_data_internal->pattern_array[i] = 0xa770;
+        }
+        ll_pattern_data_internal->tmp_pattern_counter = 0;
+        ll_pattern_data_internal->pattern_reset_due = 0;
+        ll_pattern_data_internal->buf_count = buf_count;
+    }
+
+    // This function can be called either from kernel or from CPU
+    // but the data placement of ll_pattern_data_internal
+    // should correspond to
+    // it should be called from a single thread, regardless
+    // if it's cpu or gpu
+    // once the function finishes, users can query `should_zero_now`
+    void process_update(pattern_type type,
+                        uint32_t global_current_id,
+                        uint32_t own_rank,
+                        uint32_t peer_rank,
+                        uint32_t nSteps) const {
+        // should be compatible with device-side code
+        calc_rt_pattern(type, own_rank, peer_rank);
+        // sycl::ext::oneapi::experimental::printf(
+        //     "type %u, own_rank: %u, peer_rank: %u, nSteps: %u, tmp: %ld\n",
+        //  type, own_rank, peer_rank, nSteps, tmp);
+
+        update_rt_pattern(type, peer_rank, nSteps);
+    }
+
+    // can be called from cpu or gpu, any number of threads
+    // if threre are multiple threads, make sure that all finished
+    // the `process_update` function - either a kernel barrier
+    // or it.barrier() wth single workgroup is required
+    bool should_zero_now() {
+        return ll_pattern_data_internal->zero_now;
+    }
+
+    uint32_t get_tmp_pattern() {
+        return this->ll_pattern_data_internal->tmp_pattern_counter;
+    }
+
+    // this function can be called from both: cpu and gpu
+    // regardless od data placement
+    uint32_t* get_tmp_pattern_ptr() {
+        return &this->ll_pattern_data_internal->tmp_pattern_counter;
+    }
+
+    // pattern: XYYY xxxx xxxx xxxx
+    // X: 1 is collective, 0 is pt2pt
+    // YYY: is the source rank of the pt2pt
+    void calc_rt_pattern(pattern_type type, uint32_t own_rank, uint32_t peer_rank) const {
+        uint32_t pattern{};
+        if (type == pattern_type::collective) {
+            const uint32_t mask = (1U << (32 - 1)) - 1;
+            uint32_t counter = ll_pattern_data_internal->pattern_array[ARC_MAX_NUM];
+            pattern = (counter & mask) | (1U << (32 - 1));
+        }
+        else if (type == pattern_type::send || type == pattern_type::recv) {
+            const int pof2 =
+                sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+            const uint32_t mask = (1 << (32 - 1 - pof2)) - 1;
+            // this is GPU code, cannot throw from here
+            // former check left for reference
+            // CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
+            uint32_t counter = ll_pattern_data_internal->pattern_array[peer_rank];
+            int src_rank = type == pattern_type::send ? own_rank : peer_rank;
+            pattern = (counter & mask) | src_rank << (32 - 1 - pof2);
+        }
+
+        ll_pattern_data_internal->tmp_pattern_counter = pattern;
+    }
+
+    void update_rt_pattern(pattern_type type, int peer_rank, uint32_t nSteps) const {
+        uint32_t pattern = ll_pattern_data_internal->tmp_pattern_counter;
+
+        uint32_t new_pattern{};
+        if (type == pattern_type::collective) {
+            const uint32_t mask = (1U << (32 - 1)) - 1;
+            // cannot be called within a kernel, left for reference
+            // CCL_ASSERT(nSteps <= mask);
+            uint32_t counter = pattern & mask;
+            counter = (counter + nSteps) & mask;
+            // only one thread should handle the pattern
+            // this only works because we have a single subgroup:
+            // one subgroup -> no races between subgroups
+            ll_pattern_data_internal->pattern_array[ARC_MAX_NUM] = counter;
+            new_pattern = (counter & mask) | (1U << (32 - 1));
+        }
+        else if (type == pattern_type::send || type == pattern_type::recv) {
+            const int pof2 =
+                sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+            const int mask = (1 << (32 - 1 - pof2)) - 1;
+            uint32_t counter = pattern & mask;
+            counter = (counter + nSteps) & mask;
+            // cannot be called within a kernel, left for reference
+            // CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
+            // only one thread should handle the pattern
+            // this only works because we have a single subgroup:
+            // one subgroup -> no races between subgroups
+            ll_pattern_data_internal->pattern_array[peer_rank] = counter;
+            new_pattern = (counter & mask) | (1U << (32 - 1));
+        }
+        rt_check_pattern(pattern, new_pattern);
+    }
+
 private:
-    int m_rank;
-    int m_size;
-    size_t m_count = slots - 1;
-    size_t* d_count = nullptr;
-    bool m_is_set = false;
-    std::array<size_t*, MAX_NODE_RANKS> m_remote_ptrs{};
-    std::array<size_t*, MAX_NODE_RANKS> d_remote_ptrs{};
-
-public:
-    static constexpr int slots = 3;
-
-    ccl_comm_barrier_data(int rank, int size) : m_rank(rank), m_size(size) {}
-
-    int rank() const {
-        return m_rank;
+    void pattern_reset_set_due() const {
+        ll_pattern_data_internal->pattern_reset_due = ll_pattern_data_internal->buf_count;
     }
 
-    int size() const {
-        return m_size;
+    int pattern_reset_is_due() const {
+        return ll_pattern_data_internal->pattern_reset_due;
     }
 
-    bool is_set() const {
-        return m_is_set;
+    void pattern_reset_performed() const {
+        ll_pattern_data_internal->pattern_reset_due--;
     }
 
-    size_t inc(size_t n) {
-        m_count += n;
-        return m_count;
-    }
-
-    size_t count() const {
-        return m_count / slots;
-    }
-
-    int slot() const {
-        return m_count % slots;
-    }
-
-    std::array<size_t*, MAX_NODE_RANKS> remote_ptrs() const {
-        return m_remote_ptrs;
-    }
-
-    size_t inc_gpu(size_t n) {
-        *d_count = *d_count + n;
-        return *d_count;
-    }
-
-    size_t count_gpu() const {
-        return *d_count / slots;
-    }
-
-    int slot_gpu() const {
-        return *d_count % slots;
-    }
-
-    std::array<size_t*, MAX_NODE_RANKS> remote_ptrs_gpu() const {
-        return d_remote_ptrs;
-    }
-
-    void set_count_gpu(size_t* count) {
-        d_count = count;
-    }
-
-    void set_remote_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs,
-                         std::array<size_t*, MAX_NODE_RANKS> gpu_barrier_ptrs) {
-        assert(!is_set());
-        m_is_set = true;
-        m_remote_ptrs = ptrs;
-        d_remote_ptrs = gpu_barrier_ptrs;
+    inline void rt_check_pattern(uint32_t seqNo, uint32_t newSeqNo) const {
+        if (newSeqNo < seqNo || pattern_reset_is_due()) {
+            if (newSeqNo < seqNo) {
+                pattern_reset_set_due();
+            }
+            pattern_reset_performed();
+            this->ll_pattern_data_internal->zero_now = true;
+        }
+        else {
+            this->ll_pattern_data_internal->zero_now = false;
+        }
     }
 };
+
+template <typename T>
+void check_zero_buffers_cpu(LLPatternData ll_pattern_data,
+                            const std::shared_ptr<ccl_comm> comm,
+                            sycl::queue q,
+                            T* ipcbuf0,
+                            T* ipcbuf1,
+                            size_t tmp_buf_size) {
+    if (ll_pattern_data.should_zero_now()) {
+        q.fill(ipcbuf0, 0, tmp_buf_size);
+        q.fill(ipcbuf1, 0, tmp_buf_size);
+        invoke_barrier(comm, q, {}, true);
+    }
+}
+
+template <typename T>
+void check_zero_buffers_gpu(LLPatternData ll_pattern_data,
+                            const sycl::nd_item<1> it,
+                            ccl_comm_barrier_data barrier_data,
+                            T* ipcbuf0,
+                            T* ipcbuf1,
+                            size_t tmp_buf_size) {
+    it.barrier();
+    if (ll_pattern_data.should_zero_now()) {
+        size_t per_item_count = tmp_buf_size / it.get_global_range()[0];
+        size_t offset = per_item_count * it.get_global_linear_id();
+        for (size_t i = offset; i < offset + per_item_count; ++i) {
+            ipcbuf0[i] = 0;
+            ipcbuf1[i] = 0;
+        }
+        comm_barrier(barrier_data, it, true, true);
+    }
+}
 
 struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
     // three tmp buffers - 1: work_buf, 2: tmp_send_buf, 3: tmp_recv_buf
@@ -191,6 +310,7 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
     std::array<void*, buf_count> tmp_bufs;
     // ipc exchanged pointers to remote tmp buffers
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count] = {};
+    std::array<void*, MAX_NODE_RANKS> remote_numa_tmp_bufs[buf_count] = {};
     std::array<void*, MAX_GPUS> remote_even_tmp_bufs[buf_count] = {};
     std::array<void*, MAX_TILES> remote_pair_tmp_bufs[buf_count] = {};
 
@@ -199,6 +319,7 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
         tmp_bufs.fill(nullptr);
         for (int i = 0; i < buf_count; i++) {
             remote_tmp_bufs[i].fill(nullptr);
+            remote_numa_tmp_bufs[i].fill(nullptr);
             remote_even_tmp_bufs[i].fill(nullptr);
             remote_pair_tmp_bufs[i].fill(nullptr);
         }
@@ -207,16 +328,55 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
 
 class alignas(CACHELINE_SIZE) ccl_tmp_bufs {
 public:
+    ccl_tmp_bufs() {
+        set_ptrs_to_null();
+        buf_size = 2097152;
+    }
+
+    ccl_tmp_bufs(ccl_tmp_bufs& other) = delete;
+
+    ccl_tmp_bufs& operator=(ccl_tmp_bufs& other) = delete;
+
+    ~ccl_tmp_bufs() {
+        if (this->free_q) {
+            sycl::queue& free_q_ref = *this->free_q.get();
+
+#ifdef CCL_ENABLE_UMF
+            if (umf_allocated) {
+                // Free memory allocated via UMF
+                if (tmp_bufs[0])
+                    umf_free(tmp_bufs[0]);
+                if (tmp_bufs_gpu[0])
+                    umf_free(tmp_bufs_gpu[0]);
+                if (tmp_bufs_gpu_index)
+                    umf_free(tmp_bufs_gpu_index);
+                if (tmp_bufs_gpu_secondary_index)
+                    umf_free(tmp_bufs_gpu_secondary_index);
+                if (pattern_data_gpu.ll_pattern_data_internal)
+                    umf_free(pattern_data_gpu.ll_pattern_data_internal);
+            }
+            else
+#endif
+            {
+                // sycl::free accepts nullptr, no need to check
+                sycl::free(tmp_bufs[0], free_q_ref);
+                sycl::free(tmp_bufs_gpu[0], free_q_ref);
+                sycl::free(tmp_bufs_gpu_index, free_q_ref);
+                sycl::free(tmp_bufs_gpu_secondary_index, free_q_ref);
+                sycl::free(pattern_data_gpu.ll_pattern_data_internal, free_q_ref);
+            }
+            set_ptrs_to_null();
+        }
+        else if (tmp_bufs[0] || tmp_bufs_gpu[0] || tmp_bufs_gpu_index ||
+                 tmp_bufs_gpu_secondary_index) {
+            LOG_WARN("internal error, memory leak occurs");
+        }
+    }
     // to avoid data race towards the end of a collective and starting of
     // next collective we use different buffers on consecutive collectives.
     static constexpr int buf_count = 2;
     // use largest threshold among all the small buffers algorithms
-    static constexpr size_t buf_size = 2097152;
-
-    void set_tmp_buf_idx(int* ptr, int* secondary_ptr) {
-        tmp_bufs_gpu_index = ptr;
-        tmp_bufs_gpu_secondary_index = secondary_ptr;
-    }
+    size_t buf_size;
 
     int* get_tmp_buf_idx() {
         return tmp_bufs_gpu_index;
@@ -226,12 +386,88 @@ public:
         return tmp_bufs_gpu_secondary_index;
     }
 
-    void set_tmp_buf(void* ptr, int idx) {
-        tmp_bufs[idx] = ptr;
-    }
+    void allocate_buffers(sycl::queue& q, bool tmp_in_device, bool umf_enable = false) {
+        this->free_q = std::make_shared<sycl::queue>(q);
+        sycl::queue& q_ref = *this->free_q.get();
 
-    void set_tmp_buf_gpu(void* ptr, int idx) {
-        tmp_bufs_gpu[idx] = ptr;
+        char* tmp_buf = nullptr;
+        char* tmp_buf_gpu = nullptr;
+
+#ifdef CCL_ENABLE_UMF
+        if (umf_enable && tmp_in_device) {
+            this->umf_allocated = true;
+            tmp_buf = static_cast<char*>(umf_alloc_device_aligned(
+                q_ref, CCL_REG_MSG_ALIGNMENT, buf_size * ccl_tmp_bufs::buf_count));
+            tmp_buf_gpu = static_cast<char*>(umf_alloc_device_aligned(
+                q_ref, CCL_REG_MSG_ALIGNMENT, buf_size * ccl_tmp_bufs::buf_count));
+        }
+        else
+#endif
+            if (tmp_in_device) {
+            tmp_buf = sycl::aligned_alloc_device<char>(
+                CCL_REG_MSG_ALIGNMENT, buf_size * ccl_tmp_bufs::buf_count, q_ref);
+            tmp_buf_gpu = sycl::aligned_alloc_device<char>(
+                CCL_REG_MSG_ALIGNMENT, buf_size * ccl_tmp_bufs::buf_count, q_ref);
+        }
+        else {
+            // when no p2p, use USM host memory for cross card communication
+            tmp_buf = sycl::aligned_alloc_host<char>(
+                CCL_REG_MSG_ALIGNMENT, buf_size * ccl_tmp_bufs::buf_count, q_ref);
+            tmp_buf_gpu = sycl::aligned_alloc_host<char>(
+                CCL_REG_MSG_ALIGNMENT, buf_size * ccl_tmp_bufs::buf_count, q_ref);
+        }
+
+        int* tmp_bufs_gpu_index;
+        int* tmp_bufs_gpu_secondary_index;
+#ifdef CCL_ENABLE_UMF
+        if (umf_enable && tmp_in_device) {
+            tmp_bufs_gpu_index = static_cast<int*>(umf_alloc_device(q_ref, sizeof(int)));
+            tmp_bufs_gpu_secondary_index = static_cast<int*>(umf_alloc_device(q_ref, sizeof(int)));
+        }
+        else
+#endif
+        {
+            tmp_bufs_gpu_index = sycl::malloc_device<int>(1, q_ref);
+            tmp_bufs_gpu_secondary_index = sycl::malloc_device<int>(1, q_ref);
+        }
+
+        auto t = q_ref.memset(tmp_bufs_gpu_index, 0, sizeof(*tmp_bufs_gpu_index));
+        q_ref.memset(tmp_bufs_gpu_secondary_index, 0, sizeof(*tmp_bufs_gpu_secondary_index), t)
+            .wait();
+
+#ifdef CCL_ENABLE_UMF
+        if (umf_enable) {
+            this->pattern_data_gpu.ll_pattern_data_internal = static_cast<LLPatternDataInternal*>(
+                umf_alloc_device(q_ref, sizeof(LLPatternDataInternal)));
+        }
+        else
+#endif
+        {
+            this->pattern_data_gpu.ll_pattern_data_internal =
+                sycl::malloc_device<LLPatternDataInternal>(1, q_ref);
+        }
+        LLPatternData temp_pattern_data = this->pattern_data_gpu;
+
+        q_ref
+            .submit([&](auto& h) { // TODO add deps ?
+                h.single_task([temp_pattern_data]() {
+                    temp_pattern_data.init(buf_count);
+                });
+            })
+            .wait();
+        this->pattern_data.ll_pattern_data_internal = &this->pattern_data_internal_cpu;
+        this->pattern_data.init(buf_count);
+
+        this->tmp_bufs_gpu_index = tmp_bufs_gpu_index;
+        this->tmp_bufs_gpu_secondary_index = tmp_bufs_gpu_secondary_index;
+
+        for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
+            void* tmp_buf_ptr = tmp_buf + i * buf_size;
+            void* tmp_buf_ptr_gpu = tmp_buf_gpu + i * buf_size;
+
+            this->tmp_bufs[i] = tmp_buf_ptr;
+            this->tmp_bufs_gpu[i] = tmp_buf_ptr_gpu;
+        }
     }
 
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
@@ -254,6 +490,14 @@ public:
         return tmp_bufs_gpu[idx];
     }
 
+    size_t get_tmp_buf_size() const {
+        return buf_size;
+    }
+
+    void set_tmp_buf_size(size_t size) {
+        buf_size = size;
+    }
+
     std::array<void*, MAX_NODE_RANKS> get_remote_tmp_buf(int idx) const {
         return remote_tmp_bufs[idx];
     }
@@ -272,14 +516,46 @@ public:
         return { get_tmp_buf_gpu(idx), get_remote_tmp_buf_gpu(idx) };
     }
 
+    LLPatternData get_pattern_data() {
+        return this->pattern_data;
+    }
+
+    LLPatternData get_pattern_data_gpu() {
+        return this->pattern_data_gpu;
+    }
+
+    LLPatternData get_pattern_data_auto(sycl::queue& q) {
+        if (use_recording_path(q)) {
+            return this->pattern_data_gpu;
+        }
+        else {
+            return this->pattern_data;
+        }
+    }
+
 private:
+    void set_ptrs_to_null() {
+        for (int i = 0; i < buf_count; i++) {
+            tmp_bufs[i] = NULL;
+            tmp_bufs_gpu[i] = NULL;
+        }
+        tmp_bufs_gpu_index = NULL;
+        tmp_bufs_gpu_secondary_index = NULL;
+        pattern_data_gpu.ll_pattern_data_internal = NULL;
+    }
+
+    std::shared_ptr<sycl::queue> free_q;
     void* tmp_bufs[buf_count];
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count];
     int *tmp_bufs_gpu_index, *tmp_bufs_gpu_secondary_index;
     void* tmp_bufs_gpu[buf_count];
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs_gpu[buf_count];
+    LLPatternData pattern_data;
+    LLPatternData pattern_data_gpu;
+    LLPatternDataInternal pattern_data_internal_cpu;
 
     int index = 0;
+    bool umf_allocated = false;
 };
 
 class alignas(CACHELINE_SIZE) ccl_scaleout_host_bufs {
@@ -396,6 +672,14 @@ public:
     void reset(int rank, int size);
 
 #ifdef CCL_ENABLE_SYCL
+    bool use_remote_atomics() const {
+        return m_barrier_data.use_remote_atomics();
+    }
+
+    void set_remote_atomics(bool use_remote_atomics) {
+        m_barrier_data.set_remote_atomics(use_remote_atomics);
+    }
+
     ccl_comm_barrier_data barrier_data() const {
         return m_barrier_data;
     }
@@ -412,6 +696,31 @@ public:
         m_barrier_data.set_count_gpu(count);
     }
 
+    ccl_comm_flag_data flag_data() const {
+        return m_flag_data;
+    }
+
+    void set_flag_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs, size_t* count) {
+        m_flag_data.set_remote_ptrs(ptrs);
+        m_flag_data.set_count(count);
+    }
+
+    void* get_tmp_buf(int idx) const {
+        return m_tmp_buf.get_tmp_buf(idx);
+    }
+
+    void* get_tmp_buf_gpu(int idx) const {
+        return m_tmp_buf.get_tmp_buf_gpu(idx);
+    }
+
+    size_t get_tmp_buf_size() const {
+        return m_tmp_buf.get_tmp_buf_size();
+    }
+
+    void set_tmp_buf_size(size_t size) {
+        m_tmp_buf.set_tmp_buf_size(size);
+    }
+
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
         return m_tmp_buf.get_all_tmp_bufs(is_next);
     }
@@ -420,8 +729,8 @@ public:
         return m_tmp_buf.get_all_tmp_bufs_gpu(is_next);
     }
 
-    void set_tmp_buf_idx(int* ptr, int* secondary_ptr) {
-        m_tmp_buf.set_tmp_buf_idx(ptr, secondary_ptr);
+    void allocate_buffers(sycl::queue& q, bool tmp_in_device, bool umf_enable = false) {
+        m_tmp_buf.allocate_buffers(q, tmp_in_device, umf_enable);
     }
 
     int* get_tmp_buf_idx() {
@@ -430,14 +739,6 @@ public:
 
     int* get_tmp_buf_secondary_idx() {
         return m_tmp_buf.get_tmp_buf_secondary_idx();
-    }
-
-    void set_tmp_buf(void* ptr, int idx) {
-        m_tmp_buf.set_tmp_buf(ptr, idx);
-    }
-
-    void set_tmp_buf_gpu(void* ptr, int idx) {
-        m_tmp_buf.set_tmp_buf_gpu(ptr, idx);
     }
 
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
@@ -506,6 +807,54 @@ public:
         group_recv_requests.clear();
     }
 
+    LLPatternData get_pattern_data() {
+        return m_tmp_buf.get_pattern_data();
+    }
+
+    LLPatternData get_pattern_data_gpu() {
+        return m_tmp_buf.get_pattern_data_gpu();
+    }
+
+    LLPatternData get_pattern_data_auto(sycl::queue& q) {
+        return m_tmp_buf.get_pattern_data_auto(q);
+    }
+
+    ccl_window* window_register(ccl_comm* comm, void* ptr, size_t size) {
+        ccl_window* window = new ccl_window(comm);
+        int ret = window->register_buf(ptr, size);
+        if (ret) {
+            windows.push_back(window);
+            return window;
+        }
+        else {
+            delete window;
+            return nullptr;
+        }
+    }
+
+    void window_deregister(ccl_window* window) {
+        window->deregister_buf();
+        windows.erase(std::remove(windows.begin(), windows.end(), window), windows.end());
+        delete window;
+    }
+
+    void buffer_register(void* buffer, size_t size, void** handle) {
+        *handle = NULL;
+    }
+
+    void buffer_deregister(void* handle) {}
+
+    std::vector<void*> get_registered_ptrs(const void* ptr, size_t size) {
+        std::vector<void*> ptrs;
+        size_t offset;
+        for (auto window : windows) {
+            if (window->is_registered(ptr, size, offset)) {
+                ptrs = window->get_ptrs(offset);
+                break;
+            }
+        }
+        return ptrs;
+    }
 #endif // CCL_ENABLE_SYCL
 
     std::shared_ptr<atl_base_comm> atl_comm;
@@ -519,6 +868,7 @@ private:
     ccl_double_tree m_dtree;
 #ifdef CCL_ENABLE_SYCL
     ccl_comm_barrier_data m_barrier_data;
+    ccl_comm_flag_data m_flag_data;
     ccl_tmp_bufs m_tmp_buf;
     ccl_large_tmp_bufs m_large_tmp_buf{};
     ccl_scaleout_host_bufs m_scaleout_host_bufs;
@@ -529,12 +879,14 @@ private:
 
     std::vector<group_send_request> group_send_requests;
     std::vector<group_recv_request> group_recv_requests;
+
+    std::vector<ccl_window*> windows;
 #endif // CCL_ENABLE_SYCL
 };
 
 class alignas(CACHELINE_SIZE) ccl_comm : public ccl::comm_interface {
 public:
-    static constexpr int invalid_rank = -1;
+    static constexpr int invalid_rank = ccl::utils::invalid_rank;
     static constexpr int invalid_size = -1;
     static constexpr int invalid_id = -1;
 
@@ -630,6 +982,9 @@ private:
     void create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm);
     // needed for multithreading (single process multiple devices) approach:
     void create_topo_subcommsExt(int size, int rank);
+    int get_numa_node_for_gpu(std::shared_ptr<ccl_comm> node_comm,
+                              std::shared_ptr<ccl::device> device_ptr,
+                              std::shared_ptr<ccl::context> context_ptr);
 
     ccl_comm* get_impl() {
         return this;
@@ -681,6 +1036,17 @@ public:
     }
 
     std::shared_ptr<atl_base_comm> get_atl_comm() const {
+        if (!comm_impl) {
+            LOG_ERROR("get_atl_comm: comm_impl is null, this=", this);
+        }
+        CCL_THROW_IF_NOT(comm_impl, "comm_impl is null");
+        if (!comm_impl->atl_comm) {
+            LOG_ERROR("get_atl_comm: comm_impl->atl_comm is null, this=",
+                      this,
+                      ", comm_impl=",
+                      (void*)comm_impl.get());
+        }
+        CCL_THROW_IF_NOT(comm_impl->atl_comm, "comm_impl->atl_comm is null");
         return comm_impl->atl_comm;
     }
 
@@ -707,6 +1073,22 @@ public:
         }
         CCL_ASSERT(node_comm, "no node_comm");
         return node_comm;
+    }
+
+    std::shared_ptr<ccl_comm> get_numa_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_numa_comm();
+        }
+        CCL_ASSERT(numa_comm, "no numa_comm");
+        return numa_comm;
+    }
+
+    std::shared_ptr<ccl_comm> get_numa_r2r_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_numa_r2r_comm();
+        }
+        CCL_ASSERT(numa_r2r_comm, "no numa_r2r_comm");
+        return numa_r2r_comm;
     }
 
     std::shared_ptr<ccl_comm> get_even_comm() const {
@@ -747,10 +1129,9 @@ public:
             return fd_manager;
         }
     }
-    void set_handle_exchange_data(std::shared_ptr<ze_handle_exchange_entry> handle_exchange_entry,
-                                  std::shared_ptr<ccl_sched> handle_exchange_sched) {
-        this->handle_exchange_entry = handle_exchange_entry;
-        this->handle_exchange_sched = handle_exchange_sched;
+
+    void set_handle_exchange_data(std::shared_ptr<void> handle_exchange_data) {
+        this->handle_exchange_data = handle_exchange_data;
     }
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
@@ -778,11 +1159,26 @@ public:
         return get_comm_id();
     }
 
+    int unique_id() const noexcept {
+        if (parent_comm) {
+            return parent_comm->unique_id();
+        }
+        return unique_comm_id;
+    }
+
     const ccl_double_tree& dtree() const {
         return comm_impl->dtree();
     }
 
 #ifdef CCL_ENABLE_SYCL
+    bool use_remote_atomics() const {
+        return comm_impl->use_remote_atomics();
+    }
+
+    void set_remote_atomics(bool use_remote_atomics) {
+        comm_impl->set_remote_atomics(use_remote_atomics);
+    }
+
     ccl_comm_barrier_data barrier_data() const {
         return comm_impl->barrier_data();
     }
@@ -797,16 +1193,40 @@ public:
         comm_impl->set_barrier_ptrs(ptrs0, ptrs1, count);
     }
 
+    ccl_comm_flag_data flag_data() const {
+        return comm_impl->flag_data();
+    }
+
+    void set_flag_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs, size_t* count) {
+        comm_impl->set_flag_ptrs(ptrs, count);
+    }
+
+    void allocate_buffers(sycl::queue& q, bool tmp_in_device, bool umf_enable = false) {
+        comm_impl->allocate_buffers(q, tmp_in_device, umf_enable);
+    }
+
+    void* get_tmp_buf(int idx) const {
+        return comm_impl->get_tmp_buf(idx);
+    }
+
+    void* get_tmp_buf_gpu(int idx) const {
+        return comm_impl->get_tmp_buf_gpu(idx);
+    }
+
+    void set_tmp_buf_size(size_t size) {
+        return comm_impl->set_tmp_buf_size(size);
+    }
+
+    size_t get_tmp_buf_size() const {
+        return comm_impl->get_tmp_buf_size();
+    }
+
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs(bool is_next) {
         return comm_impl->get_all_tmp_bufs(is_next);
     }
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs_gpu(bool is_next) {
         return comm_impl->get_all_tmp_bufs_gpu(is_next);
-    }
-
-    void set_tmp_buf_idx(int* ptr, int* secondary_ptr) {
-        comm_impl->set_tmp_buf_idx(ptr, secondary_ptr);
     }
 
     int* get_tmp_buf_idx() {
@@ -817,16 +1237,8 @@ public:
         return comm_impl->get_tmp_buf_secondary_idx();
     }
 
-    void set_tmp_buf(void* ptr, int idx) {
-        comm_impl->set_tmp_buf(ptr, idx);
-    }
-
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
         comm_impl->set_remote_tmp_bufs(ptrs, idx);
-    }
-
-    void set_tmp_buf_gpu(void* ptr, int idx) {
-        comm_impl->set_tmp_buf_gpu(ptr, idx);
     }
 
     void set_remote_tmp_bufs_gpu(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
@@ -891,39 +1303,38 @@ public:
         return enable_multi_thread_instance;
     }
 
-    // pattern: XYYY xxxx xxxx xxxx
-    // X: 1 is collective, 0 is pt2pt
-    // YYY: is the source rank of the pt2pt
-    uint32_t get_rt_pattern(pattern_type type, int peer_rank) {
-        uint16_t counter;
-        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
-        const int mask = (1 << (16 - 1 - pof2)) - 1;
-        if (type == pattern_type::collective) {
-            counter = pattern_counter[ARC_MAX_NUM];
-            counter = counter & mask | 0x8000;
-        }
-        else if (type == pattern_type::send || type == pattern_type::recv) {
-            CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
-            counter = pattern_counter[peer_rank];
-            int src_rank = type == pattern_type::send ? comm_rank : peer_rank;
-            counter = counter & mask | src_rank << (16 - 1 - pof2);
-        }
-
-        return global_current_id << 16 | counter;
+    LLPatternData get_pattern_data() {
+        return comm_impl->get_pattern_data();
     }
 
-    void update_rt_pattern(pattern_type type, int peer_rank, uint32_t pattern) {
-        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
-        const int mask = (1 << (16 - 1 - pof2)) - 1;
-        uint16_t counter = pattern & mask;
-        if (type == pattern_type::collective) {
-            pattern_counter[ARC_MAX_NUM] = counter;
-        }
-        else if (type == pattern_type::send || type == pattern_type::recv) {
-            CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
-            pattern_counter[peer_rank] = counter;
-        }
+    ccl_window* window_register(void* ptr, size_t size) {
+        return comm_impl->window_register(this, ptr, size);
     }
+
+    void window_deregister(ccl_window* window) {
+        comm_impl->window_deregister(window);
+    }
+
+    void buffer_register(void* buffer, size_t size, void** handle) {
+        comm_impl->buffer_register(buffer, size, handle);
+    }
+
+    void buffer_deregister(void* handle) {
+        comm_impl->buffer_deregister(handle);
+    }
+
+    std::vector<void*> get_registered_ptrs(const void* ptr, size_t size) {
+        return comm_impl->get_registered_ptrs(ptr, size);
+    }
+
+    LLPatternData get_pattern_data_gpu() {
+        return comm_impl->get_pattern_data_gpu();
+    }
+
+    LLPatternData get_pattern_data_auto(sycl::queue& q) {
+        return comm_impl->get_pattern_data_auto(q);
+    }
+
 #endif // CCL_ENABLE_SYCL
 
     // collectives operation declarations
@@ -942,6 +1353,7 @@ public:
     COMM_IMPL_DECLARATION;
     COMM_IMPL_CLASS_DECLARATION
     int global_current_id = invalid_id;
+    int unique_comm_id = invalid_id;
 
 private:
     // this is an internal part of the communicator
@@ -959,11 +1371,12 @@ private:
     // TODO: double check if these can be moved to comm_impl as shared fields
     std::shared_ptr<ccl_comm> r2r_comm;
     std::shared_ptr<ccl_comm> node_comm;
+    std::shared_ptr<ccl_comm> numa_comm;
+    std::shared_ptr<ccl_comm> numa_r2r_comm;
     std::shared_ptr<ccl_comm> even_comm;
     std::shared_ptr<ccl_comm> pair_comm;
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-    std::shared_ptr<ze_handle_exchange_entry> handle_exchange_entry;
-    std::shared_ptr<ccl_sched> handle_exchange_sched;
+    std::shared_ptr<void> handle_exchange_data;
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     // these fields are duplicate with the ones in ccl_internal_comm
@@ -979,7 +1392,6 @@ private:
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     std::shared_ptr<ccl::ze::fd_manager> fd_manager;
     void init_ipc_exchange_mode(std::shared_ptr<ccl_comm> comm);
-    uint16_t pattern_counter[ARC_MAX_NUM + 1];
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     ccl_sched_id_t next_sched_id_internal{};

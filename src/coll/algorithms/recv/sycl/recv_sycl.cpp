@@ -19,8 +19,19 @@
 #include "coll/algorithms/recv/sycl/recv_sycl.hpp"
 #include "sched/entry/ze/ze_pt2pt_barrier_entry.hpp"
 
+#include <queue>
+
 namespace ccl {
 namespace v1 {
+
+// FIFO storage for self-send/recv requests
+struct self_request {
+    void* buf;
+    sycl::event ready_event;
+};
+// external storage for self-send/recv buffers (defined in send_sycl.cpp)
+extern std::queue<self_request> q_self_send;
+std::queue<self_request> q_self_recv;
 
 static ccl::event recv_sycl_single_node(sycl::queue& q,
                                         void* recv_buf,
@@ -43,27 +54,61 @@ static ccl::event recv_sycl_single_node(sycl::queue& q,
     uint64_t tag_ready = tagc->create(node_curr_rank, comm_id, sync_ready);
     uint64_t tag_done = tagc->create(node_curr_rank, comm_id, sync_done);
 
-    LOG_DEBUG("recv_sycl_single_node: recv_buf=",
-              recv_buf,
-              ", count=",
-              count,
-              ", peer_rank=",
-              node_peer_rank);
-    if (count == 0 || comm->size() == 1) {
-        LOG_DEBUG("recv_sycl_single_node: count is 0 or comm size is 1, skipping recv");
-        done = true;
+    // Corner case #1: early return for zero count
+    if (count == 0) {
+        LOG_DEBUG("recv_sycl_single_node: count is 0, skipping recv");
         auto sycl_deps = get_sycl_events(deps);
         sycl::event barrier = submit_wait_on_events(sycl_queue, sycl_deps);
-
+        // notify the sender in case it's waiting for this recv to proceed
         sycl::event ack_event = post_host_task_ack(sycl_queue,
                                                    std::vector<sycl::event>{ barrier },
                                                    comm,
                                                    /*do_send_ack*/ true,
                                                    node_peer_rank,
                                                    tag_done);
-
         done = true;
         return ccl::event::create_from_native(ack_event);
+    }
+
+    //  Corner case #2: self-communication, retrieve send buffer from cache and do memcpy
+    if (peer_rank == comm->rank()) {
+        LOG_DEBUG("recv_sycl_single_node: self-recv detected, performing local memcpy");
+        auto sycl_deps = get_sycl_events(deps);
+
+        if (q_self_send.empty()) {
+            sycl::event ready_event = submit_wait_on_events(sycl_queue, sycl_deps);
+            // Store recv request in static cache in FIFO order
+            // assuming one send per recv for self-communication
+            q_self_recv.push({ recv_buf, ready_event });
+            done = true;
+            return ccl::event::create_from_native(ready_event);
+        }
+        // get the cached send buffer info in FIFO order
+        // assuming one send per recv for self-communication
+        self_request send_info = q_self_send.front();
+        q_self_send.pop();
+
+        // Perform the actual memcpy from send to recv buffer
+        sycl_deps.push_back(send_info.ready_event);
+        int bytes = ccl::get_datatype_size(dtype) * count;
+        sycl::event copy_event = sycl_queue.memcpy(recv_buf, send_info.buf, bytes, sycl_deps);
+        LOG_DEBUG("recv_sycl_single_node: self-recv memcpy completed, bytes=", bytes);
+
+        done = true;
+        return ccl::event::create_from_native(copy_event);
+    }
+
+    LOG_DEBUG("recv_sycl_single_node: recv_buf=",
+              recv_buf,
+              ", count=",
+              count,
+              ", peer_rank=",
+              node_peer_rank);
+
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+        !group_impl::is_group_active) {
+        ccl::event e = recv_ll(recv_buf, count, dtype, peer_rank, comm, global_stream, deps, done);
+        return e;
     }
 
     const std::vector<ze_handle_exchange_entry::mem_desc_t> buffer = {
@@ -89,8 +134,9 @@ static ccl::event recv_sycl_single_node(sycl::queue& q,
         exchange_entry->update();
     }
 
-    comm->set_handle_exchange_data(std::shared_ptr<ze_handle_exchange_entry>(exchange_entry),
-                                   std::shared_ptr<ccl_sched>(sched));
+    comm->set_handle_exchange_data(std::make_shared<HandleExchangeData>(
+        std::shared_ptr<ze_handle_exchange_entry>(exchange_entry),
+        std::shared_ptr<ccl_sched>(sched)));
 
     ccl::event ret_evt;
     auto sycl_deps = get_sycl_events(deps);
@@ -171,6 +217,7 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
     auto& g = *ccl::global_data::get().shared_data;
     sycl::queue queue = global_stream->get_native_stream();
 
+    const int global_id = comm->global_current_id;
     const int dst = node_comm->rank();
     const int src = peer_rank;
     LOG_DEBUG(
@@ -178,8 +225,8 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
 
     // Check if group API is active
     if (group_impl::is_group_active) {
-        LOG_DEBUG("recv_mt_sycl: using group API path");
-        auto& entry = g.group_buffers[comm->global_current_id][src][dst];
+        LOG_DEBUG("recv_mt_sycl: using group API path src=", src, " dst=", dst);
+        auto& entry = g.group_buffers[global_id][src][dst];
 
         // Phase-1: discovery - register buffer immediately
         if (entry.group_discovery_phase) {
@@ -187,10 +234,10 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
             entry.group_discovery_phase = false;
 
             auto sycl_deps = get_sycl_events(deps);
-            sycl::event e = submit_wait_on_events(queue, sycl_deps);
-            e.wait();
+            entry.recv_ready = submit_wait_on_events(queue, sycl_deps);
 
-            LOG_DEBUG("recv_mt_sycl: discovery register, ptr=", recv_buf);
+            LOG_DEBUG(
+                "recv_mt_sycl: discovery register, ptr=", recv_buf, " src=", src, " dst=", dst);
             entry.buffer_ptr = recv_buf;
             entry.reg_done++; // notify sender that the buffer is registered
 
@@ -201,27 +248,30 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
         // switch discovery flag on for next phase 1
         entry.group_discovery_phase = true;
 
-        // Phase-2: wait for the сopy to be done
-        LOG_DEBUG("recv_mt_sycl: waiting for the copy to be done");
-        while (entry.copy_done.load() < entry.copy_counter)
+        // Phase-2: wait for the copy submission from the sender and then use the event
+        while (entry.copy_submitted.load() < entry.copy_counter)
             ;
-        // also increment local counter for this pair to avoid changing the global one
         entry.copy_counter++;
 
+        auto sycl_deps = get_sycl_events(deps);
+        sycl_deps.emplace_back(entry.copy_event);
+        auto e = submit_wait_on_events(queue, sycl_deps);
+
         done = true;
-        return ccl::event();
+        return ccl::event::create_from_native(e);
     }
 
     // get the operation ID from the shared handshake
     int op_id = g.get_shared_op_id(comm->global_current_id, false);
 
     // publish our pointer in pt2pt_hash_table
-    g.do_ipc_exchangeExt(comm,
-                         g.pt2pt_hash_table,
-                         global_stream,
-                         { recv_buf },
-                         comm->global_current_id,
-                         true /* is_pt2pt */
+    do_ipc_exchangeExt(comm,
+                       g.barrier_waits,
+                       g.pt2pt_hash_table,
+                       global_stream,
+                       { recv_buf },
+                       comm->global_current_id,
+                       true /* is_pt2pt */
     );
 
     // produce a device event that signals "my dependencies are done, my buffer is ready"

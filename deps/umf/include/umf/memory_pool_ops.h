@@ -22,7 +22,7 @@ extern "C" {
 /// @brief Version of the Memory Pool ops structure.
 /// NOTE: This is equal to the latest UMF version, in which the ops structure
 /// has been modified.
-#define UMF_POOL_OPS_VERSION_CURRENT UMF_MAKE_VERSION(1, 0)
+#define UMF_POOL_OPS_VERSION_CURRENT UMF_MAKE_VERSION(1, 1)
 
 ///
 /// @brief This structure comprises function pointers used by corresponding umfPool*
@@ -138,12 +138,17 @@ typedef struct umf_memory_pool_ops_t {
     ///
     /// * Implementations *must* return default pool name when NULL is provided,
     ///   otherwise the pool's name is returned.
-    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
     ///
+    /// * The returned name should not exceed 64 characters including null character and may contain
+    ///   only [a-zA-Z0-9_-] characters. Names violating these rules are deprecated
+    ///   and will not be supported in the next major API release.
+    ///   CTL functionality may be limited if other characters are returned.
+    ///
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
     umf_result_t (*get_name)(void *pool, const char **name);
 
     ///
-    /// The following function is optional and memory pool implementation
+    /// The following functions are optional and memory pool implementation
     /// can keep it NULL.
     ///
 
@@ -161,10 +166,34 @@ typedef struct umf_memory_pool_ops_t {
     /// @param args variable arguments for the operation.
     ///
     /// @return umf_result_t result of the control operation.
+    ///         Implementations must return
+    ///         UMF_RESULT_ERROR_INVALID_CTL_PATH if the given path is not
+    ///         supported.
     ///
-    umf_result_t (*ext_ctl)(void *hPool, umf_ctl_query_source_t source,
+    umf_result_t (*ext_ctl)(void *pool, umf_ctl_query_source_t source,
                             const char *name, void *arg, size_t size,
                             umf_ctl_query_type_t queryType, va_list args);
+
+    // The following operations were added in ops version 1.1
+
+    ///
+    /// @brief Trims memory of the pool, removing resources that are not needed
+    ///        to keep the pool operational.
+    /// \details
+    ///        The minBytesToKeep parameter is a hint to the pool implementation
+    ///        that it should try to keep at least this number of bytes of
+    ///        memory in the pool. The pool implementation may also ignore this
+    ///        parameter and try to trim the whole memory, in which case it
+    ///        should return UMF_RESULT_SUCCESS. The pool implementation may
+    ///        also return UMF_RESULT_ERROR_NOT_SUPPORTED if it does not support
+    ///        trimming memory.
+    /// @param pool pointer to the memory pool
+    /// @param minBytesToKeep minimum number of bytes to keep in the pool (if
+    ///        possible - see details)
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on
+    ///         failure.
+    ///
+    umf_result_t (*ext_trim_memory)(void *pool, size_t minBytesToKeep);
 
 } umf_memory_pool_ops_t;
 

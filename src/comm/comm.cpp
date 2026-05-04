@@ -20,11 +20,13 @@
 #include "coll/attr/ccl_common_op_attrs.hpp"
 #include "coll/group/group.hpp"
 #include "comm/comm.hpp"
+#include "comm/comm_id_allocator.hpp"
 #include "comm/comm_impl.hpp"
 #include "common/global/global.hpp"
 #include "common/event/impls/host_event.hpp"
 #include "common/request/request.hpp"
 #include "sched/sched.hpp"
+#include "common/utils/exchange_utils.hpp"
 #include "oneapi/ccl/types.hpp"
 #include "oneapi/ccl/kvs.hpp"
 #include "oneapi/ccl/comm_split_attr_ids.hpp"
@@ -50,6 +52,58 @@ struct impl_dispatch {
 }; // namespace v1
 }; // namespace ccl
 
+// Kernel name template for comm_barrier
+class oneccl_invoke_barrier {};
+
+void comm_barrier(const std::shared_ptr<ccl_comm> comm) {
+    // based on atl invocation from allreduce_scaleout_sycl
+    // call ccl::wrapper for MPI/OFI.
+    int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+    atl_req_t req;
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    ATL_CALL_THROW_IF_ERROR(atl_comm->barrier(ep_idx, req));
+
+    ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, req));
+    if (!req.is_completed) {
+        // We do not want to call check() in a loop (because we would call MPI_Test repeatedly). Call MPI_Wait() instead.
+        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, req));
+    }
+    else {
+        // The operation was probably blocking, since it finished really quickly
+    }
+}
+
+#ifdef CCL_ENABLE_SYCL
+// invoke the global communication barrier kernel
+sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
+                           sycl::queue q,
+                           const std::vector<sycl::event>& dep_events,
+                           bool use_cpu) {
+    bool gpu_increment = use_recording_path(q);
+    sycl::event e;
+    if (use_cpu) {
+        e = q.submit([=](sycl::handler& h) {
+            h.depends_on(dep_events);
+            h.host_task([comm]() {
+                comm_barrier(comm);
+            });
+        });
+    }
+    else {
+        ccl_comm_barrier_data barrier_data =
+            gpu_increment ? comm->barrier_data() : comm->barrier_inc();
+        e = q.submit([=](sycl::handler& h) {
+            h.depends_on(dep_events);
+            h.parallel_for<oneccl_invoke_barrier>(
+                sycl::nd_range<1>(MAX_NODE_RANKS, MAX_NODE_RANKS),
+                [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                    comm_barrier(barrier_data, it, true, gpu_increment);
+                });
+        });
+    }
+    return e;
+}
+#endif
 // ccl_comm_env
 
 ccl_comm_env::ccl_comm_env(std::shared_ptr<ccl::device> device) : device(device) {
@@ -105,7 +159,8 @@ ccl_internal_comm::ccl_internal_comm(int comm_id,
         : m_dtree(size, rank)
 #ifdef CCL_ENABLE_SYCL
           ,
-          m_barrier_data(rank, size)
+          m_barrier_data(rank, size),
+          m_flag_data(rank, size)
 #endif // CCL_ENABLE_SYCL
 {
     atl_comm = atl_comm_manager::create_with_id(comm, comm_id);
@@ -135,6 +190,7 @@ void ccl_comm::init(int comm_id,
 
     comm_rank = atl_comm->get_rank();
     comm_size = atl_comm->get_size();
+    unique_comm_id = comm_id;
 
     next_sched_id_internal = atl_comm->tag_creator->get_max_sched_count() / 2;
     next_sched_id_external = 0;
@@ -161,9 +217,8 @@ void ccl_comm::init(int comm_id,
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
         // init of fd manager is based on node comm,
         // it initializes for every creation of comm in multi comms case
-        if (node_comm) {
-            init_ipc_exchange_mode(node_comm);
-        }
+        CCL_ASSERT(node_comm, "no node_comm");
+        init_ipc_exchange_mode(node_comm);
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     }
     else {
@@ -177,9 +232,6 @@ void ccl_comm::init(int comm_id,
     }
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-    for (int i = 0; i < ARC_MAX_NUM + 1; i++)
-        pattern_counter[i] = 0xa770;
-
     if (ccl::global_data::env().enable_sycl_kernels && device_ptr != NULL) {
         sycl::queue q(device_ptr->get_native());
         if (q.get_context().get_backend() == sycl::backend::ext_oneapi_level_zero) {
@@ -251,6 +303,8 @@ ccl_comm::ccl_comm(const ccl_comm& src, int comm_id)
         : ccl_comm(comm_id, src.get_atl_comm(), true, true) {
     r2r_comm = src.r2r_comm;
     node_comm = src.node_comm;
+    numa_comm = src.numa_comm;
+    numa_r2r_comm = src.numa_r2r_comm;
     even_comm = src.even_comm;
     pair_comm = src.pair_comm;
 }
@@ -291,6 +345,55 @@ ccl_comm* ccl_comm::create(int size,
                            ccl::ccl_comm_attr_impl& attr) {
     return new ccl_comm(size, get_kvs_wrapper(kvs), attr);
 }
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+// Helper function to get NUMA node for local GPU
+// Returns NUMA node ID, or -1 if cannot be determined
+int ccl_comm::get_numa_node_for_gpu(std::shared_ptr<ccl_comm> node_comm,
+                                    std::shared_ptr<ccl::device> device_ptr,
+                                    std::shared_ptr<ccl::context> context_ptr) {
+    if (!(device_ptr && context_ptr)) {
+        return -1;
+    }
+
+    int my_numa_node = -1;
+
+    auto& sycl_device = device_ptr->get_native();
+    if (sycl_device.get_backend() == ccl::utils::get_level_zero_backend()) {
+        ze_device_handle_t ze_device =
+            sycl::get_native<ccl::utils::get_level_zero_backend()>(sycl_device);
+
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+        auto& devices = ccl::global_data::get().ze_data->devices;
+        for (const auto& dev_info : devices) {
+            if (dev_info.device == ze_device) {
+                if (ccl::global_data::get().hwloc_wrapper->is_initialized()) {
+                    my_numa_node = ccl::global_data::get().hwloc_wrapper->get_numa_node_by_pci(
+                        dev_info.pci.domain,
+                        dev_info.pci.bus,
+                        dev_info.pci.device,
+                        dev_info.pci.function);
+
+                    LOG_DEBUG("GPU NUMA node: ",
+                              my_numa_node,
+                              " (PCI ",
+                              (int)dev_info.pci.domain,
+                              ":",
+                              (int)dev_info.pci.bus,
+                              ":",
+                              (int)dev_info.pci.device,
+                              ".",
+                              (int)dev_info.pci.function,
+                              ")");
+                }
+                break;
+            }
+        }
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
+    }
+
+    return my_numa_node;
+}
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
 void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
     r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(atl_comm->get_r2r_color()));
@@ -298,6 +401,105 @@ void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
     ccl_comm* node_comm_ptr = create_subcomm(topo_manager.get_host_idx());
     CCL_THROW_IF_NOT(node_comm_ptr, "Failed to create node communicator");
     node_comm = std::shared_ptr<ccl_comm>(node_comm_ptr);
+
+    // Detect NUMA node for local GPU
+    int my_numa_node = -1;
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    my_numa_node = get_numa_node_for_gpu(node_comm, device_ptr, context_ptr);
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
+
+    // Create numa_comm using host_idx * 1000 + numa_node as color
+    // This mapping is used, because numa_color has to be independent
+    // of number of ranks on a single machine. The numa_comm might be
+    // a result of comm split with any number of GPUs assigned to any
+    // numa, so we have to support configs where there's for example
+    // one GPU on numa 0, and three GPUs on numa 1 etc.
+    if (my_numa_node >= 0) {
+        int numa_color = topo_manager.get_host_idx() * 1000 + my_numa_node;
+        LOG_INFO("numa comm color: ",
+                 numa_color,
+                 " (host_idx=",
+                 topo_manager.get_host_idx(),
+                 ", numa_node=",
+                 my_numa_node,
+                 ")");
+        numa_comm = std::shared_ptr<ccl_comm>(create_subcomm(numa_color));
+        LOG_INFO("numa comm size: ", numa_comm->size());
+    }
+    else {
+        // NUMA detection not available: numa_comm == node_comm
+        numa_comm = std::shared_ptr<ccl_comm>(create_subcomm(topo_manager.get_host_idx()));
+        LOG_INFO("NUMA detection unavailable, numa_comm same as node_comm, size: ",
+                 numa_comm->size());
+    }
+
+    // Create numa_r2r_comm: connects ranks at the same position within their
+    // NUMA node across all NUMA nodes and all hosts. E.g. position-0 ranks
+    // from every (host, numa) group land in one communicator:
+    //   {rank0/NUMA0/nodeA, rank0/NUMA1/nodeA, rank0/NUMA0/nodeB, ...}
+    //
+    // We allgather (host_idx, numa_node) from every rank, compute each
+    // rank's position inside its (host, numa) group, and use position as
+    // the r2r color.
+    //
+    // This mapping was added to support more complex rank placement, in
+    // which the numa_comms are NOT symmetrical and number of GPUs on
+    // each numa might be different on one machine and might be different
+    // when from other different machines. For example, previously the code
+    // was not working when host A would only have GPUs on numa 0 and host B
+    // would have gpus on numa0 AND numa 1.
+    if (my_numa_node >= 0) {
+        struct numa_rank_info {
+            int host_idx;
+            int numa_node;
+        };
+
+        int world_size = atl_comm->get_size();
+        int my_global_rank = atl_comm->get_rank();
+
+        numa_rank_info my_info{ topo_manager.get_host_idx(), my_numa_node };
+        std::vector<numa_rank_info> all_info(world_size);
+
+        bool ok =
+            ccl::utils::allgather(atl_comm, &my_info, all_info.data(), sizeof(numa_rank_info));
+        CCL_THROW_IF_NOT(ok, "Failed to allgather NUMA rank info for numa_r2r_comm");
+
+        // For each (host, numa) group, collect global ranks in order
+        std::map<std::pair<int, int>, std::vector<int>> group_ranks;
+        for (int r = 0; r < world_size; r++) {
+            auto key = std::make_pair(all_info[r].host_idx, all_info[r].numa_node);
+            group_ranks[key].push_back(r);
+        }
+
+        // Find my position within my (host, numa) group
+        auto my_key = std::make_pair(topo_manager.get_host_idx(), my_numa_node);
+        const auto& my_group = group_ranks[my_key];
+        int my_position = -1;
+        for (int i = 0; i < static_cast<int>(my_group.size()); i++) {
+            if (my_group[i] == my_global_rank) {
+                my_position = i;
+                break;
+            }
+        }
+        CCL_THROW_IF_NOT(my_position >= 0, "rank not found in its own NUMA group");
+
+        int numa_r2r_color = my_position;
+        LOG_INFO("numa r2r comm color: ",
+                 numa_r2r_color,
+                 " (numa_node=",
+                 my_numa_node,
+                 ", position=",
+                 my_position,
+                 ")");
+        numa_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(numa_r2r_color));
+        LOG_INFO("numa r2r comm size: ", numa_r2r_comm->size());
+    }
+    else {
+        numa_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(atl_comm->get_r2r_color()));
+        LOG_INFO("NUMA detection unavailable, numa_r2r_comm uses r2r_color, size: ",
+                 numa_r2r_comm->size());
+    }
 
     even_comm = std::shared_ptr<ccl_comm>(
         create_subcomm(topo_manager.get_inter_card_color(atl_comm->get_rank())));
@@ -318,12 +520,44 @@ ccl_comm* ccl_comm::create_subcomm(int color, int key) const {
 ccl_comm* ccl_comm::create_subcomm_split_independent(int color, int key) {
     std::shared_ptr<atl_base_comm> new_atl_comm = get_atl_comm()->comm_split(color, key);
 
+    // Compute unique comm_id using split signature
+    // The signature is based on parent comm_id, color, and the membership (global ranks)
+    // Note: 'key' is NOT included because it only affects rank ordering, not membership
+    // This ensures all ranks in the same sub-communicator get the same comm_id,
+    // and different sub-communicators get different comm_ids.
+    int parent_comm_id = get_atl_comm()->get_comm_id();
+    std::vector<int> global_ranks = new_atl_comm->get_rank2rank_map();
+
+    // Sort the ranks to ensure deterministic signature computation across all processes
+    std::vector<int> sorted_ranks = global_ranks;
+    std::sort(sorted_ranks.begin(), sorted_ranks.end());
+
+    // Compute the split signature (without key - it only affects ordering, not membership)
+    uint64_t signature =
+        ccl::comm_id_allocator::compute_split_signature(parent_comm_id, color, sorted_ranks);
+
+    // Collect base used comm_ids (parent and global if different)
+    std::set<int> base_used = ccl::comm_id_allocator::collect_base_used_comm_ids(parent_comm_id);
+
+    // Get or allocate unique comm_id from the registry
+    int unique_comm_id =
+        ccl::split_comm_id_registry::instance().get_or_allocate(signature, base_used);
+
+    LOG_DEBUG("parent_comm_id=",
+              parent_comm_id,
+              ", color=",
+              color,
+              ", key=",
+              key,
+              ", signature=",
+              signature,
+              ", unique_comm_id=",
+              unique_comm_id);
+
     // Create communicator with is_sub_communicator=true initially so that init()
     // doesn't try to initialize topo_manager with nullptr device_ptr
-    ccl_comm* comm = new ccl_comm(new_atl_comm->get_comm_id(),
-                                  new_atl_comm,
-                                  true /*share_resources*/,
-                                  true /*is_sub_communicator*/);
+    ccl_comm* comm = new ccl_comm(
+        unique_comm_id, new_atl_comm, true /*share_resources*/, true /*is_sub_communicator*/);
 
     // Copy device and context pointers from parent
     comm->device_ptr = this->device_ptr;
@@ -341,11 +575,6 @@ ccl_comm* ccl_comm::create_subcomm_split_independent(int color, int key) {
     // Initialize IPC exchange mode based on new node_comm
     if (comm->node_comm) {
         comm->init_ipc_exchange_mode(comm->node_comm);
-    }
-
-    // Initialize pattern_counter for SYCL kernels
-    for (int i = 0; i < ARC_MAX_NUM + 1; i++) {
-        comm->pattern_counter[i] = 0xa770;
     }
 
     // Initialize SYCL kernel buffers and do IPC exchange for the split communicator
@@ -451,6 +680,10 @@ void ccl_comm::init_ipc_exchange_mode(std::shared_ptr<ccl_comm> comm) {
             LOG_DEBUG("drmfd exchange mode is verified successfully");
         }
 #endif // CCL_ENABLE_DRM
+        else if (ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::none) {
+            ccl::global_data::env().ze_ipc_exchange = ccl::ze::ipc_exchange_mode::none;
+            LOG_DEBUG("auto ipc mode is selected");
+        }
         else {
             ccl::global_data::env().ze_ipc_exchange = ccl::ze::ipc_exchange_mode::sockets;
             LOG_DEBUG("sockets mode is selected");
@@ -471,6 +704,8 @@ std::string ccl_comm::to_string_ext() const {
     ss << "   " << to_string() << "\n";
     ss << "   r2r_comm: " << (r2r_comm ? r2r_comm->to_string() : "{}") << "\n";
     ss << "   node_comm: " << (node_comm ? node_comm->to_string() : "{}") << "\n";
+    ss << "   numa_comm: " << (numa_comm ? numa_comm->to_string() : "{}") << "\n";
+    ss << "   numa_r2r_comm: " << (numa_r2r_comm ? numa_r2r_comm->to_string() : "{}") << "\n";
     ss << "   even_comm: " << (even_comm ? even_comm->to_string() : "{}") << "\n";
     ss << "   pair_comm: " << (pair_comm ? pair_comm->to_string() : "{}") << "\n";
     ss << "   env: " << (env ? env->to_string() : "{}") << "\n";

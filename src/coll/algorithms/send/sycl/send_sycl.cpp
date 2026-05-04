@@ -20,8 +20,18 @@
 #include "coll/algorithms/send/sycl/send_sycl.hpp"
 #include "sched/entry/ze/ze_pt2pt_barrier_entry.hpp"
 
+#include <queue>
+
 namespace ccl {
 namespace v1 {
+
+// FIFO storage for self-send/recv requests
+struct self_request {
+    void* buf;
+    sycl::event ready_event;
+};
+std::queue<self_request> q_self_send;
+extern std::queue<self_request> q_self_recv;
 
 static ccl::event send_sycl_single_node(sycl::queue& q,
                                         const void* send_buf,
@@ -35,15 +45,7 @@ static ccl::event send_sycl_single_node(sycl::queue& q,
                                         bool& done) {
     ccl_comm* node_comm = comm->get_node_comm().get();
     auto node_peer_rank = node_comm->get_rank_from_global(peer_rank);
-    auto node_curr_rank = node_comm->rank();
     auto sycl_queue = global_stream->get_native_stream();
-
-    LOG_DEBUG("send_sycl_single_node: send_buf=",
-              send_buf,
-              ", count=",
-              send_count,
-              ", peer_rank=",
-              node_peer_rank);
 
     auto* tagc = node_comm->get_atl_comm()->tag_creator.get();
     auto comm_id = comm->get_atl_comm()->get_comm_id();
@@ -51,11 +53,12 @@ static ccl::event send_sycl_single_node(sycl::queue& q,
     uint64_t tag_ready = tagc->create(node_peer_rank, comm_id, sync_ready);
     uint64_t tag_done = tagc->create(node_peer_rank, comm_id, sync_done);
 
-    if (send_count == 0 || comm->size() == 1) {
-        LOG_DEBUG("send_sycl_single_node: count is 0 or comm size is 1, skipping send");
+    // Corner case #1: early return for zero count
+    if (send_count == 0) {
+        LOG_DEBUG("send_sycl_single_node: count is 0, skipping send");
         auto sycl_deps = get_sycl_events(deps);
         sycl::event barrier = submit_wait_on_events(sycl_queue, sycl_deps);
-
+        // notify the receiver in case it's waiting for this send to proceed
         sycl::event ack_event = post_host_task_ack(sycl_queue,
                                                    std::vector<sycl::event>{ barrier },
                                                    comm,
@@ -64,6 +67,50 @@ static ccl::event send_sycl_single_node(sycl::queue& q,
                                                    tag_done);
         done = true;
         return ccl::event::create_from_native(ack_event);
+    }
+
+    // Corner case #2: self-communication, cache send buffer for recv to pick up
+    if (peer_rank == comm->rank()) {
+        LOG_DEBUG("send_sycl_single_node: self-send detected, caching buffer for recv");
+        auto sycl_deps = get_sycl_events(deps);
+        // check if the recv is already posted
+        if (!q_self_recv.empty()) {
+            // if recv is already posted and waiting for the send buffer,
+            // get the recv info and perform memcpy immediately
+            self_request recv_info = q_self_recv.front();
+            q_self_recv.pop();
+
+            int bytes = ccl::get_datatype_size(dtype) * send_count;
+            // not sure if this dependency is needed since recv should already be waiting for the send buffer
+            // sycl_deps.push_back(recv_info.ready_event);
+            sycl::event copy_event = sycl_queue.memcpy(recv_info.buf, send_buf, bytes, sycl_deps);
+            LOG_DEBUG("send_sycl_single_node: self-send memcpy completed, bytes=", bytes);
+
+            done = true;
+            return ccl::event::create_from_native(copy_event);
+        }
+        // Store send request in static cache in FIFO order
+        // assuming one send per recv for self-communication
+        sycl::event ready_event = submit_wait_on_events(sycl_queue, sycl_deps);
+        q_self_send.push({ const_cast<void*>(send_buf), ready_event });
+
+        done = true;
+        return ccl::event::create_from_native(ready_event);
+    }
+
+    LOG_DEBUG("send_sycl_single_node: send_buf=",
+              send_buf,
+              ", count=",
+              send_count,
+              ", peer_rank=",
+              node_peer_rank);
+
+    // for ARC GPUs to do ring LL256
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+        !group_impl::is_group_active) {
+        ccl::event e =
+            send_ll(send_buf, send_count, dtype, peer_rank, comm, global_stream, deps, done);
+        return e;
     }
 
     std::vector<ze_handle_exchange_entry::mem_desc_t> buffer{ { const_cast<void*>(send_buf),
@@ -88,8 +135,19 @@ static ccl::event send_sycl_single_node(sycl::queue& q,
         exchange_entry->update();
     }
 
-    comm->set_handle_exchange_data(std::shared_ptr<ze_handle_exchange_entry>(exchange_entry),
-                                   std::shared_ptr<ccl_sched>(sched));
+    class HandleExchangeData {
+    public:
+        HandleExchangeData(std::shared_ptr<ze_handle_exchange_entry> exchange_entry,
+                           std::shared_ptr<ccl_sched> sched)
+                : exchange_entry(exchange_entry),
+                  sched(sched) {}
+
+        std::shared_ptr<ze_handle_exchange_entry> exchange_entry;
+        std::shared_ptr<ccl_sched> sched;
+    };
+    comm->set_handle_exchange_data(std::make_shared<HandleExchangeData>(
+        std::shared_ptr<ze_handle_exchange_entry>(exchange_entry),
+        std::shared_ptr<ccl_sched>(sched)));
 
     ccl::event ret_evt;
     auto sycl_deps = get_sycl_events(deps);
@@ -170,17 +228,17 @@ static ccl::event send_mt_sycl_single_node(sycl::queue& q,
     auto& g = *ccl::global_data::get().shared_data;
     sycl::queue queue = global_stream->get_native_stream();
 
+    const int global_id = comm->global_current_id;
     const int src = node_comm->rank();
     const int dst = peer_rank;
-    LOG_DEBUG(
-        "send_mt_sycl: src=", src, " dst=", dst, " global_current_id=", comm->global_current_id);
+    LOG_DEBUG("send_mt_sycl: src=", src, " dst=", dst, " global_current_id=", global_id);
 
     // Check if group API is active
     if (group_impl::is_group_active) {
-        LOG_DEBUG("send_mt_sycl: using group API path");
-        auto& entry = g.group_buffers[comm->global_current_id][src][dst];
+        LOG_DEBUG("send_mt_sycl: using group API path src=", src, " dst=", dst);
+        auto& entry = g.group_buffers[global_id][src][dst];
 
-        LOG_DEBUG("send_mt_sycl: waiting for receiver buffer");
+        LOG_DEBUG("send_mt_sycl: waiting for receiver buffer src=", src, " dst=", dst);
         while (entry.reg_done.load() < entry.reg_counter)
             ;
         // also increment local counter for this pair to avoid changing the global one
@@ -189,18 +247,20 @@ static ccl::event send_mt_sycl_single_node(sycl::queue& q,
         void* peer_recv_ptr = entry.buffer_ptr;
 
         auto sycl_deps = get_sycl_events(deps);
+        sycl_deps.emplace_back(entry.recv_ready);
 
         size_t bytes = ccl::get_datatype_size(dtype) * send_count;
-        LOG_DEBUG("send_mt_sycl: submit copy to the receiver buf, bytes=", bytes);
-        sycl::event copy = queue.memcpy(peer_recv_ptr, send_buf, bytes, sycl_deps);
-        copy.wait();
-
-        entry.copy_done++;
-        LOG_DEBUG("send_mt_sycl: notify receiver that the copy is finished, counter=",
-                  entry.copy_done.load());
+        LOG_DEBUG("send_mt_sycl: submit copy to the receiver buf, bytes=",
+                  bytes,
+                  " src=",
+                  src,
+                  " dst=",
+                  dst);
+        entry.copy_event = queue.memcpy(peer_recv_ptr, send_buf, bytes, sycl_deps);
+        entry.copy_submitted++;
 
         done = true;
-        return ccl::event::create_from_native(copy);
+        return ccl::event::create_from_native(entry.copy_event);
     }
 
     // get the operation ID from the shared handshake
@@ -217,12 +277,13 @@ static ccl::event send_mt_sycl_single_node(sycl::queue& q,
     }
 
     // publish local pointer if needed
-    g.do_ipc_exchangeExt(comm,
-                         g.pt2pt_hash_table,
-                         global_stream,
-                         { const_cast<void*>(send_buf) },
-                         comm->global_current_id,
-                         true /* is_pt2pt */
+    do_ipc_exchangeExt(comm,
+                       g.barrier_waits,
+                       g.pt2pt_hash_table,
+                       global_stream,
+                       { const_cast<void*>(send_buf) },
+                       comm->global_current_id,
+                       true /* is_pt2pt */
     );
 
     // Wait for the "receiver_ready_event" from the global map
@@ -230,12 +291,13 @@ static ccl::event send_mt_sycl_single_node(sycl::queue& q,
 
     // Now we safely get the receiver pointer
     using arr_t = std::array<char*, 1>;
-    arr_t remote_ptrs = g.get_ipc_ptrsExt<char, 1>(node_comm,
-                                                   g.pt2pt_hash_table,
-                                                   /*comm_index=*/0,
-                                                   /*handle_index=*/0,
-                                                   const_cast<void*>(send_buf),
-                                                   comm->global_current_id);
+    arr_t remote_ptrs = get_ipc_ptrsExt<char, 1>(g,
+                                                 node_comm,
+                                                 g.pt2pt_hash_table,
+                                                 /*comm_index=*/0,
+                                                 /*handle_index=*/0,
+                                                 const_cast<void*>(send_buf),
+                                                 comm->global_current_id);
 
     char* peer_recv_ptr = remote_ptrs[peer_rank];
 

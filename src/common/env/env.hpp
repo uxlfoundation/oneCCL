@@ -22,7 +22,6 @@
 #include <vector>
 
 #include "oneapi/ccl/types.hpp"
-#include "coll/coll.hpp"
 #include "common/framework/framework.hpp"
 #include "common/log/log.hpp"
 #include "common/utils/utils.hpp"
@@ -149,6 +148,7 @@ public:
     std::string mnic_name_raw;
     ssize_t mnic_count;
     atl_mnic_offset_t mnic_offset;
+    std::string ofi_domain_names;
 
     /*
        parsing logic can be quite complex
@@ -205,6 +205,13 @@ public:
     bool enable_op_sync;
     bool enable_hostname_sharing;
     bool enable_init_hostname_sharing;
+    std::string occp_server_hostname;
+    size_t occp_server_io_threads;
+    size_t occp_server_op_timeout;
+    size_t occp_server_ranks_per_thread;
+    size_t occp_client_io_threads;
+    size_t occp_client_op_timeout;
+    std::string occp_log_level;
 
     size_t chunk_count;
     size_t min_chunk_size;
@@ -237,6 +244,10 @@ public:
     std::string sycl_allreduce_scaleout_algo;
     bool sycl_enable_arc_allreduce;
     size_t sycl_allreduce_ll_threshold;
+    size_t sycl_allreduce_simple_threshold;
+    bool sycl_allreduce_simple_read;
+    size_t sycl_allreduce_chunking_threshold;
+    std::string sycl_allreduce_ll_algo;
 
     bool sycl_reduce_scatter_tmp_buf;
     size_t sycl_reduce_scatter_small_threshold;
@@ -244,6 +255,7 @@ public:
     size_t sycl_reduce_scatter_scaleout_threshold;
     std::string sycl_reduce_scatter_scaleout_algo;
     size_t sycl_reduce_scatter_ll_threshold;
+    size_t sycl_reduce_scatter_simple_threshold;
 
     bool sycl_allgatherv_tmp_buf;
     size_t sycl_allgatherv_small_threshold;
@@ -251,6 +263,8 @@ public:
     size_t sycl_allgatherv_scaleout_threshold;
     std::string sycl_allgatherv_scaleout_algo;
     size_t sycl_allgatherv_ll_threshold;
+    bool sycl_allgatherv_ll_enable;
+    size_t sycl_allgatherv_simple_threshold;
     bool sycl_allgatherv_scaleout_overlap;
     size_t sycl_allgatherv_scaleout_comm_size;
     size_t sycl_allgatherv_overlap_buf_size;
@@ -258,8 +272,14 @@ public:
     bool sycl_broadcast_tmp_buf;
     size_t sycl_broadcast_small_threshold;
     size_t sycl_broadcast_scaleout_threshold;
+    size_t sycl_allgatherv_chunking_threshold;
 
+    std::string sycl_alltoall_scaleout_algo;
     bool sycl_enable_arc_alltoall_ll;
+    bool sycl_alltoall_tmp_buf;
+    size_t sycl_alltoall_ll_threshold;
+    size_t sycl_alltoall_chunking_threshold;
+    bool sycl_alltoall_single_node_algorithm;
 
     bool enable_sycl_kernels;
 
@@ -270,7 +290,9 @@ public:
     bool sycl_force_use_tmp_buf_scaleout;
     bool sycl_copy_engine;
     bool sycl_kernel_copy;
+#ifdef CCL_ENABLE_ESIMD
     bool sycl_esimd;
+#endif // CCL_ENABLE_ESIMD
     bool sycl_full_vector;
     bool sycl_force_recording_path;
     bool sycl_kernel_memcpy_upsize;
@@ -280,14 +302,21 @@ public:
     size_t sycl_kernels_line_size;
     size_t sycl_max_pipeline_chunk_size;
     ssize_t sycl_pipeline_chunk_size;
+    size_t sycl_numa_nodes;
+    size_t sycl_numa_nodes_split;
+    bool sycl_split_numa;
     bool sycl_enable_pipeline_gpu_rdma;
     bool sycl_enable_direct_gpu_rdma;
     int sycl_pipeline_gpu_rdma;
     bool sycl_sub_communicator;
     bool sycl_force_pcie;
+    bool sycl_ll_buffer_global;
     ccl::utils::alloc_mode sycl_scaleout_buf_alloc_mode;
     bool sycl_pt2pt_read;
     bool sycl_pt2pt_enable;
+    bool sycl_simple_single_kernel;
+    size_t sycl_num_threads;
+    size_t sycl_work_group_size;
 #endif // CCL_ENABLE_SYCL
 
     bool allreduce_nreduce_buffering;
@@ -386,6 +415,7 @@ public:
     bool enable_ze_auto_tune_ports;
     ccl::ze::ipc_exchange_mode ze_ipc_exchange;
     bool ze_drm_bdf_support;
+    bool use_zesinit;
     bool ze_pt2pt_read;
     type2_tune_mode type2_mode;
     std::string drmfd_dev_render_dir_path;

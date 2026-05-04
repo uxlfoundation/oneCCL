@@ -29,20 +29,25 @@ namespace ze {
 
 struct device_info {
     ze_device_handle_t device;
+    zes_device_handle_t zes_device;
     uint32_t parent_idx;
     ze_device_uuid_t uuid;
     int physical_idx;
     uint32_t total_threads;
+    int numSlices;
+    int numSubslicesPerSlice;
+    device_family family;
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     ze_pci_address_ext_t pci;
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
 
-    device_info(ze_device_handle_t dev, uint32_t parent_idx);
+    device_info(ze_device_handle_t dev, zes_device_handle_t zes_dev, uint32_t parent_idx);
 };
 
 class global_data_desc {
 public:
     std::vector<ze_driver_handle_t> drivers;
+    std::vector<zes_driver_handle_t> zes_drivers;
     std::vector<ze_context_handle_t> contexts;
     std::vector<device_info> devices;
     std::unique_ptr<ze::cache> cache;

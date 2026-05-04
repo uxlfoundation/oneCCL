@@ -16,16 +16,16 @@
 #include "coll/algorithms/allgatherv/sycl/allgatherv_sycl.hpp"
 #include "coll/algorithms/allgatherv/sycl/allgatherv_large_sycl_impl.hpp"
 
-ccl::event allgatherv_large(sycl::queue& q,
-                            const void* send_buf,
+ccl::event allgatherv_large(sycl::queue &q,
+                            const void *send_buf,
                             size_t send_count,
-                            void* recv_buf,
-                            const ccl::vector_class<size_t>& recv_counts,
-                            const ccl::vector_class<size_t>& offsets,
+                            void *recv_buf,
+                            const ccl::vector_class<size_t> &recv_counts,
+                            const ccl::vector_class<size_t> &offsets,
                             ccl::datatype dtype,
-                            ccl_comm* comm,
-                            ccl_stream* global_stream,
-                            const ccl::vector_class<ccl::event>& deps,
+                            ccl_comm *comm,
+                            ccl_stream *global_stream,
+                            const ccl::vector_class<ccl::event> &deps,
                             sycl_coll_scaleup_attr coll_attr) {
     if (comm->is_multi_thread_instance() == true) {
         LOG_DEBUG("invoking MT allgatherv_large");
@@ -38,8 +38,11 @@ ccl::event allgatherv_large(sycl::queue& q,
     }
     sycl_ptrs_type sycl_ptrs;
 
+    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
     std::shared_ptr<ccl_comm> pair_comm = comm->get_pair_comm();
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
+
+    const size_t comm_size = node_comm->size();
 
     const size_t dsize = ccl::global_data::get().dtypes->get(dtype).size();
     // use full vector (>= 8 bytes) if buffers and data size are 4 byte aligned
@@ -48,6 +51,9 @@ ccl::event allgatherv_large(sycl::queue& q,
     // kernels with remote access is best performant at 64 bytes alignment (sycl_kernels_line_size/2) on PVC
     const size_t align_size = ccl::global_data::env().sycl_kernels_line_size / 2;
     const bool is_aligned = (send_count * dsize) % align_size == 0;
+
+    bool is_arc = is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()));
+
     // use tmp buf for types < 4 byte size with odd count or non 4 byte aligned data
     // use tmp buf when data count bytes is not 64 byte aligned
     // since tmp buf version performs better in that case
@@ -57,7 +63,7 @@ ccl::event allgatherv_large(sycl::queue& q,
     is_tmp_used |= (coll_attr.force_use_tmp && ccl::global_data::env().sycl_force_use_tmp_buf_scaleout);
 
     if (is_tmp_used) {
-        CCL_THROW_IF_NOT(!ccl::global_data::env().sycl_copy_engine,
+        CCL_THROW_IF_NOT(!ccl::global_data::env().sycl_copy_engine || is_arc,
                          "allgatherv using copy engines not supported with tmp buffer");
 
         // global rank of pair_comm neighbors should be adjacent for using tmp buffer
@@ -71,77 +77,131 @@ ccl::event allgatherv_large(sycl::queue& q,
         }
     }
 
-    // if tmp buffer is not used, perform ipc exchange on send and recv buffer
     if (!is_tmp_used) {
         // synchronize SYCL host tasks, which can contain MPI calls,
         // with an MPI call (allgather) in ipc exchange
         if (coll_attr.wait_on_deps) {
             std::vector<sycl::event> dep_events = get_sycl_events(deps);
-            for (auto& dep : dep_events) {
+            for (auto &dep : dep_events) {
                 dep.wait();
             }
         }
-        std::vector<void*> ptrs{ (void*)send_buf, recv_buf }; // index 0 and 1
-        auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
-
-        sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void*)send_buf, sched);
-        sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, recv_buf, sched);
-        // use full vector (>= 8 bytes) if remote buffers and data size are 4 byte aligned
-        use_full_vector = use_full_vector &&
-                          all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), send_count, dsize, 4) &&
-                          all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), send_count, dsize, 4);
-
-        if (pair_comm->size() > 1) {
-            assert(pair_comm->size() == MAX_TILES);
-            int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-            sycl_ptrs.mdfi_ptr_rd =
-                get_ipc_ptrs<void, MAX_TILES>(pair_comm, 0, (void*)send_buf, sched)[peer_pair_rank];
-            sycl_ptrs.mdfi_ptr_wr = get_ipc_ptrs<void, MAX_TILES>(pair_comm, 1, recv_buf, sched)[peer_pair_rank];
-            use_full_vector = use_full_vector && all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, send_count, dsize, 4) &&
-                              all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, send_count, dsize, 4);
-        }
-        delete exchange_entry;
-        delete sched;
-    }
-    else {
-        sycl_ptrs.xelink_ptrs_rd = get_remote_even_tmp_buf(0, comm);
-        if (pair_comm->size() > 1) {
-            assert(pair_comm->size() == MAX_TILES);
-            int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-            sycl_ptrs.mdfi_ptr_wr = get_remote_pair_tmp_buf(0, comm)[peer_pair_rank];
-        }
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
-        if (use_full_vector) {
-            return allgatherv_large_impl<T, NE, NP, true>(q,
-                                                          send_buf,
-                                                          send_count,
-                                                          recv_buf,
-                                                          recv_counts,
-                                                          offsets,
-                                                          dtype,
-                                                          comm,
-                                                          global_stream,
-                                                          sycl_ptrs,
-                                                          deps,
-                                                          is_tmp_used);
+    if (is_arc) {
+        if (!is_tmp_used) {
+            // only need output buffer
+            std::vector<void *> registered_recv_ptrs =
+                node_comm->get_registered_ptrs(recv_buf, send_count * comm_size * dsize);
+            if (registered_recv_ptrs.size()) {
+                LOG_DEBUG("allgatherv pointers are registered \n");
+                sycl_ptrs.node_ptrs_wr =
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(registered_recv_ptrs, comm, node_comm, (void *)recv_buf);
+            }
+            else {
+                std::vector<void *> ptrs{ recv_buf }; // index 0
+                auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+
+                sycl_ptrs.node_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, recv_buf, sched);
+
+                delete exchange_entry;
+                delete sched;
+            }
+        }
+    }
+    else { // PVC algorithms
+        // if tmp buffer is not used, perform ipc exchange on send and recv buffer
+        if (!is_tmp_used) {
+            ccl_sched *sched = NULL;
+            ze_handle_exchange_entry *exchange_entry = NULL;
+            std::vector<void *> registered_send_ptrs =
+                node_comm->get_registered_ptrs(send_buf, send_count * dsize);
+            std::vector<void *> registered_recv_ptrs =
+                node_comm->get_registered_ptrs(recv_buf, send_count * comm_size * dsize);
+            if (registered_recv_ptrs.size() && registered_send_ptrs.size()) {
+                LOG_DEBUG("allgather pointers are registered \n");
+                sycl_ptrs.xelink_ptrs_rd =
+                    get_ipc_ptrs<void, MAX_GPUS>(registered_send_ptrs, comm, even_comm, (void *)send_buf);
+                sycl_ptrs.xelink_ptrs_wr =
+                    get_ipc_ptrs<void, MAX_GPUS>(registered_recv_ptrs, comm, even_comm, (void *)recv_buf);
+            }
+            else {
+                std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
+                auto p = do_ipc_exchange(comm, global_stream, ptrs);
+                sched = p.first;
+                exchange_entry = p.second;
+
+                sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
+                sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, recv_buf, sched);
+            }
+            // use full vector (>= 8 bytes) if remote buffers and data size are 4 byte aligned
+            use_full_vector =
+                use_full_vector &&
+                all_aligned(sycl_ptrs.xelink_ptrs_rd.data(), even_comm->size(), send_count, dsize, 4) &&
+                all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), send_count, dsize, 4);
+
+            if (pair_comm->size() > 1) {
+                assert(pair_comm->size() == MAX_TILES);
+                int peer_pair_rank = pair_comm->rank() ? 0 : 1;
+                if (registered_recv_ptrs.size() && registered_send_ptrs.size()) {
+                    sycl_ptrs.mdfi_ptr_rd = get_ipc_ptrs<void, MAX_TILES>(
+                        registered_send_ptrs, comm, pair_comm, (void *)send_buf)[peer_pair_rank];
+                    sycl_ptrs.mdfi_ptr_wr = get_ipc_ptrs<void, MAX_TILES>(
+                        registered_recv_ptrs, comm, pair_comm, (void *)recv_buf)[peer_pair_rank];
+                }
+                else {
+                    sycl_ptrs.mdfi_ptr_rd =
+                        get_ipc_ptrs<void, MAX_TILES>(pair_comm, 0, (void *)send_buf, sched)[peer_pair_rank];
+                    sycl_ptrs.mdfi_ptr_wr =
+                        get_ipc_ptrs<void, MAX_TILES>(pair_comm, 1, recv_buf, sched)[peer_pair_rank];
+                }
+                use_full_vector = use_full_vector &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_rd, 1, send_count, dsize, 4) &&
+                                  all_aligned(&sycl_ptrs.mdfi_ptr_wr, 1, send_count, dsize, 4);
+            }
+            delete exchange_entry;
+            delete sched;
         }
         else {
-            return allgatherv_large_impl<T, NE, NP, false>(q,
-                                                           send_buf,
-                                                           send_count,
-                                                           recv_buf,
-                                                           recv_counts,
-                                                           offsets,
-                                                           dtype,
-                                                           comm,
-                                                           global_stream,
-                                                           sycl_ptrs,
-                                                           deps,
-                                                           is_tmp_used);
+            sycl_ptrs.xelink_ptrs_rd = get_remote_even_tmp_buf(0, comm);
+            if (pair_comm->size() > 1) {
+                assert(pair_comm->size() == MAX_TILES);
+                int peer_pair_rank = pair_comm->rank() ? 0 : 1;
+                sycl_ptrs.mdfi_ptr_wr = get_remote_pair_tmp_buf(0, comm)[peer_pair_rank];
+            }
+        }
+    } // if is_arc
+
+    auto lambda = [&]<typename T>() {
+        if (use_full_vector) {
+            return allgatherv_large_impl<T, true>(q,
+                                                  send_buf,
+                                                  send_count,
+                                                  recv_buf,
+                                                  recv_counts,
+                                                  offsets,
+                                                  dtype,
+                                                  comm,
+                                                  global_stream,
+                                                  sycl_ptrs,
+                                                  deps,
+                                                  is_tmp_used);
+        }
+        else {
+            return allgatherv_large_impl<T, false>(q,
+                                                   send_buf,
+                                                   send_count,
+                                                   recv_buf,
+                                                   recv_counts,
+                                                   offsets,
+                                                   dtype,
+                                                   comm,
+                                                   global_stream,
+                                                   sycl_ptrs,
+                                                   deps,
+                                                   is_tmp_used);
         }
     };
 
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

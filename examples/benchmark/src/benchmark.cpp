@@ -105,7 +105,8 @@ void run(ccl::communicator& service_comm,
                    << "#elem_count" << std::setw(COL_WIDTH) << "#repetitions"
                    << std::setw(COL_WIDTH) << "t_min[usec]" << std::setw(COL_WIDTH) << "t_max[usec]"
                    << std::setw(COL_WIDTH) << "t_avg[usec]" << std::setw(COL_WIDTH - 3)
-                   << "stddev[%]";
+                   << "stddev[%]" << std::setw(COL_WIDTH) << "algbw[GB/s]" << std::setw(COL_WIDTH)
+                   << "busbw[GB/s]";
 
                 if (show_extened_info(options.show_additional_info)) {
                     ss << std::right << std::setw(COL_WIDTH + 3) << "wait_t_avg[usec]";
@@ -435,7 +436,9 @@ int main(int argc, char* argv[]) {
              << "t_max[usec],"
              << "t_avg[usec],"
              << "stddev[%],"
-             << "wait_t_avg[usec]" << std::endl;
+             << "wait_t_avg[usec],"
+             << "algbw[GB/s],"
+             << "busbw[GB/s]" << std::endl;
         csvf.close();
     }
 

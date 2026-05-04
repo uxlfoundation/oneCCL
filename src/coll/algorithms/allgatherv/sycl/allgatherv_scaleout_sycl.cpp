@@ -136,7 +136,7 @@ ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
         case allgatherv_scaleout_algo::direct: {
 #ifdef CCL_ENABLE_ITT
             ccl::profile::itt::task_begin(
-                "allgatherv_scaleout_sycl_direct", "send_size", send_count * ccl_dtype.size());
+                "allgatherv_scaleout_sycl_direct", "send_size", send_count * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
             auto e = allgatherv_scaleout_sycl_direct(q,
                                                      send_buf,
@@ -159,7 +159,7 @@ ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
         case allgatherv_scaleout_algo::ring: {
 #ifdef CCL_ENABLE_ITT
             ccl::profile::itt::task_begin(
-                "allgatherv_scaleout_sycl_ring", "send_size", send_count * ccl_dtype.size());
+                "allgatherv_scaleout_sycl_ring", "send_size", send_count * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
             auto ev = allgatherv_scaleout_sycl_ring(q,
                                                     send_buf,

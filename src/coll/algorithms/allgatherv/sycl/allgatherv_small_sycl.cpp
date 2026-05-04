@@ -13,6 +13,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#ifdef CCL_ENABLE_ESIMD
 #include "coll/algorithms/allgatherv/sycl/allgatherv_small_sycl.hpp"
 
 sycl_allgatherv_small<sycl::half> agv_small_fp16;
@@ -65,6 +66,7 @@ ccl::event run_allgatherv_small(ccl::datatype dtype,
     }
     return e;
 }
+#endif // CCL_ENABLE_ESIMD
 
 #include "coll/algorithms/allgatherv/sycl/allgatherv_small_sycl_impl.hpp"
 
@@ -85,9 +87,9 @@ ccl::event allgatherv_small(sycl::queue& q,
         LOG_DEBUG("invoking allgatherv_small");
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
-        return allgatherv_small_impl<T, NE, NP>(
+    auto lambda = [&]<typename T>() {
+        return allgatherv_small_impl<T>(
             q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, deps);
     };
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

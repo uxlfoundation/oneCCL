@@ -46,7 +46,8 @@ ipc_handle_desc::ipc_handle_desc() {
 }
 
 ze_ipc_mem_handle_t ipc_handle_desc::mem_to_ipc_handle() const {
-    if (ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::sockets) {
+    if (ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::sockets ||
+        ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::none) {
         // for the sockets mode, we don't need to do mem_handle_to_fd
         // we return immediately the ipc handle which was already inited
         return ipc_handle;

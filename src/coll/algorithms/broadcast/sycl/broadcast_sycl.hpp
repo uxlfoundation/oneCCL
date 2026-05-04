@@ -73,3 +73,12 @@ ccl::event broadcast_scaleout_sycl(sycl::queue& q,
                                    bool original_deps,
                                    bool& done,
                                    bool is_cpu_buffers = false);
+
+ccl::event broadcast_rt_ring(const void* src,
+                             void* dst,
+                             size_t count,
+                             ccl::datatype dtype,
+                             int root,
+                             ccl_comm* comm,
+                             ccl_stream* global_stream,
+                             bool& done);

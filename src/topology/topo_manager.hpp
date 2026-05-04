@@ -16,6 +16,7 @@
 #pragma once
 
 #include "common/utils/utils.hpp"
+#include "coll/algorithms/utils/consts.hpp"
 #include "oneapi/ccl/config.h"
 
 #include <algorithm>
@@ -119,8 +120,8 @@ public:
 
     static constexpr int max_hostname_len = 256;
     static constexpr int max_ranks_per_host = 1000;
-    static constexpr int max_ranks_per_card = 2;
-    static constexpr int max_ranks_per_plane = 8;
+    static constexpr int max_ranks_per_card = MAX_RANKS_PER_CARD;
+    static constexpr int max_ranks_per_plane = MAX_RANKS_PER_PLANE;
     static constexpr int max_domain_count = 2;
     static constexpr size_t invalid_device_uuids_count = 0;
     // to determine the type1 system, 12 number of ports
@@ -161,11 +162,13 @@ public:
     enum class port_health_status { unknown, ok, fail };
     bool has_failed_ports() const;
     bool has_p2p_access() const;
+    bool has_p2p_atomics() const;
     bool has_all_vertices_connected() const;
     std::vector<ze_device_uuid_t> copy_dev_uuids(const rank_info_vec_t& info_vec) const;
     std::vector<ze_device_handle_t> get_filtered_devices(
         const std::vector<ze::device_info>& node_devices) const;
     static p2p_matrix_t build_p2p_matrix(const std::vector<ze_device_handle_t>& devices);
+    static p2p_matrix_t build_p2p_atomics_matrix(const std::vector<ze_device_handle_t>& devices);
     static bool build_fabric_connectivity_matrix(std::shared_ptr<atl_base_comm> comm,
                                                  const std::vector<ze_device_handle_t>& devices);
 
@@ -210,6 +213,7 @@ private:
     void fill_ze_inter_colors(const std::vector<plane_t>& planes);
 
     bool check_p2p_access() const;
+    bool check_p2p_atomics() const;
     fabric_ports_t get_fabric_ports();
 
     static void check_planes(const std::vector<plane_t>& planes);
@@ -247,6 +251,12 @@ private:
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     void ze_base_init(const std::shared_ptr<ccl::device>& device,
                       const std::shared_ptr<ccl::context>& context);
+    // for MT:
+    void ze_base_init(int size,
+                      int rank,
+                      int global_current_id,
+                      const std::shared_ptr<ccl::device>& device,
+                      const std::shared_ptr<ccl::context>& context);
     bool oversubscription_detected(const ze_rank_info_vec_t& ze_rank_infos,
                                    const host_info_vec_t& host_infos);
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
@@ -271,12 +281,15 @@ private:
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     ze_device_handle_t ze_device{};
+    zes_device_handle_t zes_device{};
     ze_device_properties_t dev_props = ccl::ze::default_device_props;
     p2p_matrix_t p2p_matrix;
+    p2p_matrix_t atomics_matrix;
     fabric_ports_t fabric_ports;
     ze_rank_info_vec_t ze_rank_info_vec;
 
     bool is_p2p_access_enabled = false;
+    bool is_p2p_atomics_enabled = false;
     bool are_all_vertices_connected = false;
     port_health_status port_status = port_health_status::unknown;
     size_t unique_device_uuids_count = topo_manager::invalid_device_uuids_count;

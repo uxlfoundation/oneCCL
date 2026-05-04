@@ -631,6 +631,9 @@ atl_status_t atl_mpi_ctx::set_impi_env(const atl_attr_t& attr, const atl_mpi_lib
             LOG_WARN_ROOT(
                 "I_MPI_THREAD_SPLIT should be unset or set to '1' when using multiple ccl workers");
         }
+        // set I_MPI_FABRICS to shm:ofi to avoid a segment fault in IMPI (MLSL-4290, IMPI-5702)
+        // TODO: remove this workaround after the issue is fixed in IMPI
+        setenv("I_MPI_FABRICS", "shm:ofi", 0);
     }
 #ifdef CCL_ENABLE_OMP
     const char* omp_num_threads_str = getenv("OMP_NUM_THREADS");

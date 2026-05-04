@@ -147,7 +147,7 @@ void ze_handle_exchange_entry::create_local_ipc_handles() {
                     mem_handle = ipc_to_mem_handle(ipc_handle);
                 }
                 else {
-                    LOG_DEBUG("don't need ipc_to_mem_handle in sockets mode");
+                    LOG_DEBUG("don't need ipc_to_mem_handle in sockets and none mode");
                 }
             }
             else if (mem_type == ccl::ze::ipc_mem_type::pool) {
@@ -204,7 +204,7 @@ int ze_handle_exchange_entry::ipc_to_mem_handle(const ze_ipc_mem_handle_t& ipc_h
     else if (ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::pidfd) {
         memcpy(&mem_handle, &ipc_handle, sizeof(int));
     }
-    else {
+    else if (ccl::global_data::env().ze_ipc_exchange != ccl::ze::ipc_exchange_mode::none) {
         CCL_THROW("unexpected ipc_exchange_mode");
     }
 
@@ -219,6 +219,7 @@ void ze_handle_exchange_entry::fill_payload(payload_t& payload, size_t buf_idx) 
     int handle_idx = get_handle_idx(sched->coll_param.ctype, rank);
     auto& this_handle = handles[handle_idx][buf_idx];
 
+    payload.ipc_handle = this_handle.ipc_handle;
     payload.mem_handle = this_handle.mem_handle;
     payload.mem_type = this_handle.mem_type;
     payload.mem_offset = this_handle.mem_offset;
@@ -260,7 +261,10 @@ void ze_handle_exchange_entry::fill_remote_handle(const payload_t& payload,
                                                   const size_t buf_idx) {
     auto& this_handle = handles[idx][buf_idx];
 
-    this_handle.ipc_handle = ipc_handle;
+    this_handle.ipc_handle =
+        ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::none
+            ? payload.ipc_handle
+            : ipc_handle;
     this_handle.mem_offset = payload.mem_offset;
     this_handle.mem_ptr = nullptr;
     this_handle.remote_ptr = payload.remote_ptr;
@@ -549,7 +553,8 @@ void ze_handle_exchange_entry::update() {
         }
     }
     else if (ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::drmfd ||
-             ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::pidfd) {
+             ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::pidfd ||
+             ccl::global_data::env().ze_ipc_exchange == ccl::ze::ipc_exchange_mode::none) {
         if (sched->coll_param.ctype == ccl_coll_send || sched->coll_param.ctype == ccl_coll_recv) {
             pt2pt_fd_mode_exchange();
         }

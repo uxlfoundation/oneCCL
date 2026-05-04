@@ -22,6 +22,9 @@
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.hpp"
 #include "coll/algorithms/broadcast/sycl/broadcast_sycl.hpp"
 #include "allreduce_ring_ll256.hpp"
+#include "coll/algorithms/utils/sycl_kernels.hpp"
+#include "coll/algorithms/utils/transmit/ring_transmit.hpp"
+#include "coll/algorithms/utils/transmit/twoshots_transmit.hpp"
 #endif // defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 
 namespace ccl {
@@ -47,6 +50,8 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
     rank = global_comm->get_node_comm()->rank();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    const int dsize = ccl_dtype.size();
+    size_t total_size = count * dsize;
 
     if (world == 1) {
         sycl::event sycl_e;
@@ -63,6 +68,25 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
             LOG_DEBUG("single rank: inplace case, coll: allreduce");
             sycl_e = submit_wait_on_events(sycl_q, dep_events);
         }
+
+        if (ccl_reduction_type_storage::is_custom(reduction)) {
+            ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+            auto lambda = [&]<typename T>() {
+                sycl_e =
+                    pre_operation_invoke<T, 1, 32>(sycl_q,
+                                                   recv_buf,
+                                                   count,
+                                                   false,
+                                                   nullptr,
+                                                   reduction_op,
+                                                   global_comm->get_node_comm()->get_tmp_buf_size(),
+                                                   { sycl_e });
+
+                return ccl::event::create_from_native(sycl_e);
+            };
+            return invoke_collective(lambda, dtype);
+        }
+
         return ccl::event::create_from_native(sycl_e);
     }
 
@@ -75,22 +99,60 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
               has_all_vertices_connected);
 
     // for ARC GPUs to do ring LL256
-    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
-        if (!is_aligned(send_buf, recv_buf, count, 0, 4)) {
-            done = false;
-            return e;
-        }
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+        total_size <= ccl::global_data::env().sycl_allreduce_simple_threshold) {
+        const size_t chunk_size = ccl::global_data::env().sycl_allreduce_chunking_threshold;
+        size_t max_pack_count;
         if (!ccl::global_data::env().sycl_enable_arc_allreduce) {
 #ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin(
-                "allreduce_ll_ring", "send_size", count * ccl_dtype.size());
+            ccl::profile::itt::task_begin("allreduce_ll_ring",
+                                          "send_size",
+                                          count * ccl_dtype.size(),
+                                          global_comm->unique_id());
 #endif // CCL_ENABLE_ITT
-            LOG_DEBUG("invoking allreduce LL256 kernel allreduce_ll_ring, count:",
-                      count,
-                      " datatype: ",
-                      dtype);
-            e = allreduce_ll_ring(
-                send_buf, recv_buf, count, dtype, reduction, global_comm, global_stream, done);
+            size_t nchunks =
+                calculate_chunking_pack_count(chunk_size, count, dsize, max_pack_count);
+            size_t send_offset = 0;
+            for (size_t iter = 0; iter < nchunks; iter++) {
+                size_t pack_count = (iter < nchunks - 1) ? max_pack_count : count - send_offset;
+                LOG_DEBUG("invoking allreduce LL256 kernel allreduce, count:",
+                          count,
+                          " datatype: ",
+                          dtype,
+                          " algo: ",
+                          ccl::global_data::env().sycl_allreduce_ll_algo,
+                          " iter: ",
+                          iter,
+                          " nchunks: ",
+                          nchunks);
+                if (ccl::global_data::env().sycl_allreduce_ll_algo == "ring") {
+                    e = allreduce_ll<RingTransmit>((char*)send_buf + send_offset * dsize,
+                                                   (char*)recv_buf + send_offset * dsize,
+                                                   pack_count,
+                                                   dtype,
+                                                   reduction,
+                                                   global_comm,
+                                                   global_stream,
+                                                   done);
+                }
+                else if (ccl::global_data::env().sycl_allreduce_ll_algo == "twoshots") {
+                    e = allreduce_ll<TwoShotsTransmit>((char*)send_buf + send_offset * dsize,
+                                                       (char*)recv_buf + send_offset * dsize,
+                                                       pack_count,
+                                                       dtype,
+                                                       reduction,
+                                                       global_comm,
+                                                       global_stream,
+                                                       done);
+                }
+                else {
+                    LOG_ERROR("CCL_SYCL_ALLREDUCE_LL can only be ring or twoshots");
+                    done = false;
+                }
+                if (!done)
+                    break;
+                send_offset += pack_count;
+            } // end for
 #ifdef CCL_ENABLE_ITT
             ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
@@ -103,7 +165,6 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
                 return e;
             }
         }
-        done = true;
         // ARC 770 does not support fp64
         if (ccl::ze::get_device_family(global_stream->get_ze_device()) ==
                 ccl::device_family::family6 &&
@@ -112,23 +173,54 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
             done = false;
             return e;
         }
-#ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin("arc_allreduce", "send_size", count * ccl_dtype.size());
+#ifdef CCL_ENABLE_ITTi
+        ccl::profile::itt::task_begin(
+            "arc_allreduce", "send_size", count * ccl_dtype.size(), global_comm->unique_id());
 #endif // CCL_ENABLE_ITT
-        LOG_DEBUG(
-            "invoking allreduce LL256 kernel arc_allreduce, count:", count, " datatype: ", dtype);
-        e = arc_allreduce(send_buf, recv_buf, count, dtype, reduction, global_comm, global_stream);
-        LOG_DEBUG("invoking allreduce LL256 kernel, count:", count, " datatype: ", dtype, " done");
+        done = true;
+        size_t nchunks = calculate_chunking_pack_count(chunk_size, count, dsize, max_pack_count);
+        size_t send_offset = 0;
+        for (size_t iter = 0; iter < nchunks; iter++) {
+            size_t pack_count = (iter < nchunks - 1) ? max_pack_count : count - send_offset;
+            LOG_DEBUG("invoking allreduce LL256 kernel arc_allreduce, count:",
+                      count,
+                      " datatype: ",
+                      dtype,
+                      " iter: ",
+                      iter,
+                      " nchunks: ",
+                      nchunks);
+            e = arc_allreduce((char*)send_buf + send_offset * dsize,
+                              (char*)recv_buf + send_offset * dsize,
+                              pack_count,
+                              dtype,
+                              reduction,
+                              global_comm,
+                              global_stream);
+            LOG_DEBUG("invoking allreduce LL256 kernel arc_allreduce, count:",
+                      count,
+                      " datatype: ",
+                      dtype,
+                      " done");
+            send_offset += pack_count;
+        }
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
         return e;
     }
 
-    if (!ccl::global_data::env().sycl_esimd) {
+#ifdef CCL_ENABLE_ESIMD
+    const bool is_esimd_enabled = ccl::global_data::env().sycl_esimd;
+#else
+    const bool is_esimd_enabled = false;
+#endif // CCL_ENABLE_ESIMD
+
+    if (!is_esimd_enabled) {
         if (count * ccl_dtype.size() <= ccl::global_data::env().sycl_allreduce_small_threshold) {
 #ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin("allreduce_small", "send_size", count * ccl_dtype.size());
+            ccl::profile::itt::task_begin(
+                "allreduce_small", "send_size", count * ccl_dtype.size(), global_comm->unique_id());
 #endif // CCL_ENABLE_ITT
             LOG_DEBUG("invoking small allreduce kernel, count:", count, " datatype: ", dtype);
             e = allreduce_small(
@@ -141,7 +233,8 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
         }
         else {
 #ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin("allreduce_large", "send_size", count * ccl_dtype.size());
+            ccl::profile::itt::task_begin(
+                "allreduce_large", "send_size", count * ccl_dtype.size(), global_comm->unique_id());
 #endif // CCL_ENABLE_ITT
             LOG_DEBUG("invoking large allreduce kernel, count:", count, " datatype: ", dtype);
             e = allreduce_large(
@@ -156,13 +249,15 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
         return e;
     }
 
+#ifdef CCL_ENABLE_ESIMD
     // ESIMD
     if (count * ccl_dtype.size() <= ccl::global_data::env().sycl_allreduce_small_threshold &&
         has_all_vertices_connected) {
         init_allreduce_small(dtype, q, global_comm, global_stream, rank, world);
 
 #ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin("allreduce_small", "send_size", count * ccl_dtype.size());
+        ccl::profile::itt::task_begin(
+            "allreduce_small", "send_size", count * ccl_dtype.size(), global_comm->unique_id());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG("|CCL_SYCL| allreduce selects small kernel, count:", count, " datatype: ", dtype);
         e = run_allreduce_small(dtype, q, send_buf, recv_buf, count, reduction, deps, done);
@@ -184,7 +279,8 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
         init_allreduce_medium(dtype, q, global_comm, global_stream, rank, world);
 
 #ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin("allreduce_medium", "send_size", count * ccl_dtype.size());
+        ccl::profile::itt::task_begin(
+            "allreduce_medium", "send_size", count * ccl_dtype.size(), global_comm->unique_id());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG(
             "|CCL_SYCL| allreduce selects medium kernel, count:", count, " datatype: ", dtype);
@@ -202,7 +298,8 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
         init_allreduce_large(dtype, q, global_comm, global_stream, rank, world);
 
 #ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin("allreduce_large", "send_size", count * ccl_dtype.size());
+        ccl::profile::itt::task_begin(
+            "allreduce_large", "send_size", count * ccl_dtype.size(), global_comm->unique_id());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG("|CCL_SYCL| allreduce selects large kernel, count:", count, " datatype: ", dtype);
         e = run_allreduce_large(dtype, q, send_buf, recv_buf, count, reduction, deps, done);
@@ -218,16 +315,19 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
     else {
         done = false;
     }
+#endif // CCL_ENABLE_ESIMD
 
     return e;
 }
 
 static bool do_fallback_to_scheduler(size_t size) {
+#ifdef CCL_ENABLE_ESIMD
+    const bool is_esimd_enabled = ccl::global_data::env().sycl_esimd;
+#else
+    const bool is_esimd_enabled = false;
+#endif // CCL_ENABLE_ESIMD
     bool is_above_threshold = size > ccl::global_data::env().sycl_allreduce_scaleout_threshold;
-    bool exception_cases = ccl::global_data::env().sycl_esimd ||
-                           (ccl::global_data::env().atl_transport == ccl_atl_ofi &&
-                            (ccl::global_data::env().sycl_allreduce_scaleout_algo == "auto" ||
-                             ccl::global_data::env().sycl_allreduce_scaleout_algo == "direct"));
+    bool exception_cases = is_esimd_enabled;
     return is_above_threshold || exception_cases;
 }
 
@@ -262,8 +362,10 @@ ccl::event allreduce_sycl_multi_node_rs_phase(sycl::queue& q,
 
     if (is_rs_remainder_supported(recv_count, remainder_count, node_comm->size(), ccl_dtype)) {
 #ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin(
-            "reduce_scatter_small", "send_size", recv_count * node_comm->size() * ccl_dtype.size());
+        ccl::profile::itt::task_begin("reduce_scatter_small",
+                                      "send_size",
+                                      recv_count * node_comm->size() * ccl_dtype.size(),
+                                      node_comm->unique_id());
 #endif // CCL_ENABLE_ITT
         ev = reduce_scatter_small(send_buf,
                                   recv_buf,
@@ -349,11 +451,12 @@ ccl::event allreduce_sycl_multi_node_ag_phase(sycl::queue& q,
         recv_counts.push_back(last_block_count);
 
 #ifdef CCL_ENABLE_ITT
-        ccl::profile::itt::task_begin(
-            "allgatherv_small", "send_size", ag_send_count * ccl_dtype.size());
+        ccl::profile::itt::task_begin("allgatherv_small",
+                                      "send_size",
+                                      ag_send_count * ccl_dtype.size(),
+                                      node_comm->get_parent_comm()->unique_id());
 #endif // CCL_ENABLE_ITT
-        auto sycl_q = global_stream->get_native_stream();
-        ev = allgatherv_small(sycl_q,
+        ev = allgatherv_small(q,
                               send_buf,
                               ag_send_count,
                               recv_buf,
@@ -425,6 +528,7 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     ccl_comm* node_comm = global_comm->get_node_comm().get();
     ccl_comm* r2r_comm = global_comm->get_r2r_comm().get();
+    int rank = global_comm->rank();
 
     const int last_node_comm_rank = node_comm->size() - 1;
 
@@ -449,9 +553,16 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
 
     // for the scale-out case, use sum reduction to calculate the total sum,
     // then submit average kernel
-    ccl::reduction ar_reduction = reduction;
+    ccl::reduction ar_scaleup_reduction = reduction;
     if (reduction == ccl::reduction::avg) {
-        ar_reduction = ccl::reduction::sum;
+        ar_scaleup_reduction = ccl::reduction::sum;
+    }
+    // NOTE: for user-defined reduction, use sum for scale-out,
+    // cause direct algorithm cannot decode correct reduction storage index yet.
+    const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
+    ccl::reduction ar_scaleout_reduction = ar_scaleup_reduction;
+    if (reduction != ccl::reduction::avg && reduce_has_pre_operation) {
+        ar_scaleout_reduction = ccl::reduction::sum;
     }
 
     // TODO: Sycl allgatherv does not support counts that are non-divisible by the node_comm size.
@@ -515,26 +626,50 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
         if (counts_per_rank == 0 && remainder_count) {
             CCL_ASSERT(i == nchunks - 1);
             LOG_DEBUG("using CPU-side algorithm for the remainder count=", remainder_count);
+            auto direct_send_buffer = (char*)send_buf + displ;
 
-            if (ccl::global_data::env().atl_transport == ccl_atl_ofi) {
-                // fallback
-                LOG_DEBUG("allreduce count size = ",
-                          count * ccl_dtype.size(),
-                          " has only a single remainder to compute = ",
-                          remainder_count * ccl_dtype.size(),
-                          ", OFI transport cannot handle the case ",
-                          "-- falling back");
-                done = false;
-                return ev;
+            if (reduce_has_pre_operation) {
+                ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+                sycl::event sycl_e;
+                if (send_buf != recv_buf) {
+                    sycl_e = q.submit([=](sycl::handler& h) {
+                        h.depends_on(dep_events);
+                        h.memcpy((char*)recv_buf + displ,
+                                 (char*)send_buf + displ,
+                                 iter_count * ccl_dtype.size());
+                    });
+                }
+                auto lambda = [&]<typename T>() {
+                    sycl_e = pre_operation_invoke<T, 1, 32>(q,
+                                                            (char*)recv_buf + displ,
+                                                            iter_count,
+                                                            false,
+                                                            nullptr,
+                                                            reduction_op,
+                                                            node_comm->get_tmp_buf_size(),
+                                                            { sycl_e });
+
+                    return ccl::event::create_from_native(sycl_e);
+                };
+                ev = invoke_collective(lambda, dtype);
+                evs.clear();
+                evs.push_back(std::move(ev));
+                direct_send_buffer = (char*)recv_buf + displ;
             }
 
             sycl_allreduce_tune_attr scaleout_tune_attr = { allreduce_scaleout_algo::direct };
+            /*
+            // OFI transport use ring because no direct
+            if (ccl::global_data::env().atl_transport == ccl_atl_ofi)
+                scaleout_tune_attr.algo = allreduce_scaleout_algo::ring;
+*/
+
             ev = allreduce_scaleout_sycl(q,
-                                         (char*)send_buf + displ,
+                                         direct_send_buffer,
                                          (char*)recv_buf + displ,
                                          iter_count,
                                          dtype,
-                                         ar_reduction,
+                                         ar_scaleout_reduction,
                                          global_comm,
                                          evs,
                                          true, /* original_deps */
@@ -583,8 +718,18 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                                      ? counts_per_rank + remainder_count
                                      : counts_per_rank;
 
+        //#define PRINT_TIMING
+
+#ifdef PRINT_TIMING
+        q.wait();
+        cpu_timer<1> ctimer;
+#endif // PRINT_TIMING
+
         // scale-up reduce-scatter phase
         if (node_comm->size() > 1) {
+#ifdef PRINT_TIMING
+            ctimer.start(0);
+#endif // PRINT_TIMING
             ev = allreduce_sycl_multi_node_rs_phase(q,
                                                     (char*)send_buf + displ,
                                                     recv_rank_ptr,
@@ -593,7 +738,7 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                                                     remainder_recv_buf,
                                                     remainder_count,
                                                     dtype,
-                                                    ar_reduction,
+                                                    ar_scaleup_reduction,
                                                     node_comm,
                                                     global_stream,
                                                     evs,
@@ -603,7 +748,48 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                 // fallback
                 return ev;
             }
+#ifdef PRINT_TIMING
+            ev.wait();
+            q.wait(); // for multiple kernels with out-of-order queue
+            ctimer.stop(0);
+            fprintf(
+                stderr,
+                "[%d] allreduce_sycl_multi_node_rs_phase takes %f us on data: counts_per_rank: %ld displ: %ld\n",
+                rank,
+                ctimer.get_us(0),
+                counts_per_rank,
+                displ);
+#endif // PRINT_TIMING
 
+            evs.clear();
+            evs.push_back(std::move(ev));
+        }
+        else if (reduce_has_pre_operation) {
+            ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+            std::vector<sycl::event> sycl_evs = get_sycl_events(evs);
+            sycl::event sycl_e;
+            if (send_buf != recv_buf) {
+                sycl_e = q.submit([=](sycl::handler& h) {
+                    h.depends_on(sycl_evs);
+                    h.memcpy((char*)recv_buf + displ,
+                             (char*)send_buf + displ,
+                             scaleout_counts * ccl_dtype.size());
+                });
+            }
+
+            auto lambda = [&]<typename T>() {
+                sycl_e = pre_operation_invoke<T, 1, 32>(q,
+                                                        (char*)recv_buf + displ,
+                                                        scaleout_counts,
+                                                        false,
+                                                        nullptr,
+                                                        reduction_op,
+                                                        node_comm->get_tmp_buf_size(),
+                                                        { sycl_e });
+
+                return ccl::event::create_from_native(sycl_e);
+            };
+            ev = invoke_collective(lambda, dtype);
             evs.clear();
             evs.push_back(std::move(ev));
         }
@@ -626,15 +812,27 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                       " of nchunks: ",
                       nchunks,
                       " - allreduce_scaleout_sycl");
-            void* scaleout_send_ptr =
-                node_comm->size() > 1 ? recv_rank_ptr : (char*)send_buf + displ;
+
+            void* scaleout_send_ptr;
+            if (node_comm->size() > 1) {
+                scaleout_send_ptr = recv_rank_ptr;
+            }
+            else if (reduce_has_pre_operation) {
+                scaleout_send_ptr = (char*)recv_buf + displ;
+            }
+            else {
+                scaleout_send_ptr = (char*)send_buf + displ;
+            }
             bool original_deps = node_comm->size() == 1 ? (evs.size() == 0) : false;
+#ifdef PRINT_TIMING
+            ctimer.start(0);
+#endif // PRINT_TIMING
             ev = allreduce_scaleout_sycl(q,
                                          scaleout_send_ptr,
                                          recv_rank_ptr,
                                          scaleout_counts,
                                          dtype,
-                                         ar_reduction,
+                                         ar_scaleout_reduction,
                                          r2r_comm,
                                          evs,
                                          original_deps,
@@ -645,6 +843,16 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                 LOG_INFO("allreduce_sycl scaleout was not done -- falling back");
                 return ev;
             }
+#ifdef PRINT_TIMING
+            ev.wait();
+            q.wait(); // for multiple kernels with out-of-order queue
+            ctimer.stop(0);
+            fprintf(stderr,
+                    "[%d] allreduce_scaleout_sycl takes %f us on data: scaleout_counts,: %ld \n",
+                    rank,
+                    ctimer.get_us(0),
+                    scaleout_counts);
+#endif // PRINT_TIMING
 
             if (reduction == ccl::reduction::avg) {
                 // set dependencies
@@ -667,7 +875,10 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
             evs.clear();
             evs.push_back(std::move(ev));
 
-            // scale-up allgatherv phase
+#ifdef PRINT_TIMING
+            ctimer.start(0);
+#endif // PRINT_TIMING \
+    // scale-up allgatherv phase
             ev = allreduce_sycl_multi_node_ag_phase(q,
                                                     recv_rank_ptr,
                                                     (char*)recv_buf + displ,
@@ -685,6 +896,17 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                 LOG_INFO("allreduce_sycl allgatherv phase was not done -- falling back");
                 return ev;
             }
+#ifdef PRINT_TIMING
+            ev.wait();
+            q.wait(); // for multiple kernels with out-of-order queue
+            ctimer.stop(0);
+            fprintf(
+                stderr,
+                "[%d] allreduce_sycl_multi_node_ag_phase takes %f us on data: counts_per_rank: %ld \n",
+                rank,
+                ctimer.get_us(0),
+                counts_per_rank);
+#endif // PRINT_TIMING
         }
 
         if (i < nchunks - 1) {
@@ -710,6 +932,7 @@ event allreduce_sycl(sycl::queue q,
                      const vector_class<event>& deps,
                      bool& done) {
     done = true;
+
     bool is_single_node = false;
     if (ccl::global_data::env().backend == backend_mode::native) {
         const ccl::topo_manager& topo_manager = global_comm->get_topo_manager();

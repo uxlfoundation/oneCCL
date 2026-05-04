@@ -13,6 +13,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#ifdef CCL_ENABLE_ESIMD
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_small_sycl.hpp"
 
 sycl_reduce_scatter_small<sycl::half> rs_small_fp16;
@@ -66,6 +67,7 @@ ccl::event run_reduce_scatter_small(ccl::datatype dtype,
     }
     return e;
 }
+#endif // CCL_ENABLE_ESIMD
 
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_small_sycl_impl.hpp"
 
@@ -85,9 +87,9 @@ ccl::event reduce_scatter_small(const void* send_buf,
         LOG_DEBUG("invoking reduce_scatter_small");
     }
 
-    auto lambda = [&]<typename T, int NE, int NP>() {
-        return reduce_scatter_small_impl<T, NE, NP>(
+    auto lambda = [&]<typename T>() {
+        return reduce_scatter_small_impl<T>(
             send_buf, recv_buf, recv_count, rem_count, dtype, reduction, comm, global_stream, deps);
     };
-    return invoke_collective(lambda, comm, dtype);
+    return invoke_collective(lambda, dtype);
 }

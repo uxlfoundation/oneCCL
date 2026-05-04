@@ -37,6 +37,9 @@ typedef struct umf_lib_ops {
     decltype(umfCloseIPCHandle) *umfCloseIPCHandle;
     decltype(umfPoolDestroy) *umfPoolDestroy;
     decltype(umfPoolCreate) *umfPoolCreate;
+    decltype(umfPoolMalloc) *umfPoolMalloc;
+    decltype(umfPoolAlignedMalloc) *umfPoolAlignedMalloc;
+    decltype(umfPoolCalloc) *umfPoolCalloc;
     decltype(umfPoolFree) *umfPoolFree;
     decltype(umfMemoryProviderCreate) *umfMemoryProviderCreate;
     decltype(umfLevelZeroMemoryProviderOps) *umfLevelZeroMemoryProviderOps;
@@ -56,6 +59,9 @@ static std::vector<std::string> umf_fn_names = { "umfPoolGetIPCHandler",
                                                  "umfCloseIPCHandle",
                                                  "umfPoolDestroy",
                                                  "umfPoolCreate",
+                                                 "umfPoolMalloc",
+                                                 "umfPoolAlignedMalloc",
+                                                 "umfPoolCalloc",
                                                  "umfPoolFree",
                                                  "umfMemoryProviderCreate",
                                                  "umfLevelZeroMemoryProviderOps",
@@ -74,6 +80,9 @@ extern ccl::umf_lib_ops_t umf_lib_ops;
 #define umfCloseIPCHandle             ccl::umf_lib_ops.umfCloseIPCHandle
 #define umfPoolDestroy                ccl::umf_lib_ops.umfPoolDestroy
 #define umfPoolCreate                 ccl::umf_lib_ops.umfPoolCreate
+#define umfPoolMalloc                 ccl::umf_lib_ops.umfPoolMalloc
+#define umfPoolAlignedMalloc          ccl::umf_lib_ops.umfPoolAlignedMalloc
+#define umfPoolCalloc                 ccl::umf_lib_ops.umfPoolCalloc
 #define umfPoolFree                   ccl::umf_lib_ops.umfPoolFree
 #define umfMemoryProviderCreate       ccl::umf_lib_ops.umfMemoryProviderCreate
 #define umfLevelZeroMemoryProviderOps ccl::umf_lib_ops.umfLevelZeroMemoryProviderOps

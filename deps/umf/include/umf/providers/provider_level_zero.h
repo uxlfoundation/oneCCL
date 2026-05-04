@@ -8,6 +8,8 @@
 #ifndef UMF_LEVEL_ZERO_PROVIDER_H
 #define UMF_LEVEL_ZERO_PROVIDER_H
 
+#include <stdbool.h>
+
 #include <umf/memory_provider_gpu.h>
 
 #ifdef __cplusplus
@@ -90,6 +92,27 @@ umf_result_t umfLevelZeroMemoryProviderParamsSetFreePolicy(
 umf_result_t umfLevelZeroMemoryProviderParamsSetDeviceOrdinal(
     umf_level_zero_memory_provider_params_handle_t hParams,
     uint32_t deviceOrdinal);
+
+/// @brief  Set custom name of the Level Zero Memory Provider.
+/// @param  hParams handle to the parameters of the Level Zero Memory Provider.
+/// @param  name custom name. Must not be NULL. Name longer than 63 characters
+///         will be truncated.
+/// \details Name should contain only [a-zA-Z0-9_-] characters.
+/// Other names are deprecated and may limit CTL functionality.
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+umf_result_t umfLevelZeroMemoryProviderParamsSetName(
+    umf_level_zero_memory_provider_params_handle_t hParams, const char *name);
+
+/// @brief Adds or removes devices on which allocations should be made
+///        resident.
+/// @param provider handle to the memory provider
+/// @param device device handle
+/// @param is_adding Boolean indicating if peer is to be removed or added
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on
+///         failure.
+umf_result_t umfLevelZeroMemoryProviderResidentDeviceChange(
+    umf_memory_provider_handle_t provider, ze_device_handle_t device,
+    bool is_adding);
 
 const umf_memory_provider_ops_t *umfLevelZeroMemoryProviderOps(void);
 

@@ -291,6 +291,245 @@ int average_reduction(queue &q,
     return 0;
 }
 
+int prod_reduction(queue &q,
+                   ccl::communicator &comm,
+                   ccl::stream &stream,
+                   buf_allocator<int> &allocator,
+                   sycl::usm::alloc usm_alloc_type,
+                   int size,
+                   int rank,
+                   size_t count) {
+    /* create buffers */
+    auto send_buf = allocator.allocate(count * size, usm_alloc_type);
+    auto recv_buf = allocator.allocate(count, usm_alloc_type);
+
+    sycl::buffer<int> expected_buf(count);
+    sycl::buffer<int> check_buf(count);
+
+    /* open buffers and modify them on the device side */
+    auto e = q.submit([&](auto &h) {
+        sycl::accessor expected_buf_acc(expected_buf, h, sycl::write_only);
+        h.parallel_for(count, [=](auto id) {
+            recv_buf[id] = -1;
+            expected_buf_acc[id] = 0;
+            for (int i = 0; i < size; i++) {
+                send_buf[i * count + id] = rank;
+            }
+        });
+    });
+
+    /* do not wait completion of kernel and provide it as dependency for operation */
+    vector<ccl::event> deps;
+    deps.push_back(ccl::create_event(e));
+
+    /* invoke reduce_scatter */
+    auto attr = ccl::create_operation_attr<ccl::reduce_scatter_attr>();
+    ccl::reduce_scatter(send_buf,
+                        recv_buf,
+                        count,
+                        ccl::datatype::int32,
+                        ccl::reduction::prod,
+                        comm,
+                        stream,
+                        attr,
+                        deps)
+        .wait();
+
+    /* open recv_buf and check its correctness on the device side */
+    sycl::buffer<int> result_buf(count);
+    q.submit([&](auto &h) {
+        sycl::accessor expected_buf_acc(expected_buf, h, sycl::read_only);
+        sycl::accessor check_buf_acc(check_buf, h, sycl::write_only);
+        h.parallel_for(count, [=](auto id) {
+            if (recv_buf[id] != expected_buf_acc[id]) {
+                check_buf_acc[id] = -1;
+            }
+            else {
+                check_buf_acc[id] = 0;
+            }
+        });
+    });
+
+    if (!handle_exception(q))
+        return -1;
+
+    /* print out the result of the test on the host side */
+    {
+        sycl::host_accessor check_buf_acc(check_buf, sycl::read_only);
+        size_t i;
+        for (i = 0; i < count; i++) {
+            if (check_buf_acc[i] == -1) {
+                std::cout << "FAILED\n";
+                break;
+            }
+        }
+        if (i == count) {
+            std::cout << "PASSED\n";
+        }
+    }
+
+    return 0;
+}
+
+int max_reduction(queue &q,
+                  ccl::communicator &comm,
+                  ccl::stream &stream,
+                  buf_allocator<int> &allocator,
+                  sycl::usm::alloc usm_alloc_type,
+                  int size,
+                  int rank,
+                  size_t count) {
+    /* create buffers */
+    auto send_buf = allocator.allocate(count * size, usm_alloc_type);
+    auto recv_buf = allocator.allocate(count, usm_alloc_type);
+
+    sycl::buffer<int> expected_buf(count);
+    sycl::buffer<int> check_buf(count);
+
+    /* open buffers and modify them on the device side */
+    auto e = q.submit([&](auto &h) {
+        sycl::accessor expected_buf_acc(expected_buf, h, sycl::write_only);
+        h.parallel_for(count, [=](auto id) {
+            recv_buf[id] = -1;
+            expected_buf_acc[id] = size - 1;
+            for (int i = 0; i < size; i++) {
+                send_buf[i * count + id] = rank;
+            }
+        });
+    });
+
+    /* do not wait completion of kernel and provide it as dependency for operation */
+    vector<ccl::event> deps;
+    deps.push_back(ccl::create_event(e));
+
+    /* invoke reduce_scatter */
+    auto attr = ccl::create_operation_attr<ccl::reduce_scatter_attr>();
+    ccl::reduce_scatter(send_buf,
+                        recv_buf,
+                        count,
+                        ccl::datatype::int32,
+                        ccl::reduction::max,
+                        comm,
+                        stream,
+                        attr,
+                        deps)
+        .wait();
+
+    /* open recv_buf and check its correctness on the device side */
+    q.submit([&](auto &h) {
+        sycl::accessor expected_buf_acc(expected_buf, h, sycl::read_only);
+        sycl::accessor check_buf_acc(check_buf, h, sycl::write_only);
+        h.parallel_for(count, [=](auto id) {
+            if (recv_buf[id] != expected_buf_acc[id]) {
+                check_buf_acc[id] = -1;
+            }
+            else {
+                check_buf_acc[id] = 0;
+            }
+        });
+    });
+
+    if (!handle_exception(q))
+        return -1;
+
+    /* print out the result of the test on the host side */
+    {
+        sycl::host_accessor check_buf_acc(check_buf, sycl::read_only);
+        size_t i;
+        for (i = 0; i < count; i++) {
+            if (check_buf_acc[i] == -1) {
+                std::cout << "FAILED\n";
+                break;
+            }
+        }
+        if (i == count) {
+            std::cout << "PASSED\n";
+        }
+    }
+
+    return 0;
+}
+
+int min_reduction(queue &q,
+                  ccl::communicator &comm,
+                  ccl::stream &stream,
+                  buf_allocator<int> &allocator,
+                  sycl::usm::alloc usm_alloc_type,
+                  int size,
+                  int rank,
+                  size_t count) {
+    /* create buffers */
+    auto send_buf = allocator.allocate(count * size, usm_alloc_type);
+    auto recv_buf = allocator.allocate(count, usm_alloc_type);
+
+    sycl::buffer<int> expected_buf(count);
+    sycl::buffer<int> check_buf(count);
+
+    /* open buffers and modify them on the device side */
+    auto e = q.submit([&](auto &h) {
+        sycl::accessor expected_buf_acc(expected_buf, h, sycl::write_only);
+        h.parallel_for(count, [=](auto id) {
+            recv_buf[id] = -1;
+            expected_buf_acc[id] = 1;
+            for (int i = 0; i < size; i++) {
+                send_buf[i * count + id] = rank + 1;
+            }
+        });
+    });
+
+    /* do not wait completion of kernel and provide it as dependency for operation */
+    vector<ccl::event> deps;
+    deps.push_back(ccl::create_event(e));
+
+    /* invoke reduce_scatter */
+    auto attr = ccl::create_operation_attr<ccl::reduce_scatter_attr>();
+    ccl::reduce_scatter(send_buf,
+                        recv_buf,
+                        count,
+                        ccl::datatype::int32,
+                        ccl::reduction::min,
+                        comm,
+                        stream,
+                        attr,
+                        deps)
+        .wait();
+
+    /* open recv_buf and check its correctness on the device side */
+    sycl::buffer<int> result_buf(count);
+    q.submit([&](auto &h) {
+        sycl::accessor expected_buf_acc(expected_buf, h, sycl::read_only);
+        sycl::accessor check_buf_acc(check_buf, h, sycl::write_only);
+        h.parallel_for(count, [=](auto id) {
+            if (recv_buf[id] != expected_buf_acc[id]) {
+                check_buf_acc[id] = -1;
+            }
+            else {
+                check_buf_acc[id] = 0;
+            }
+        });
+    });
+
+    if (!handle_exception(q))
+        return -1;
+
+    /* print out the result of the test on the host side */
+    {
+        sycl::host_accessor check_buf_acc(check_buf, sycl::read_only);
+        size_t i;
+        for (i = 0; i < count; i++) {
+            if (check_buf_acc[i] == -1) {
+                std::cout << "FAILED\n";
+                break;
+            }
+        }
+        if (i == count) {
+            std::cout << "PASSED\n";
+        }
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     if (!check_example_args(argc, argv))
         exit(1);
@@ -372,6 +611,78 @@ int main(int argc, char *argv[]) {
         std::string check_msg("average operation");
         if (exception_msg.find(check_msg) != std::string::npos) {
             std::cout << "SKIP: average operation is not supported for the scheduler path."
+                      << std::endl;
+            ret = 0;
+        }
+        else {
+            std::cout << e.what() << std::endl;
+            std::cout << "FAILED\n";
+            return -1;
+        }
+    }
+    catch (...) {
+        std::cout << "FAILED\n";
+        return -1;
+    }
+    if (ret == -1)
+        return -1;
+
+    try {
+        ret = prod_reduction(q, comm, stream, allocator, usm_alloc_type, size, rank, count);
+    }
+    catch (ccl::exception &e) {
+        std::string exception_msg(e.what());
+        std::string check_msg("prod operation");
+        if (exception_msg.find(check_msg) != std::string::npos) {
+            std::cout << "SKIP: prod operation is not supported for the scheduler path."
+                      << std::endl;
+            ret = 0;
+        }
+        else {
+            std::cout << e.what() << std::endl;
+            std::cout << "FAILED\n";
+            return -1;
+        }
+    }
+    catch (...) {
+        std::cout << "FAILED\n";
+        return -1;
+    }
+    if (ret == -1)
+        return -1;
+
+    try {
+        ret = max_reduction(q, comm, stream, allocator, usm_alloc_type, size, rank, count);
+    }
+    catch (ccl::exception &e) {
+        std::string exception_msg(e.what());
+        std::string check_msg("max operation");
+        if (exception_msg.find(check_msg) != std::string::npos) {
+            std::cout << "SKIP: max operation is not supported for the scheduler path."
+                      << std::endl;
+            ret = 0;
+        }
+        else {
+            std::cout << e.what() << std::endl;
+            std::cout << "FAILED\n";
+            return -1;
+        }
+    }
+    catch (...) {
+        std::cout << "FAILED\n";
+        return -1;
+    }
+    if (ret == -1)
+        return -1;
+
+    try {
+        ret = min_reduction(q, comm, stream, allocator, usm_alloc_type, size, rank, count);
+    }
+    catch (ccl::exception &e) {
+        std::string exception_msg(e.what());
+        std::string check_msg("min operation");
+        if (exception_msg.find(check_msg) != std::string::npos) {
+            std::cout << "SKIP: min operation is not supported for the scheduler path."
                       << std::endl;
             ret = 0;
         }

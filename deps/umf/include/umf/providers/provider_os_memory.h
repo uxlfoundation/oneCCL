@@ -134,6 +134,17 @@ umf_result_t umfOsMemoryProviderParamsSetPartitions(
     umf_os_memory_provider_params_handle_t hParams,
     umf_numa_split_partition_t *partitions, unsigned partitions_len);
 
+/// @brief  Set custom name of the OS memory provider.
+/// @param  hParams handle to the parameters of the OS memory provider.
+/// @param  name custom name. Must not be NULL. Name longer than 63 characters
+///         will be truncated.
+/// \details Name should contain only [a-zA-Z0-9_-] characters.
+/// Other names are deprecated and may limit CTL functionality.
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+umf_result_t
+umfOsMemoryProviderParamsSetName(umf_os_memory_provider_params_handle_t hParams,
+                                 const char *name);
+
 /// @brief OS Memory Provider operation results
 typedef enum umf_os_memory_provider_native_error {
     UMF_OS_RESULT_SUCCESS = UMF_OS_RESULTS_START_FROM, ///< Success

@@ -205,10 +205,26 @@ constexpr const char* CCL_ATL_SEND_PROXY = "CCL_ATL_SEND_PROXY";
 constexpr const char* CCL_ATL_SYNC_COLL = "CCL_ATL_SYNC_COLL";
 constexpr const char* CCL_ATL_EXTRA_EP = "CCL_ATL_EXTRA_EP";
 constexpr const char* CCL_ATL_CACHE = "CCL_ATL_CACHE";
+
 /**
  * @addtogroup OneCCLvars
  * @{
  */
+/**
+ * @brief Set this environment variable to specify OFI domain names for rank-specific domain selection.
+ *
+ * @details Comma-separated list of OFI domain names to be used for selecting specific
+ * domains based on local rank index. The i-th local rank will use the i-th domain name
+ * from the provided list. This allows for explicit control over which OFI domains
+ * are used by different ranks, enabling optimized fabric resource utilization.
+ *
+ * Example: "mlx5_0,mlx5_1,mlx5_2,mlx5_3" - assigns different InfiniBand devices
+ * to ranks based on their local index.
+ *
+ * By-default: "not-specified"
+ */
+constexpr const char* CCL_OFI_DOMAIN_NAMES = "CCL_OFI_DOMAIN_NAMES";
+
 /**
  * @brief Set this environment variable to enable cache model automatically for synchronous collectives with direct algorithms.
  * @details
@@ -610,6 +626,132 @@ constexpr const char* CCL_STAGING_BUFFER = "CCL_STAGING_BUFFER";
 constexpr const char* CCL_OP_SYNC = "CCL_OP_SYNC";
 constexpr const char* CCL_OFI_ENABLE_HOSTNAME_SHARING = "CCL_OFI_ENABLE_HOSTNAME_SHARING";
 constexpr const char* CCL_OFI_INIT_ENABLE_HOSTNAME_SHARING = "CCL_OFI_INIT_ENABLE_HOSTNAME_SHARING";
+
+/**
+ * @addtogroup OneCCLvars
+ * @{
+ */
+/**
+ * @brief Set this environment variable to specify the OCCP (oneCCL Communication Protocol) server hostname.
+ *
+ * @details
+ * 
+ * Syntax
+ * CCL_OCCP_SERVER_HOSTNAME="<hostname>"
+ *
+ * Arguments
+ * "<hostname>"	Description
+ * 	- HOSTNAME	The hostname or IP address where the OCCP server should run or connect to
+ *
+ * Description
+ * Set this environment variable to specify the hostname for the OCCP server used for 
+ * rank coordination and endpoint exchange in oneCCL OFI transport.
+ *
+ * By-default: "localhost"
+ */
+constexpr const char* CCL_OCCP_SERVER_HOSTNAME = "CCL_OCCP_SERVER_HOSTNAME";
+
+/**
+ * @brief Set this environment variable to specify the number of I/O threads for the OCCP server.
+ *
+ * @details
+ * 
+ * Syntax
+ * CCL_OCCP_SERVER_IO_THREADS="<threads>"
+ *
+ * Arguments
+ * "<threads>"	Description
+ * 	- NUMBER	The number of I/O threads for the OCCP server
+ *
+ * Description
+ * Set this environment variable to specify the number of I/O threads used by the OCCP server
+ * for handling communication with clients.
+ *
+ * By-default: "4"
+ */
+constexpr const char* CCL_OCCP_SERVER_IO_THREADS = "CCL_OCCP_SERVER_IO_THREADS";
+
+/**
+ * @brief Set this environment variable to specify the operation timeout for the OCCP server.
+ *
+ * @details
+ * 
+ * Syntax
+ * CCL_OCCP_SERVER_OP_TIMEOUT="<seconds>"
+ *
+ * Arguments
+ * "<seconds>"	Description
+ * 	- NUMBER	The operation timeout in seconds for the OCCP server
+ *
+ * Description
+ * Set this environment variable to specify the operation timeout used by the OCCP server
+ * when waiting for operations to complete.
+ *
+ * By-default: "120"
+ */
+constexpr const char* CCL_OCCP_SERVER_OP_TIMEOUT = "CCL_OCCP_SERVER_OP_TIMEOUT";
+
+/**
+ * @brief Set this environment variable to specify the number of ranks per thread for the OCCP server.
+ *
+ * @details
+ * 
+ * Syntax
+ * CCL_OCCP_SERVER_RANKS_PER_THREAD="<ranks>"
+ *
+ * Arguments
+ * "<ranks>"	Description
+ * 	- NUMBER	The number of ranks handled per thread by the OCCP server
+ *
+ * Description
+ * Set this environment variable to specify how many ranks each send thread should handle
+ * in the OCCP server.
+ *
+ * By-default: "8"
+ */
+constexpr const char* CCL_OCCP_SERVER_RANKS_PER_THREAD = "CCL_OCCP_SERVER_RANKS_PER_THREAD";
+
+/**
+ * @brief Set this environment variable to specify the number of I/O threads for the OCCP client.
+ *
+ * @details
+ * 
+ * Syntax
+ * CCL_OCCP_CLIENT_IO_THREADS="<threads>"
+ *
+ * Arguments
+ * "<threads>"	Description
+ * 	- NUMBER	The number of I/O threads for the OCCP client
+ *
+ * Description
+ * Set this environment variable to specify the number of I/O threads used by the OCCP client
+ * for handling communication with the server.
+ *
+ * By-default: "2"
+ */
+constexpr const char* CCL_OCCP_CLIENT_IO_THREADS = "CCL_OCCP_CLIENT_IO_THREADS";
+
+/**
+ * @brief Set this environment variable to specify the operation timeout for the OCCP client.
+ *
+ * @details
+ * 
+ * Syntax
+ * CCL_OCCP_CLIENT_OP_TIMEOUT="<seconds>"
+ *
+ * Arguments
+ * "<seconds>"	Description
+ * 	- NUMBER	The operation timeout in seconds for the OCCP client
+ *
+ * Description
+ * Set this environment variable to specify the operation timeout used by the OCCP client
+ * when waiting for operations to complete.
+ *
+ * By-default: "120"
+ */
+constexpr const char* CCL_OCCP_CLIENT_OP_TIMEOUT = "CCL_OCCP_CLIENT_OP_TIMEOUT";
+
+/** @} */
 
 constexpr const char* CCL_CHUNK_COUNT = "CCL_CHUNK_COUNT";
 constexpr const char* CCL_MIN_CHUNK_SIZE = "CCL_MIN_CHUNK_SIZE";

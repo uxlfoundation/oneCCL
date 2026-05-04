@@ -73,7 +73,7 @@ extern "C" {
 #endif
 
 #define FI_MAJOR_VERSION 2
-#define FI_MINOR_VERSION 2
+#define FI_MINOR_VERSION 4
 #define FI_REVISION_VERSION 0
 
 /* Removing these breaks the build for some apps.
@@ -215,6 +215,8 @@ enum {
 	FI_ADDR_OPX,
 	FI_ADDR_CXI,
 	FI_ADDR_UCX,
+
+	FI_SOCKADDR_IP,		/* FI_SOCKADDR_IN and FI_SOCKADDR_IN6 */
 };
 
 #define FI_ADDR_UNSPEC		((uint64_t) -1)
