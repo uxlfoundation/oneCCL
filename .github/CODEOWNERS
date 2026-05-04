@@ -1,20 +1,20 @@
 # Documentation owners and reviewers
-doc/        @Maria1Petrova @maciekpac @nikitaxgusev
-*.md        @Maria1Petrova @maciekpac @nikitaxgusev
-man/        @nikitaxgusev @srirajpaul @maciekpac
+doc/        @Maria1Petrova @maciekpac @jbrosenz
+*.md        @Maria1Petrova @maciekpac @jbrosenz
+man/         @maciekpac @jbrosenz
 
 # TTP files
-third-party*    @Maria1Petrova @maciekpac @nikitaxgusev
+third-party*    @Maria1Petrova @maciekpac @jbrosenz
 
 # Tests & examples
-tests/    @nikitaxgusev @srirajpaul
-examples/    @nikitaxgusev @srirajpaul
+tests/    @jbrosenz @maciekpac @Maria1Petrova 
+examples/    @jbrosenz @maciekpac @Maria1Petrova
 
 # Infrastructure and tools
-.github/    @Maria1Petrova @nikitaxgusev
+.github/    @jbrosenz @maciekpac @zhenggb72
 
 # Build & dev infrastructure
-cmake/    @nikitaxgusev @srirajpaul
+cmake/    @zhenggb72 @jbrosenz @maciekpac 
 
 # C++ code
-src/    @nikitaxgusev @srirajpaul
+src/    @zhenggb72 @jbrosenz @maciekpac 
