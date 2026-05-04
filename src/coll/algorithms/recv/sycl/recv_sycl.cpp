@@ -89,6 +89,9 @@ static ccl::event recv_sycl_single_node(sycl::queue& q,
         exchange_entry->update();
     }
 
+    comm->set_handle_exchange_data(std::shared_ptr<ze_handle_exchange_entry>(exchange_entry),
+                                   std::shared_ptr<ccl_sched>(sched));
+
     ccl::event ret_evt;
     auto sycl_deps = get_sycl_events(deps);
 
@@ -149,13 +152,14 @@ static ccl::event recv_sycl_single_node(sycl::queue& q,
     }
 
     done = true;
+
     return ret_evt;
 }
 
 static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
                                            void* recv_buf,
-                                           size_t recv_count,
-                                           ccl::datatype dtype,
+                                           size_t /*recv_count*/,
+                                           ccl::datatype /*dtype*/,
                                            int peer_rank,
                                            ccl_comm* comm,
                                            ccl_stream* global_stream,
@@ -164,18 +168,60 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
                                            bool& done) {
     done = false;
     auto node_comm = comm->get_node_comm();
-    auto& g_shared_res = *ccl::global_data::get().shared_data;
+    auto& g = *ccl::global_data::get().shared_data;
+    sycl::queue queue = global_stream->get_native_stream();
+
+    const int dst = node_comm->rank();
+    const int src = peer_rank;
+    LOG_DEBUG(
+        "recv_mt_sycl: src=", src, " dst=", dst, " global_current_id=", comm->global_current_id);
+
+    // Check if group API is active
+    if (group_impl::is_group_active) {
+        LOG_DEBUG("recv_mt_sycl: using group API path");
+        auto& entry = g.group_buffers[comm->global_current_id][src][dst];
+
+        // Phase-1: discovery - register buffer immediately
+        if (entry.group_discovery_phase) {
+            // switch discovery flag off for phase 2
+            entry.group_discovery_phase = false;
+
+            auto sycl_deps = get_sycl_events(deps);
+            sycl::event e = submit_wait_on_events(queue, sycl_deps);
+            e.wait();
+
+            LOG_DEBUG("recv_mt_sycl: discovery register, ptr=", recv_buf);
+            entry.buffer_ptr = recv_buf;
+            entry.reg_done++; // notify sender that the buffer is registered
+
+            done = true;
+            return ccl::event();
+        }
+
+        // switch discovery flag on for next phase 1
+        entry.group_discovery_phase = true;
+
+        // Phase-2: wait for the сopy to be done
+        LOG_DEBUG("recv_mt_sycl: waiting for the copy to be done");
+        while (entry.copy_done.load() < entry.copy_counter)
+            ;
+        // also increment local counter for this pair to avoid changing the global one
+        entry.copy_counter++;
+
+        done = true;
+        return ccl::event();
+    }
 
     // get the operation ID from the shared handshake
-    int op_id = g_shared_res.get_shared_op_id(comm->global_current_id, false);
+    int op_id = g.get_shared_op_id(comm->global_current_id, false);
 
-    // publish our pointer in hash_table
-    g_shared_res.do_ipc_exchangeExt(comm,
-                                    g_shared_res.hash_table,
-                                    global_stream,
-                                    { recv_buf },
-                                    comm->global_current_id,
-                                    true /* is_pt2pt */
+    // publish our pointer in pt2pt_hash_table
+    g.do_ipc_exchangeExt(comm,
+                         g.pt2pt_hash_table,
+                         global_stream,
+                         { recv_buf },
+                         comm->global_current_id,
+                         true /* is_pt2pt */
     );
 
     // produce a device event that signals "my dependencies are done, my buffer is ready"
@@ -183,11 +229,11 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
     sycl::event recv_ready_event = submit_wait_on_events(q, sycl_deps);
 
     // store that in shared_resources so the sender can wait on it
-    g_shared_res.set_receiver_ready_event(op_id, recv_ready_event);
+    g.set_receiver_ready_event(op_id, recv_ready_event);
 
     // wait for the host handshake (a host-level signal that the copy is done)
     {
-        auto& handshake = g_shared_res.handshakes[op_id];
+        auto& handshake = g.handshakes[op_id];
         // We mark that we have published our pointer
         {
             std::lock_guard<std::mutex> lk(handshake.m);
@@ -204,7 +250,7 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
     }
 
     // combine the final copy_event from the sender with our local deps
-    sycl::event sender_copy_event = g_shared_res.copy_event;
+    sycl::event sender_copy_event = g.copy_event;
     sycl_deps = get_sycl_events(deps);
     sycl_deps.push_back(sender_copy_event);
     sycl::event ret_sycl_event = submit_wait_on_events(q, sycl_deps);
@@ -213,7 +259,7 @@ static ccl::event recv_mt_sycl_single_node(sycl::queue& q,
     return ccl::event::create_from_native(ret_sycl_event);
 }
 
-ccl::event recv_sycl(sycl::queue& q,
+ccl::event recv_sycl(sycl::queue q,
                      void* recv_buf,
                      size_t count,
                      ccl::datatype dtype,
@@ -247,9 +293,17 @@ ccl::event recv_sycl(sycl::queue& q,
         }
     }
     else {
-        done = false;
-        CCL_THROW("SYCL recv is not supported for multi-node case");
-        return ccl::event();
+        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+        ccl_sched_id_t pt2pt_sched_id = atl_comm->tag_creator->get_pt2pt_sched_id();
+        int64_t tag =
+            atl_comm->tag_creator->create(0 /* rank */, comm->get_comm_id(), pt2pt_sched_id, 0);
+        auto sycl_deps = get_sycl_events(deps);
+        auto sycl_queue = global_stream->get_native_stream();
+        LOG_DEBUG("scale-out: recv_sycl: count ", count, ", peer_rank=", peer_rank);
+        sycl::event result =
+            gpu_recv_plain(sycl_queue, recv_buf, count, peer_rank, tag, dtype, comm, sycl_deps);
+        done = true;
+        return ccl::event::create_from_native(result);
     }
 }
 } // namespace v1

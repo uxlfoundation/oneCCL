@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 */
 
-#ifndef UMF_PROVIDER_LEVEL_ZERO_H
-#define UMF_PROVIDER_LEVEL_ZERO_H
+#ifndef UMF_LEVEL_ZERO_PROVIDER_H
+#define UMF_LEVEL_ZERO_PROVIDER_H
 
 #include <umf/memory_provider_gpu.h>
 
@@ -91,10 +91,10 @@ umf_result_t umfLevelZeroMemoryProviderParamsSetDeviceOrdinal(
     umf_level_zero_memory_provider_params_handle_t hParams,
     uint32_t deviceOrdinal);
 
-umf_memory_provider_ops_t *umfLevelZeroMemoryProviderOps(void);
+const umf_memory_provider_ops_t *umfLevelZeroMemoryProviderOps(void);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* UMF_PROVIDER_LEVEL_ZERO_H */
+#endif /* UMF_LEVEL_ZERO_PROVIDER_H */

@@ -1,17 +1,17 @@
 # Documentation owners and reviewers
 doc/        @Maria1Petrova @maciekpac @jbrosenz
 *.md        @Maria1Petrova @maciekpac @jbrosenz
-man/        @maciekpac @jbrosenz
+man/         @maciekpac @jbrosenz
 
 # TTP files
-third-party*    @Maria1Petrova @jbrosenz
+third-party*    @Maria1Petrova @maciekpac @jbrosenz
 
 # Tests & examples
 tests/    @jbrosenz @maciekpac @Maria1Petrova 
 examples/    @jbrosenz @maciekpac @Maria1Petrova
 
 # Infrastructure and tools
-.github/    @jbrosenz @maciekpac 
+.github/    @jbrosenz @maciekpac @zhenggb72
 
 # Build & dev infrastructure
 cmake/    @zhenggb72 @jbrosenz @maciekpac 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 Intel Corporation
+ * Copyright (C) 2024-2025 Intel Corporation
  *
  * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -8,7 +8,7 @@
 #ifndef UMF_FILE_MEMORY_PROVIDER_H
 #define UMF_FILE_MEMORY_PROVIDER_H
 
-#include <umf/providers/provider_os_memory.h>
+#include <umf/memory_provider.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,11 +24,11 @@ typedef struct umf_file_memory_provider_params_t
     *umf_file_memory_provider_params_handle_t;
 
 /// @brief  Create a struct to store parameters of the File Memory Provider.
-/// @param  hParams [out] handle to the newly created parameters struct.
 /// @param  path path to the file.
+/// @param  hParams [out] handle to the newly created parameters struct.
 /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 umf_result_t umfFileMemoryProviderParamsCreate(
-    umf_file_memory_provider_params_handle_t *hParams, const char *path);
+    const char *path, umf_file_memory_provider_params_handle_t *hParams);
 
 /// @brief  Destroy parameters struct.
 /// @param  hParams handle to the parameters of the File Memory Provider.
@@ -66,7 +66,7 @@ typedef enum umf_file_memory_provider_native_error {
     UMF_FILE_RESULT_ERROR_PURGE_FORCE_FAILED, ///< Force purging failed
 } umf_file_memory_provider_native_error_t;
 
-umf_memory_provider_ops_t *umfFileMemoryProviderOps(void);
+const umf_memory_provider_ops_t *umfFileMemoryProviderOps(void);
 
 #ifdef __cplusplus
 }

@@ -22,6 +22,7 @@
 #include "common/global/global.hpp"
 #include "common/event/impls/host_event.hpp"
 #include "common/request/request.hpp"
+#include "MT/shared_resource.hpp"
 #include "sched/sched.hpp"
 #include "oneapi/ccl/types.hpp"
 #include "oneapi/ccl/kvs.hpp"
@@ -36,6 +37,19 @@
 #endif // CCL_ENABLE_SYCL
 
 // this file is created only to support multi threading  functionality
+
+namespace ccl {
+namespace v1 {
+
+struct impl_dispatch {
+    template <class Object>
+    const typename Object::impl_value_t& operator()(const Object& obj) {
+        return obj.get_impl();
+    }
+};
+
+}; // namespace v1
+}; // namespace ccl
 
 ccl_internal_comm::ccl_internal_comm(int comm_id, int rank, int size)
         : m_dtree(size, rank)
@@ -144,6 +158,8 @@ void ccl_comm::initExt(int size,
     }
 
     enable_multi_thread_instance = true;
+    // Set the flag in shared_data for group operations
+    ccl::global_data::get().shared_data->is_multi_thread_instance = true;
 #ifdef CCL_ENABLE_SYCL
     // TODO: choose more correct place for falling back
     CCL_THROW_IF_NOT(ccl::global_data::env().sycl_esimd == 0,
@@ -162,6 +178,23 @@ void ccl_comm::initExt(int size,
 
     // Potential race: multiple threads may overwrite this variable simultaneously that's why use barrier
     global_current_id = group_id;
+    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[group_id]);
+
+    if (comm_rank == 0) {
+        {
+            std::lock_guard<std::mutex> lock(ccl::global_data::get().shared_data->allocation_mutex);
+            if (static_cast<int>(ccl::global_data::get().shared_data->group_buffers.size()) <=
+                global_current_id) {
+                ccl::global_data::get().shared_data->group_buffers.resize(global_current_id + 1);
+            }
+        }
+        ccl::global_data::get().shared_data->group_buffers[global_current_id].reserve(comm_size);
+        for (int i = 0; i < comm_size; i++) {
+            ccl::global_data::get().shared_data->group_buffers[global_current_id].emplace_back(
+                std::vector<ccl::group_buffer_entry>(comm_size));
+        }
+    }
+
     pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[group_id]);
 
     comm_impl =
@@ -191,4 +224,17 @@ void ccl_comm::initExt(int size,
     pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
 
     env = std::make_shared<ccl_comm_env>(device_ptr);
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    if (ccl::global_data::env().enable_sycl_kernels && device_ptr != NULL) {
+        sycl::queue q(device_ptr->get_native());
+        if (q.get_context().get_backend() == sycl::backend::ext_oneapi_level_zero) {
+            ccl::stream op_stream = ccl::create_stream(q);
+            ccl::impl_dispatch disp;
+            ccl_stream* cclstream = get_stream_ptr(disp(op_stream));
+            coll_initExt(this, ccl::global_data::get().shared_data->hash_table, cclstream);
+            LOG_DEBUG("invoking multi-threaded path");
+        }
+    }
+#endif
 }

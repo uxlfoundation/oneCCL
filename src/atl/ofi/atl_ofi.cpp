@@ -1462,9 +1462,6 @@ atl_status_t atl_ofi::exchange_hostnames_if_enabled(std::shared_ptr<ipmi> pmi) {
         return ATL_STATUS_SUCCESS;
     }
 
-    LOG_WARN(
-        "Warning: CCL_OFI_ENABLE_HOSTNAME_SHARING is enabled; this feature is deprecated and might contain security vulnerabilities.");
-
     size_t pmi_rank = pmi->get_rank();
     char my_hostname[ATL_MAX_HOSTNAME_LEN] = { 0 };
 

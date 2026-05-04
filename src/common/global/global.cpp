@@ -122,6 +122,7 @@ ccl::status global_data::init() {
 
 void global_data::init_resize_dependent_objects() {
     dtypes.reset(new ccl_datatype_storage());
+    redtype_storage.reset(new ccl_reduction_type_storage());
 
     sched_cache.reset(new ccl_sched_cache());
     buffer_cache.reset(new ccl::buffer_cache(env_object.worker_count));
@@ -152,6 +153,7 @@ void global_data::reset_resize_dependent_objects() {
     sched_cache.reset();
     buffer_cache.reset();
     dtypes.reset();
+    redtype_storage.reset();
 }
 
 void global_data::reset_resize_independent_objects() {
@@ -170,8 +172,6 @@ void global_data::getenv_local_coord(const char* local_proc_idx_env_name,
                  "trying to get them from ATL");
         local_proc_idx = CCL_ENV_INT_NOT_SPECIFIED;
         local_proc_count = CCL_ENV_INT_NOT_SPECIFIED;
-        ccl::global_data::env().enable_init_hostname_sharing = 1;
-        ccl::global_data::env().enable_hostname_sharing = 1;
         return;
     }
 

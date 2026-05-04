@@ -583,17 +583,17 @@ void nocopy_gather_from_remote_and_dist_to_rank_pair(int *even_ranks,
     }
 
 template <typename dtype, size_t align>
-class Kernel_compute;
+class oneccl_kernel_compute;
 //template<typename dtype> class Kernel_rankSync;
 
 template <typename dtype>
-class NoCopyKernel_compute;
+class oneccl_nocopy_kernel_compute;
 //template<typename dtype> class NoCopyKernel_GlobalSync;
 
 template <typename dtype>
-class AllreduceLargeKernel_GlobalSync;
+class oneccl_allreduce_large_kernel_global_sync;
 template <typename dtype>
-class AllreduceLargeKernel_LocalSync;
+class oneccl_allreduce_large_kernel_local_sync;
 
 template <typename data_type, uint32_t max_rank = MAX_RANK>
 class sycl_allreduce_large : public sycl_coll_base<data_type> {
@@ -833,7 +833,7 @@ private:
 
                 //The first kernel does the actual computation while the second kernel does the sync across ranks.
                 e = queue.submit([&](sycl::handler &cgh) {
-                    cgh.parallel_for<class Kernel_compute<data_type, align>>(
+                    cgh.parallel_for<class oneccl_kernel_compute<data_type, align>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         uint32_t idx = idx2.get_global_id();
@@ -1159,7 +1159,7 @@ private:
 
                 //The first kernel does the actual computation while the second kernel does the sync across ranks.
                 e = queue.submit([&](sycl::handler &cgh) {
-                    cgh.parallel_for<class NoCopyKernel_compute<data_type>>(
+                    cgh.parallel_for<class oneccl_nocopy_kernel_compute<data_type>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         uint32_t idx = idx2.get_global_id();
@@ -1223,7 +1223,7 @@ private:
         uint32_t total_threads_needed_sync = 1;
         int wg_size = 1;
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class AllreduceLargeKernel_GlobalSync<data_type>>(
+            cgh.parallel_for<class oneccl_allreduce_large_kernel_global_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel
@@ -1307,7 +1307,7 @@ private:
         int wg_size = 1;
 
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class AllreduceLargeKernel_LocalSync<data_type>>(
+            cgh.parallel_for<class oneccl_allreduce_large_kernel_local_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel

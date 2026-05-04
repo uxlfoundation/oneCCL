@@ -17,59 +17,22 @@
 #include "oneapi/ccl.hpp"
 #include "common/global/global.hpp"
 #include "coll/algorithms/utils/sycl_kernels.hpp"
-#include "coll/algorithms/allreduce/sycl/allreduce_small_sycl_impl.hpp"
+#include "coll/algorithms/utils/sycl_coll_base.hpp"
 
-template <typename T, int N>
-void inline read_reduce_write_kernel(std::array<void *, MAX_GPUS> pair_ptrs,
-                                     std::array<void *, MAX_GPUS> local_ptrs,
-                                     std::array<void *, MAX_GPUS> even_ptrs,
-                                     const bool is_multi_tile,
-                                     size_t idx) {
-    if (is_multi_tile) {
-#pragma unroll
-        for (int i = 0; i < N; i++) {
-            const T pair_val = ((T *)pair_ptrs[i])[idx];
-            const T local_val = ((T *)local_ptrs[i])[idx];
-            const T red_val = pair_val + local_val;
-            ((T *)even_ptrs[i])[idx] = red_val;
-        }
-    }
-    else {
-#pragma unroll
-        for (int i = 0; i < N; i++) {
-            ((T *)even_ptrs[i])[idx] = ((T *)local_ptrs[i])[idx];
-        }
-    }
-}
-
-template <typename T, int N, int vec_size>
-void inline read_reduce_write(std::array<void *, MAX_GPUS> pair_ptrs,
-                              std::array<void *, MAX_GPUS> local_ptrs,
-                              std::array<void *, MAX_GPUS> even_ptrs,
-                              const bool is_multi_tile,
-                              const size_t count,
-                              const sycl::nd_item<1> it) {
-    const size_t idx = it.get_global_linear_id();
-
-    const size_t packed_count = count / vec_size;
-
-    if (idx < packed_count) {
-        using AT = sycl::vec<T, vec_size>;
-        read_reduce_write_kernel<AT, N>(pair_ptrs, local_ptrs, even_ptrs, is_multi_tile, idx);
-    }
-    else {
-        const size_t new_idx = idx + (vec_size - 1) * packed_count;
-        if (new_idx < count) {
-            read_reduce_write_kernel<T, N>(pair_ptrs, local_ptrs, even_ptrs, is_multi_tile, new_idx);
-        }
-    }
-}
+template <typename T, int vec_size, int N>
+class oneccl_reduce_scatter_large_read {};
+template <typename T, bool use_full_vector, int vec_size, int N, int chunk_idx = 0>
+class oneccl_reduce_scatter_large_prologue {};
+template <typename T, bool use_full_vector, int vec_size, int N, int chunk_idx = 0>
+class oneccl_reduce_scatter_large_main {};
+template <typename T, bool use_full_vector, int vec_size, int N, int chunk_idx = 0>
+class oneccl_reduce_scatter_large_epilogue {};
 
 template <typename T, int N, int vec_size>
 sycl::event reduce_scatter_large_read_invoke(std::array<void *, MAX_NODE_RANKS> send_bufs,
                                              void *recv_buf,
                                              size_t count,
-                                             ccl::reduction reduction,
+                                             const ccl_reduction_data &reduction,
                                              std::shared_ptr<ccl_comm> comm,
                                              sycl::queue &q,
                                              std::vector<sycl::event> deps,
@@ -87,11 +50,11 @@ sycl::event reduce_scatter_large_read_invoke(std::array<void *, MAX_NODE_RANKS> 
         ccl_comm_barrier_data dummy_cbd = comm->barrier_data();
         const size_t kernel_threads = count / vec_size + count % vec_size;
         const size_t kernel_size = ((kernel_threads + work_group_size - 1) / work_group_size) * work_group_size;
-        h.parallel_for(
+        h.parallel_for<oneccl_reduce_scatter_large_read<T, vec_size, N>>(
             sycl::nd_range<1>(kernel_size, work_group_size),
             [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sub_group_size)]] {
-                reduce_sum<T, N, vec_size, 1, 0, 0>(
-                    nullptr, recv_ptr, nullptr, src_ptrs, src_ptrs, dummy_kbd, dummy_cbd, count, it);
+                reduce_base<T, N, vec_size, 1, 0, 0>(
+                    nullptr, recv_ptr, nullptr, src_ptrs, src_ptrs, dummy_kbd, dummy_cbd, reduction, count, it);
             });
     });
     return work_event;
@@ -128,6 +91,8 @@ ccl::event reduce_scatter_large_read_ipc(const void *send_buf,
     CCL_THROW_IF_NOT(node_comm->size() == N,
                      "SYCL reduce_scatter read algo is only implemented for single GPU case");
 
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+
     const int rank = node_comm->rank();
     const size_t offset_rank = rank * recv_count * dsize;
     std::array<void *, MAX_NODE_RANKS> src_ptrs;
@@ -156,7 +121,7 @@ ccl::event reduce_scatter_large_read_ipc(const void *send_buf,
     // perform kernel on the peeled first unaligned small chunk
     if (offset_byte != 0) {
         dep_event = reduce_scatter_large_read_invoke<T, N, 1>(
-            src_ptrs, recv_buf, offset_count, reduction, node_comm, q, { barrier_event });
+            src_ptrs, recv_buf, offset_count, reduction_op, node_comm, q, { barrier_event });
     }
     else {
         dep_event = barrier_event;
@@ -164,7 +129,7 @@ ccl::event reduce_scatter_large_read_ipc(const void *send_buf,
 
     // perform kernel on the aligned large chunk
     work_event = reduce_scatter_large_read_invoke<T, N, vec_size>(
-        src_ptrs, recv_buf, recv_count - offset_count, reduction, node_comm, q, { dep_event }, offset_byte);
+        src_ptrs, recv_buf, recv_count - offset_count, reduction_op, node_comm, q, { dep_event }, offset_byte);
 
     work_event = invoke_barrier(node_comm, q, { work_event }, is_cpu_barrier);
 
@@ -199,7 +164,7 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
                                      ccl_stream *global_stream,
                                      sycl_ptrs_type &sycl_ptrs,
                                      const ccl::vector_class<ccl::event> &deps,
-                                     bool use_tmp) {
+                                     const bool use_tmp) {
     constexpr int N = NE;
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
@@ -232,6 +197,10 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
     }
+
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+    const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
+
     std::array<void *, MAX_GPUS> l_mdfi_send_ptrs, l_xelink_work_ptrs, l_send_ptrs;
     std::array<void *, MAX_GPUS> l_cp_src_ptrs, l_cp_dst_ptrs, l_cp_src_ptrs_next, l_cp_dst_ptrs_next;
     std::array<void *, MAX_NODE_RANKS> l_work_ptrs, l_work_ptrs_prev;
@@ -324,11 +293,21 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
                 const size_t kernel_size =
                     ((kernel_threads + work_group_size_cp - 1) / work_group_size_cp) * work_group_size_cp;
                 h.depends_on(dep_events);
+                constexpr int prologue_chunk_id = NE * 1000 + NP * 100 + 10;
 
-                h.parallel_for(
+                h.parallel_for<
+                    oneccl_reduce_scatter_large_prologue<T, use_full_vector, vec_size, N, prologue_chunk_id>>(
                     sycl::nd_range<1>(kernel_size, work_group_size_cp),
                     [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sub_group_size_cp)]] {
-                        copy_data<T, N, vec_size_cp>(l_cp_dst_ptrs, l_cp_src_ptrs, data_count, it);
+                        // copy first chunk from send buf to tmp buf
+                        if (!reduce_has_pre_operation) {
+                            copy_data<T, N, vec_size_cp>(l_cp_dst_ptrs, l_cp_src_ptrs, data_count, it);
+                        }
+                        else {
+                            // apply user defined pre-operation on each copied data element
+                            copy_and_modify_data<T, vec_size_cp>(
+                                l_cp_dst_ptrs, l_cp_src_ptrs, even_comm_size, data_count, reduction_op, it);
+                        }
                     });
             });
         }
@@ -363,27 +342,46 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
 
             ccl_kernel_barrier_data dummy_kbd;
             ccl_comm_barrier_data dummy_cbd = node_comm->barrier_data();
+            constexpr int main_chunk_id = NE * 1000 + NP * 100;
 
-            h.parallel_for(
+            h.parallel_for<oneccl_reduce_scatter_large_main<T, use_full_vector, vec_size, N, main_chunk_id>>(
                 sycl::nd_range<1>(kernel_size, work_group_size),
                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sub_group_size)]] {
-                    read_reduce_write<T, N, vec_size>(
-                        l_mdfi_send_ptrs, l_send_ptrs, l_xelink_work_ptrs, is_multi_tile, data_count, it);
+                    read_reduce_write<T, N, vec_size>(l_mdfi_send_ptrs,
+                                                      l_send_ptrs,
+                                                      l_xelink_work_ptrs,
+                                                      reduction_op,
+                                                      is_multi_tile,
+                                                      data_count,
+                                                      it);
 
                     if (nc > 0 && is_multi_gpu) {
-                        reduce_sum<T, N, vec_size, 1, 0, 0>(nullptr,
-                                                            l_recv_ptr_prev,
-                                                            nullptr,
-                                                            l_work_ptrs_prev,
-                                                            l_work_ptrs_prev,
-                                                            dummy_kbd,
-                                                            dummy_cbd,
-                                                            data_count_prev,
-                                                            it);
+                        reduce_base<T, N, vec_size, 1, 0, 0>(nullptr,
+                                                             l_recv_ptr_prev,
+                                                             nullptr,
+                                                             l_work_ptrs_prev,
+                                                             l_work_ptrs_prev,
+                                                             dummy_kbd,
+                                                             dummy_cbd,
+                                                             reduction_op,
+                                                             data_count_prev,
+                                                             it);
                     }
 
                     if (is_tmp_used && nc < num_chunks - 1 && is_multi_tile) {
-                        copy_data<T, N, vec_size>(l_cp_dst_ptrs_next, l_cp_src_ptrs_next, data_count_next, it);
+                        // copy next chunk from send buf to tmp buf
+                        if (!reduce_has_pre_operation) {
+                            copy_data<T, N, vec_size>(l_cp_dst_ptrs_next, l_cp_src_ptrs_next, data_count_next, it);
+                        }
+                        else {
+                            // apply user defined pre-operation on each copied data element
+                            copy_and_modify_data<T, vec_size>(l_cp_dst_ptrs_next,
+                                                              l_cp_src_ptrs_next,
+                                                              even_comm_size,
+                                                              data_count_next,
+                                                              reduction_op,
+                                                              it);
+                        }
                     }
                 });
         });
@@ -408,19 +406,22 @@ ccl::event reduce_scatter_large_impl(const void *send_buf,
 
             work_event = q_use.submit([=](sycl::handler &h) {
                 h.depends_on(work_event);
+                constexpr int epilogue_chunk_id = NE * 1000 + NP * 100 + 2;
 
-                h.parallel_for(
+                h.parallel_for<
+                    oneccl_reduce_scatter_large_epilogue<T, use_full_vector, vec_size, N, epilogue_chunk_id>>(
                     sycl::nd_range<1>(kernel_size, work_group_size),
                     [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sub_group_size)]] {
-                        reduce_sum<T, N, vec_size, 1, 0, 0>(nullptr,
-                                                            l_recv_ptr,
-                                                            nullptr,
-                                                            l_work_ptrs,
-                                                            l_work_ptrs,
-                                                            dummy_kbd,
-                                                            dummy_cbd,
-                                                            data_count,
-                                                            it);
+                        reduce_base<T, N, vec_size, 1, 0, 0>(nullptr,
+                                                             l_recv_ptr,
+                                                             nullptr,
+                                                             l_work_ptrs,
+                                                             l_work_ptrs,
+                                                             dummy_kbd,
+                                                             dummy_cbd,
+                                                             reduction_op,
+                                                             data_count,
+                                                             it);
                     });
             });
         }

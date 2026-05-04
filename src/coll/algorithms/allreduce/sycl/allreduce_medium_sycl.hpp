@@ -632,34 +632,34 @@ void write_output_2rank(int idx,
 }
 
 template <typename dtype, size_t align>
-class Kernel_load_input_to_temp_buffer;
+class oneccl_kernel_load_input_to_temp_buffer;
 template <typename dtype, size_t align>
-class Kernel_local_sum_and_distribute_to_remote_ranks;
+class oneccl_kernel_local_sum_and_distribute_to_remote_ranks;
 template <typename dtype, size_t align>
-class Kernel_all_sum;
+class oneccl_kernel_all_sum;
 template <typename dtype, size_t align>
-class Kernel_gather_from_remote_and_dist_to_rank_pair;
+class oneccl_kernel_gather_from_remote_and_dist_to_rank_pair;
 template <typename dtype, size_t align>
-class Kernel_write_output;
+class oneccl_kernel_write_output;
 
 template <typename dtype>
-class AllreduceMediumKernel_2rank;
+class oneccl_allreduce_medium_kernel_2rank;
 template <typename dtype>
-class AllreduceMediumKernel_write_output_2rank;
+class oneccl_allreduce_medium_kernel_write_output_2rank;
 
 template <typename dtype>
-class NoCopyKernel_local_sum_and_distribute_to_remote_ranks;
+class oneccl_nocopy_kernel_local_sum_and_distribute_to_remote_ranks;
 template <typename dtype>
-class NoCopyKernel_all_sum;
+class oneccl_nocopy_kernel_all_sum;
 template <typename dtype>
-class NoCopyKernel_gather_from_remote_and_dist_to_rank_pair;
+class oneccl_nocopy_kernel_gather_from_remote_and_dist_to_rank_pair;
 template <typename dtype>
-class NoCopyKernel_2rank;
+class oneccl_nocopy_kernel_2rank;
 
 template <typename dtype>
-class AllreduceMediumKernel_GlobalSync;
+class oneccl_allreduce_medium_kernel_global_sync;
 template <typename dtype>
-class AllreduceMediumKernel_LocalSync;
+class oneccl_allreduce_medium_kernel_local_sync;
 
 template <typename data_type, uint32_t max_rank = MAX_RANK, uint32_t max_buffer = 1024 /*KB*/>
 class sycl_allreduce_medium : public sycl_coll_base<data_type> {
@@ -828,7 +828,7 @@ private:
 #if KERNEL_EXEC_MAP & 1
             //Data is sent to other tile within the same gpu via MDFI
             queue.submit([&](sycl::handler &cgh) {
-                cgh.parallel_for<class Kernel_load_input_to_temp_buffer<data_type, align>>(
+                cgh.parallel_for<class oneccl_kernel_load_input_to_temp_buffer<data_type, align>>(
                     sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                     {
                     uint32_t idx = idx2.get_global_id();
@@ -870,7 +870,7 @@ private:
 #if KERNEL_EXEC_MAP & 4
             //local reduction kernel
             queue.submit([&](sycl::handler &cgh) {
-                    cgh.parallel_for<class Kernel_local_sum_and_distribute_to_remote_ranks<data_type, align>>(
+                    cgh.parallel_for<class oneccl_kernel_local_sum_and_distribute_to_remote_ranks<data_type, align>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         uint32_t idx = idx2.get_global_id();
@@ -912,7 +912,7 @@ private:
 #if KERNEL_EXEC_MAP & 16
             //local reduction kernel
             queue.submit([&](sycl::handler &cgh) {
-                    cgh.parallel_for<class Kernel_all_sum<data_type, align>>(
+                    cgh.parallel_for<class oneccl_kernel_all_sum<data_type, align>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         uint32_t idx = idx2.get_global_id();
@@ -950,7 +950,7 @@ private:
 #if KERNEL_EXEC_MAP & 64
             //copy the results to all the ranks.
             queue.submit([&](sycl::handler &cgh) {
-                    cgh.parallel_for<class Kernel_gather_from_remote_and_dist_to_rank_pair<data_type, align>>(
+                    cgh.parallel_for<class oneccl_kernel_gather_from_remote_and_dist_to_rank_pair<data_type, align>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         uint32_t idx = idx2.get_global_id();
@@ -992,7 +992,7 @@ private:
 #if KERNEL_EXEC_MAP & 256
             //copy the results to all the ranks.
             e = queue.submit([&](sycl::handler &cgh) {
-                    cgh.parallel_for<class Kernel_write_output<data_type, align>>(
+                    cgh.parallel_for<class oneccl_kernel_write_output<data_type, align>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         uint32_t idx = idx2.get_global_id();
@@ -1121,7 +1121,7 @@ private:
 
             //local reduction kernel
             e = queue.submit([&](sycl::handler &cgh) {
-                cgh.parallel_for<class NoCopyKernel_local_sum_and_distribute_to_remote_ranks<data_type>>(
+                cgh.parallel_for<class oneccl_nocopy_kernel_local_sum_and_distribute_to_remote_ranks<data_type>>(
                     sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                     {
                     uint32_t idx = idx2.get_global_id();
@@ -1167,7 +1167,7 @@ private:
 
             //local reduction kernel
             e = queue.submit([&](sycl::handler &cgh) {
-                cgh.parallel_for<class NoCopyKernel_all_sum<data_type>>(
+                cgh.parallel_for<class oneccl_nocopy_kernel_all_sum<data_type>>(
                     sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                     {
                     uint32_t idx = idx2.get_global_id();
@@ -1209,7 +1209,7 @@ private:
 
             //copy the results to all the ranks.
             e = queue.submit([&](sycl::handler &cgh) {
-                    cgh.parallel_for<class NoCopyKernel_gather_from_remote_and_dist_to_rank_pair<data_type>>(
+                    cgh.parallel_for<class oneccl_nocopy_kernel_gather_from_remote_and_dist_to_rank_pair<data_type>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         //ESIMD kernel
@@ -1328,7 +1328,7 @@ private:
 
         //local reduction kernel
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class NoCopyKernel_2rank<data_type>>(
+            cgh.parallel_for<class oneccl_nocopy_kernel_2rank<data_type>>(
                 sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                 {
                 uint32_t idx = idx2.get_global_id();
@@ -1398,7 +1398,7 @@ private:
         uint32_t total_threads_needed_sync = 1;
         int wg_size = 1;
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class AllreduceMediumKernel_GlobalSync<data_type>>(
+            cgh.parallel_for<class oneccl_allreduce_medium_kernel_global_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel
@@ -1481,7 +1481,7 @@ private:
         int wg_size = 1;
 
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class AllreduceMediumKernel_LocalSync<data_type>>(
+            cgh.parallel_for<class oneccl_allreduce_medium_kernel_local_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel

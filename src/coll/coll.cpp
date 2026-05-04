@@ -1155,10 +1155,6 @@ ccl::event ccl_allgather(const void* send_buf,
                                                           {}, // hint_algo
                                                           false); // is_scaleout
     if (can_use_sycl_kernels(param)) {
-        if (comm->global_current_id > 0) {
-            CCL_THROW(
-                "allgather is not supported for multi-group case of multithreaded communicator yet");
-        }
         LOG_DEBUG(
             "|CCL_SYCL| allgather selects sycl-kernels count: ", count, ", datatype: ", dtype);
 
@@ -1166,7 +1162,7 @@ ccl::event ccl_allgather(const void* send_buf,
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allgatherv_attr>();
         const ccl::vector_class<size_t> recv_counts(comm->size(), count);
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = ccl::allgather_sycl(q,
                                                        send_buf,
@@ -1267,10 +1263,6 @@ ccl::event ccl_allgatherv(const void* send_buf,
     param.recv_counts = recv_counts.data();
 
     if (can_use_sycl_kernels(param)) {
-        if (comm->global_current_id > 0) {
-            CCL_THROW(
-                "allgatherv is not supported for multi-group case of multithreaded communicator yet");
-        }
         LOG_DEBUG("|CCL_SYCL| allgatherv selects sycl-kernels send_count: ",
                   send_count,
                   ", datatype: ",
@@ -1279,7 +1271,7 @@ ccl::event ccl_allgatherv(const void* send_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allgatherv_attr>();
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = ccl::allgather_sycl(q,
                                                        send_buf,
@@ -1384,7 +1376,7 @@ ccl::event ccl_allreduce(const void* send_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allreduce_attr>();
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = allreduce_sycl(q,
                                                   send_buf,
@@ -1484,17 +1476,13 @@ ccl::event ccl_alltoall(const void* send_buf,
                                                           false); // is_scaleout
 
     if (can_use_sycl_kernels(param)) {
-        if (comm->global_current_id > 0) {
-            CCL_THROW(
-                "alltoall is not supported for multi-group case of multithreaded communicator");
-        }
         LOG_DEBUG(
             "|CCL_SYCL| alltoall selects sycl-kernels send_count: ", count, ", datatype: ", dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::alltoall_attr>();
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = ccl::alltoall_sycl(q,
                                                       send_buf,
@@ -1733,7 +1721,7 @@ ccl::event ccl_broadcast(void* buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::broadcast_attr>();
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = ccl::broadcast_sycl(
                 q, buf, buf, count, dtype, root, comm, op_stream, dummy_unused_attr, deps, done);
@@ -1823,17 +1811,13 @@ ccl::event ccl_broadcast(void* send_buf,
                                                           false); // is_scaleout
 
     if (can_use_sycl_kernels(param)) {
-        if (comm->global_current_id > 0) {
-            CCL_THROW(
-                "broadcast is not supported for multi-group case of multithreaded communicator yet");
-        }
         LOG_DEBUG(
             "|CCL_SYCL| broadcast selects sycl-kernels count: ", count, ", datatype: ", dtype);
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::broadcast_attr>();
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = ccl::broadcast_sycl(q,
                                                        send_buf,
@@ -2005,7 +1989,7 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::reduce_scatter_attr>();
-        collective = [=, &q, &deps]() -> ccl::event {
+        collective = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = reduce_scatter_sycl(q,
                                                        send_buf,
@@ -2110,7 +2094,7 @@ ccl::event ccl_recv(void* recv_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::pt2pt_attr>();
-        recv_operation = [=, &q, &deps]() -> ccl::event {
+        recv_operation = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = recv_sycl(q,
                                              recv_buf,
@@ -2214,7 +2198,7 @@ ccl::event ccl_send(const void* send_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::pt2pt_attr>();
-        send_operation = [=, &q, &deps]() -> ccl::event {
+        send_operation = [=, &deps]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = send_sycl(q,
                                              send_buf,

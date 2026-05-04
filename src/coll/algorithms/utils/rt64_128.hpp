@@ -18,6 +18,9 @@
 template <typename T, int SubGroupSize>
 struct Rt64_128_PCIE {
     using message_t = sycl::vec<uint32_t, 4>;
+#if defined(__SYCL_DEVICE_ONLY__)
+    using inner_t = uint32_t __attribute__((ext_vector_type(4)));
+#endif
 
     // transaction of 128-byte is not atomic across HBM channel
     constexpr static int payloadChannels = SubGroupSize * 15 / 16;
@@ -122,14 +125,14 @@ struct Rt64_128_PCIE {
                          "mov (M1, 1) %0(3, 7)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 11)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 15)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                          : "rw"(flag));
 #else
             asm volatile("mov (M1, 1) %0(6, 3)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(6, 7)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(7, 3)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(7, 7)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                          : "rw"(flag));
 #endif
         }
@@ -141,7 +144,7 @@ struct Rt64_128_PCIE {
                              "mov (M1, 1) %0(3, 23)<1> %1(0, 0)<0;1,0>\n"
                              "mov (M1, 1) %0(3, 27)<1> %1(0, 0)<0;1,0>\n"
                              "mov (M1, 1) %0(3, 31)<1> %1(0, 0)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              : "rw"(flag));
             }
         }
@@ -155,14 +158,14 @@ struct Rt64_128_PCIE {
                      "mov (M1, 1) %0(3, 7)<1> %1(0, 0)<0;1,0>\n"
                      "mov (M1, 1) %0(3, 11)<1> %1(0, 0)<0;1,0>\n"
                      "mov (M1, 1) %0(3, 15)<1> %1(0, 0)<0;1,0>\n"
-                     : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                     : "+rw"(reinterpret_cast<inner_t &>(messages))
                      : "rw"(flag));
 #else
         asm volatile("mov (M1, 1) %0(6, 3)<1> %1(0, 0)<0;1,0>\n"
                      "mov (M1, 1) %0(6, 7)<1> %1(0, 0)<0;1,0>\n"
                      "mov (M1, 1) %0(7, 3)<1> %1(0, 0)<0;1,0>\n"
                      "mov (M1, 1) %0(7, 7)<1> %1(0, 0)<0;1,0>\n"
-                     : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                     : "+rw"(reinterpret_cast<inner_t &>(messages))
                      : "rw"(flag));
 #endif
 
@@ -171,7 +174,7 @@ struct Rt64_128_PCIE {
                          "mov (M1, 1) %0(3, 23)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 27)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 31)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          : "rw"(flag));
         }
 #endif
@@ -188,14 +191,14 @@ struct Rt64_128_PCIE {
                              "mov (M1, 1) %0(0, 15)<1> %0(3, 3)<0;1,0>\n"
                              "mov (M1, 1) %0(1, 15)<1> %0(3, 7)<0;1,0>\n"
                              "mov (M1, 1) %0(2, 15)<1> %0(3, 11)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
 #else
                 asm volatile("\n"
                              "mov (M1, 1) %0(1, 7)<1> %0(6, 3)<0;1,0>\n"
                              "mov (M1, 1) %0(3, 7)<1> %0(6, 7)<0;1,0>\n"
                              "mov (M1, 1) %0(5, 7)<1> %0(7, 3)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
 #endif
             }
@@ -208,7 +211,7 @@ struct Rt64_128_PCIE {
                              "mov (M1, 1) %0(0, 31)<1> %0(3, 19)<0;1,0>\n"
                              "mov (M1, 1) %0(1, 31)<1> %0(3, 23)<0;1,0>\n"
                              "mov (M1, 1) %0(2, 31)<1> %0(3, 27)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
             }
         }
@@ -223,14 +226,14 @@ struct Rt64_128_PCIE {
                          "mov (M1, 1) %0(0, 15)<1> %0(3, 3)<0;1,0>\n"
                          "mov (M1, 1) %0(1, 15)<1> %0(3, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(2, 15)<1> %0(3, 11)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
 #else
             asm volatile("\n"
                          "mov (M1, 1) %0(1, 7)<1> %0(6, 3)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 7)<1> %0(6, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(5, 7)<1> %0(7, 3)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
 #endif
         }
@@ -244,7 +247,7 @@ struct Rt64_128_PCIE {
                          "mov (M1, 1) %0(0, 31)<1> %0(3, 19)<0;1,0>\n"
                          "mov (M1, 1) %0(1, 31)<1> %0(3, 23)<0;1,0>\n"
                          "mov (M1, 1) %0(2, 31)<1> %0(3, 27)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
         }
 #endif
@@ -261,14 +264,14 @@ struct Rt64_128_PCIE {
                              "mov (M1, 1) %0(3, 3)<1> %0(0, 15)<0;1,0>\n"
                              "mov (M1, 1) %0(3, 7)<1> %0(1, 15)<0;1,0>\n"
                              "mov (M1, 1) %0(3, 11)<1> %0(2, 15)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
 #else
                 asm volatile("\n"
                              "mov (M1, 1) %0(6, 3)<1> %0(1, 7)<0;1,0>\n"
                              "mov (M1, 1) %0(6, 7)<1> %0(3, 7)<0;1,0>\n"
                              "mov (M1, 1) %0(7, 3)<1> %0(5, 7)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
 #endif
             }
@@ -281,7 +284,7 @@ struct Rt64_128_PCIE {
                              "mov (M1, 1) %0(3, 19)<1> %0(0, 31)<0;1,0>\n"
                              "mov (M1, 1) %0(3, 23)<1> %0(1, 31)<0;1,0>\n"
                              "mov (M1, 1) %0(3, 27)<1> %0(2, 31)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
             }
         }
@@ -296,14 +299,14 @@ struct Rt64_128_PCIE {
                          "mov (M1, 1) %0(3, 3)<1> %0(0, 15)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 7)<1> %0(1, 15)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 11)<1> %0(2, 15)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
 #else
             asm volatile("\n"
                          "mov (M1, 1) %0(6, 3)<1> %0(1, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(6, 7)<1> %0(3, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(7, 3)<1> %0(5, 7)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
 #endif
         }
@@ -316,7 +319,7 @@ struct Rt64_128_PCIE {
                          "mov (M1, 1) %0(3, 19)<1> %0(0, 31)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 23)<1> %0(1, 31)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 27)<1> %0(2, 31)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
         }
 #endif
@@ -501,6 +504,10 @@ struct Rt64_128 {
     constexpr static int lastElem = nReg128B - 1;
 
     using message_t = sycl::vec<uint32_t, nReg128B>;
+#if defined(__SYCL_DEVICE_ONLY__)
+    using inner_t = uint32_t __attribute__((ext_vector_type(nReg128B)));
+#endif
+
     // transaction of 128-byte is not atomic across HBM channel
     constexpr static int nChan8B = 8 / sizeof(message_t);
     constexpr static int lastDataChannel = SubGroupSize - nChan8B;
@@ -597,14 +604,14 @@ struct Rt64_128 {
 #pragma unroll
             for (int i = 0; i < unroll; ++i) {
                 asm volatile("mov (M1, 1) %0(1, 7)<1> %1(0, 0)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              : "rw"(flag));
             }
 
 #pragma unroll
             for (int i = 0; i < unroll; ++i) {
                 asm volatile("mov (M1, 1) %0(1, 15)<1> %1(0, 0)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              : "rw"(flag));
             }
         }
@@ -612,14 +619,14 @@ struct Rt64_128 {
 #pragma unroll
             for (int i = 0; i < unroll; ++i) {
                 asm volatile("mov (M1, 1) %0(0, 15)<1> %1(0, 0)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              : "rw"(flag));
             }
 
 #pragma unroll
             for (int i = 0; i < unroll; ++i) {
                 asm volatile("mov (M1, 1) %0(0, 31)<1> %1(0, 0)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              : "rw"(flag));
             }
         }
@@ -639,20 +646,20 @@ struct Rt64_128 {
 #if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
         if constexpr (SubGroupSize == 16) {
             asm volatile("mov (M1, 1) %0(1, 7)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          : "rw"(flag));
 
             asm volatile("mov (M1, 1) %0(1, 15)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          : "rw"(flag));
         }
         else {
             asm volatile("mov (M1, 1) %0(0, 15)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          : "rw"(flag));
 
             asm volatile("mov (M1, 1) %0(0, 31)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          : "rw"(flag));
         }
 #else
@@ -673,13 +680,13 @@ struct Rt64_128 {
             if constexpr (SubGroupSize == 16) {
                 asm volatile("\n"
                              "mov (M1, 1) %0(0, 15)<1> %0(1, 7)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
             }
             else {
                 asm volatile("\n"
                              "mov (M1, 1) %0(0, 30)<1> %0(0, 15)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
             }
         }
@@ -691,13 +698,13 @@ struct Rt64_128 {
         if constexpr (SubGroupSize == 16) {
             asm volatile("\n"
                          "mov (M1, 1) %0(0, 15)<1> %0(1, 7)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
         }
         else {
             asm volatile("\n"
                          "mov (M1, 1) %0(0, 30)<1> %0(0, 15)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
         }
 #endif
@@ -711,13 +718,13 @@ struct Rt64_128 {
             if constexpr (SubGroupSize == 16) {
                 asm volatile("\n"
                              "mov (M1, 1) %0(1, 7)<1> %0(0, 15)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
             }
             else {
                 asm volatile("\n"
                              "mov (M1, 1) %0(0, 15)<1> %0(0, 30)<0;1,0>\n"
-                             : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages[i]))
+                             : "+rw"(reinterpret_cast<inner_t &>(messages[i]))
                              :);
             }
         }
@@ -729,13 +736,13 @@ struct Rt64_128 {
         if constexpr (SubGroupSize == 16) {
             asm volatile("\n"
                          "mov (M1, 1) %0(1, 7)<1> %0(0, 15)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
         }
         else {
             asm volatile("\n"
                          "mov (M1, 1) %0(0, 15)<1> %0(0, 30)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(messages))
+                         : "+rw"(reinterpret_cast<inner_t &>(messages))
                          :);
         }
 #endif

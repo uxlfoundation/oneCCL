@@ -13,14 +13,17 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#include "atl/mpi/atl_mpi_ctx.hpp"
 #include "coll/coll_util.hpp"
 #include "comm/comm.hpp"
 #include "sched/entry/factory/entry_factory.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/utils/sycl_kernels.hpp"
+#include "coll/algorithms/utils/transmit/transmit.hpp"
 
 // sync_ptrs is used for counting in local kernel_barrier
 static ccl_kernel_barrier_data kernel_barrier_data;
-static thread_local ccl_kernel_barrier_data thread_kernel_barrier_data;
+static ccl_kernel_barrier_data thread_kernel_barrier_data;
 
 // three tmp buffers - 1: work_buf, 2: tmp_send_buf, 3: tmp_recv_buf
 constexpr int tmp_bufs_count = 3;
@@ -245,7 +248,7 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
         ccl_large_tmp_bufs &comm_large_tmp_bufs = node_comm->get_large_tmp_bufs();
 
         sycl::queue q = global_stream->get_native_stream();
-        sycl::queue q_worker(q.get_device());
+        sycl::queue q_worker(q.get_context(), q.get_device());
 
         // alloc sync pointers to be used for global comm_barrier across ranks
         constexpr int num_slots = ccl_comm_barrier_data::slots;
@@ -296,7 +299,16 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             // WA : use smaller tmp buffer for client GPUs
             if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
                 ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
-                ccl::global_data::env().sycl_tmp_buf_size = 3 * 16 * 1024 * 1024;
+                // ringSize is RingTransmit's  static variable
+                // the ringSize is  regardless of protocol, and
+                // ringSize is per peer rank, and it is rounded up to 2MB
+                ccl::global_data::env().sycl_tmp_buf_size =
+                    3 * ((ccl::global_data::get().get_local_proc_count() *
+                              RingTransmit<int, Rt64_128_PCIE>::ringSize +
+                          2097152 - 1) /
+                         2097152 * 2097152);
+                LOG_DEBUG("Allocate LL ring buffer of size: ",
+                          ccl::global_data::env().sycl_tmp_buf_size);
             }
             const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
             const size_t tmp_buf_size_per_rank_orig =
@@ -336,15 +348,20 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             tmp_buf = sycl::aligned_alloc_host<char>(
                 CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
         }
+
+        int *tmp_bufs_gpu_index = sycl::malloc_device<int>(1, q);
+        int *tmp_bufs_gpu_secondary_index = sycl::malloc_device<int>(1, q);
+
+        auto t = q.memset(tmp_bufs_gpu_index, 0, sizeof(*tmp_bufs_gpu_index));
+        q.memset(tmp_bufs_gpu_secondary_index, 0, sizeof(*tmp_bufs_gpu_secondary_index), t).wait();
+
+        node_comm->set_tmp_buf_idx(tmp_bufs_gpu_index, tmp_bufs_gpu_secondary_index);
+
         for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
             void *tmp_buf_ptr = tmp_buf + i * ccl_tmp_bufs::buf_size;
             node_comm->set_tmp_buf(tmp_buf_ptr, i);
             ipc_ptrs.push_back(tmp_buf_ptr);
         }
-
-        // add tmp buf pointers of large buffers
-        const int large_buf_ipc_idx = ipc_ptrs.size();
-        ipc_ptrs.insert(std::end(ipc_ptrs), std::begin(tmp_bufs), std::end(tmp_bufs));
 
         const int small_buf_ipc_gpu_idx = ipc_ptrs.size();
         char *tmp_buf_gpu;
@@ -362,6 +379,10 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
             node_comm->set_tmp_buf_gpu(tmp_buf_ptr_gpu, i);
             ipc_ptrs.push_back(tmp_buf_ptr_gpu);
         }
+
+        // add tmp buf pointers of large buffers
+        const int large_buf_ipc_idx = ipc_ptrs.size();
+        ipc_ptrs.push_back(tmp_bufs[0]);
 
 #ifdef CCL_ENABLE_UMF
         if (ccl::global_data::env().umf_enable) {
@@ -404,13 +425,51 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
                 node_comm->set_remote_tmp_bufs_gpu(remote_ptrs, i);
             }
 
-            for (size_t i = 0, j = large_buf_ipc_idx; i < tmp_bufs.size(); i++, j++) {
-                comm_large_tmp_bufs.remote_tmp_bufs[i] = get_ipc_ptrs<void, MAX_NODE_RANKS>(
-                    node_comm, j, ipc_ptrs[j], ipc_handle_map, q_worker, q.get_device(), 1);
-                comm_large_tmp_bufs.remote_even_tmp_bufs[i] = get_ipc_ptrs<void, MAX_GPUS>(
-                    even_comm, j, ipc_ptrs[j], ipc_handle_map, q_worker, q.get_device(), 1);
-                comm_large_tmp_bufs.remote_pair_tmp_bufs[i] = get_ipc_ptrs<void, MAX_TILES>(
-                    pair_comm, j, ipc_ptrs[j], ipc_handle_map, q_worker, q.get_device(), 1);
+            // node_comm
+            comm_large_tmp_bufs.remote_tmp_bufs[0] =
+                get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm,
+                                                   large_buf_ipc_idx,
+                                                   ipc_ptrs[large_buf_ipc_idx],
+                                                   ipc_handle_map,
+                                                   q_worker,
+                                                   q.get_device(),
+                                                   1);
+            const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
+            for (int i = 0; i < node_comm->size(); i++) {
+                for (int j = 1; j < tmp_bufs_count; j++) {
+                    comm_large_tmp_bufs.remote_tmp_bufs[j][i] =
+                        (char *)(comm_large_tmp_bufs.remote_tmp_bufs[0][i]) + tmp_buf_size * j;
+                }
+            }
+            // even_comm
+            comm_large_tmp_bufs.remote_even_tmp_bufs[0] =
+                get_ipc_ptrs<void, MAX_GPUS>(even_comm,
+                                             large_buf_ipc_idx,
+                                             ipc_ptrs[large_buf_ipc_idx],
+                                             ipc_handle_map,
+                                             q_worker,
+                                             q.get_device(),
+                                             1);
+            for (int i = 0; i < even_comm->size(); i++) {
+                for (int j = 1; j < tmp_bufs_count; j++) {
+                    comm_large_tmp_bufs.remote_even_tmp_bufs[j][i] =
+                        (char *)(comm_large_tmp_bufs.remote_even_tmp_bufs[0][i]) + tmp_buf_size * j;
+                }
+            }
+            // pair_comm
+            comm_large_tmp_bufs.remote_pair_tmp_bufs[0] =
+                get_ipc_ptrs<void, MAX_TILES>(pair_comm,
+                                              large_buf_ipc_idx,
+                                              ipc_ptrs[large_buf_ipc_idx],
+                                              ipc_handle_map,
+                                              q_worker,
+                                              q.get_device(),
+                                              1);
+            for (int i = 0; i < pair_comm->size(); i++) {
+                for (int j = 1; j < tmp_bufs_count; j++) {
+                    comm_large_tmp_bufs.remote_pair_tmp_bufs[j][i] =
+                        (char *)(comm_large_tmp_bufs.remote_pair_tmp_bufs[0][i]) + tmp_buf_size * j;
+                }
             }
 
             q_worker.wait();
@@ -458,19 +517,58 @@ void coll_init(ccl_comm *comm, ccl_stream *global_stream) {
                 node_comm->set_remote_tmp_bufs_gpu(remote_ptrs, i);
             }
             // get ipc pointers for large tmp_buffers
-            for (size_t i = 0, j = large_buf_ipc_idx; i < tmp_bufs.size(); i++, j++) {
-                comm_large_tmp_bufs.remote_tmp_bufs[i] = get_ipc_ptrs<void, MAX_NODE_RANKS>(
-                    node_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
-                comm_large_tmp_bufs.remote_even_tmp_bufs[i] = get_ipc_ptrs<void, MAX_GPUS>(
-                    even_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
-                comm_large_tmp_bufs.remote_pair_tmp_bufs[i] = get_ipc_ptrs<void, MAX_TILES>(
-                    pair_comm, j, ipc_ptrs[j], sched, q_worker, 1, false /* to_cache */);
+            // node_comm
+            comm_large_tmp_bufs.remote_tmp_bufs[0] =
+                get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm,
+                                                   large_buf_ipc_idx,
+                                                   ipc_ptrs[large_buf_ipc_idx],
+                                                   sched,
+                                                   q_worker,
+                                                   1,
+                                                   false /* to_cache */);
+            const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
+            for (int i = 0; i < node_comm->size(); i++) {
+                for (int j = 1; j < tmp_bufs_count; j++) {
+                    comm_large_tmp_bufs.remote_tmp_bufs[j][i] =
+                        (char *)(comm_large_tmp_bufs.remote_tmp_bufs[0][i]) + tmp_buf_size * j;
+                }
+            }
+            // even_comm
+            comm_large_tmp_bufs.remote_even_tmp_bufs[0] =
+                get_ipc_ptrs<void, MAX_GPUS>(even_comm,
+                                             large_buf_ipc_idx,
+                                             ipc_ptrs[large_buf_ipc_idx],
+                                             sched,
+                                             q_worker,
+                                             1,
+                                             false /* to_cache */);
+            for (int i = 0; i < even_comm->size(); i++) {
+                for (int j = 1; j < tmp_bufs_count; j++) {
+                    comm_large_tmp_bufs.remote_even_tmp_bufs[j][i] =
+                        (char *)(comm_large_tmp_bufs.remote_even_tmp_bufs[0][i]) + tmp_buf_size * j;
+                }
+            }
+            // pair_comm
+            comm_large_tmp_bufs.remote_pair_tmp_bufs[0] =
+                get_ipc_ptrs<void, MAX_TILES>(pair_comm,
+                                              large_buf_ipc_idx,
+                                              ipc_ptrs[large_buf_ipc_idx],
+                                              sched,
+                                              q_worker,
+                                              1,
+                                              false /* to_cache */);
+            for (int i = 0; i < pair_comm->size(); i++) {
+                for (int j = 1; j < tmp_bufs_count; j++) {
+                    comm_large_tmp_bufs.remote_pair_tmp_bufs[j][i] =
+                        (char *)(comm_large_tmp_bufs.remote_pair_tmp_bufs[0][i]) + tmp_buf_size * j;
+                }
             }
 
             q_worker.wait();
 
-            delete exchange_entry;
-            delete sched;
+            comm->set_handle_exchange_data(
+                std::shared_ptr<ze_handle_exchange_entry>(exchange_entry),
+                std::shared_ptr<ccl_sched>(sched));
 
 #ifdef CCL_ENABLE_UMF
         }
@@ -490,7 +588,8 @@ void coll_initExt(ccl_comm *comm,
                   ccl_stream *global_stream) {
     // TODO: check all pthread_barrier_wait invokes
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
-
+    CCL_THROW_IF_NOT(!use_recording_path(global_stream),
+                     "|CCL_SYCL| Multi-threaded algos do not support sycl_graph recording");
     ccl_comm_barrier_data bd = node_comm->barrier_data();
     pthread_barrier_wait(
         &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
@@ -504,15 +603,27 @@ void coll_initExt(ccl_comm *comm,
         ccl_large_tmp_bufs &comm_large_tmp_bufs = node_comm->get_large_tmp_bufs();
 
         sycl::queue q = global_stream->get_native_stream();
-        sycl::queue q_worker(q.get_device());
+        sycl::queue q_worker(q.get_context(), q.get_device());
 
         // alloc sync pointers to be used for global comm_barrier across ranks
         constexpr int num_slots = ccl_comm_barrier_data::slots;
         const size_t ptr_count = num_slots * sub_comms.size();
-        size_t *ptrs0 = sycl::malloc_device<size_t>(ptr_count, q);
+        size_t *ptrs0;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            ptrs0 = sycl::malloc_device<size_t>(ptr_count, q);
+        }
+        else {
+            ptrs0 = sycl::malloc_host<size_t>(ptr_count, q);
+        }
         q.memset(ptrs0, 0, ptr_count * sizeof(size_t)).wait();
 
-        size_t *ptrs1 = sycl::malloc_device<size_t>(ptr_count, q);
+        size_t *ptrs1;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            ptrs1 = sycl::malloc_device<size_t>(ptr_count, q);
+        }
+        else {
+            ptrs1 = sycl::malloc_host<size_t>(ptr_count, q);
+        }
         q.memset(ptrs1, 0, ptr_count * sizeof(size_t)).wait();
 
         pthread_barrier_wait(
@@ -527,7 +638,13 @@ void coll_initExt(ccl_comm *comm,
             is_thread_initial_invocation = false;
 
             // allocate sync_ptrs for local kernel barrier
-            size_t *sync_ptrs = sycl::malloc_device<size_t>(ccl_kernel_barrier_data::slots, q);
+            size_t *sync_ptrs;
+            if (node_comm->get_topo_manager().has_p2p_access()) {
+                sync_ptrs = sycl::malloc_device<size_t>(ccl_kernel_barrier_data::slots, q);
+            }
+            else {
+                sync_ptrs = sycl::malloc_host<size_t>(ccl_kernel_barrier_data::slots, q);
+            }
 
             // Initialize memory to zero using memset
             q.memset(sync_ptrs, 0, ccl_kernel_barrier_data::slots * sizeof(size_t)).wait();
@@ -539,7 +656,11 @@ void coll_initExt(ccl_comm *comm,
             // WA : use smaller tmp buffer for client GPUs
             if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
                 ccl::global_data::env().sycl_tmp_buf_size == 3 * 128 * 1024 * 1024) {
-                ccl::global_data::env().sycl_tmp_buf_size = 3 * 16 * 1024 * 1024;
+                ccl::global_data::env().sycl_tmp_buf_size =
+                    3 * ((ccl::global_data::get().get_local_proc_count() *
+                              RingTransmit<int, Rt64_128_PCIE>::ringSize +
+                          2097152 - 1) /
+                         2097152 * 2097152);
             }
             const size_t tmp_buf_size = ccl::global_data::env().sycl_tmp_buf_size / tmp_bufs_count;
             const size_t tmp_buf_size_per_rank_orig =
@@ -548,8 +669,15 @@ void coll_initExt(ccl_comm *comm,
             const size_t align_bytes = ccl::global_data::env().kernel_mem_align;
             tmp_buf_size_per_rank = (tmp_buf_size_per_rank_orig / align_bytes) * align_bytes;
 
-            char *tmp_buf = sycl::aligned_alloc_device<char>(
-                CCL_REG_MSG_ALIGNMENT, tmp_buf_size * tmp_bufs_count, q);
+            char *tmp_buf;
+            if (node_comm->get_topo_manager().has_p2p_access()) {
+                tmp_buf = sycl::aligned_alloc_device<char>(
+                    CCL_REG_MSG_ALIGNMENT, tmp_buf_size * tmp_bufs_count, q);
+            }
+            else {
+                tmp_buf = sycl::aligned_alloc_host<char>(
+                    CCL_REG_MSG_ALIGNMENT, tmp_buf_size * tmp_bufs_count, q);
+            }
 
             for (int i = 0; i < tmp_bufs_count; i++) {
                 thread_tmp_bufs[i] = tmp_buf + i * tmp_buf_size;
@@ -562,10 +690,33 @@ void coll_initExt(ccl_comm *comm,
             comm_large_tmp_bufs.tmp_bufs[i] = thread_tmp_bufs[i];
         }
 
+        int *tmp_bufs_gpu_index;
+        int *tmp_bufs_gpu_secondary_index;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            tmp_bufs_gpu_index = sycl::malloc_device<int>(1, q);
+            tmp_bufs_gpu_secondary_index = sycl::malloc_device<int>(1, q);
+        }
+        else {
+            tmp_bufs_gpu_index = sycl::malloc_host<int>(1, q);
+            tmp_bufs_gpu_secondary_index = sycl::malloc_host<int>(1, q);
+        }
+
+        auto t = q.memset(tmp_bufs_gpu_index, 0, sizeof(*tmp_bufs_gpu_index));
+        q.memset(tmp_bufs_gpu_secondary_index, 0, sizeof(*tmp_bufs_gpu_secondary_index), t).wait();
+
+        node_comm->set_tmp_buf_idx(tmp_bufs_gpu_index, tmp_bufs_gpu_secondary_index);
+
         // set up temp buf to be used for small collectives
         const int small_buf_ipc_idx = ipc_ptrs.size();
-        char *tmp_buf = sycl::aligned_alloc_device<char>(
-            CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        char *tmp_buf;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            tmp_buf = sycl::aligned_alloc_device<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
+        else {
+            tmp_buf = sycl::aligned_alloc_host<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
         for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
             void *tmp_buf_ptr = tmp_buf + i * ccl_tmp_bufs::buf_size;
             node_comm->set_tmp_buf(tmp_buf_ptr, i);
@@ -582,8 +733,15 @@ void coll_initExt(ccl_comm *comm,
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
         const int small_buf_ipc_gpu_idx = ipc_ptrs.size();
-        char *tmp_buf_gpu = sycl::aligned_alloc_device<char>(
-            CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        char *tmp_buf_gpu;
+        if (node_comm->get_topo_manager().has_p2p_access()) {
+            tmp_buf_gpu = sycl::aligned_alloc_device<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
+        else {
+            tmp_buf_gpu = sycl::aligned_alloc_host<char>(
+                CCL_REG_MSG_ALIGNMENT, ccl_tmp_bufs::buf_size * ccl_tmp_bufs::buf_count, q);
+        }
         for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
             void *tmp_buf_ptr_gpu = tmp_buf_gpu + i * ccl_tmp_bufs::buf_size;
             node_comm->set_tmp_buf_gpu(tmp_buf_ptr_gpu, i);
@@ -593,18 +751,20 @@ void coll_initExt(ccl_comm *comm,
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
 
         ccl::global_data::get().shared_data->do_ipc_exchangeExt(
-            comm, hash_table, global_stream, ipc_ptrs);
+            comm, hash_table, global_stream, ipc_ptrs, comm->global_current_id);
 
         // add comm_barrier sync pointers to each communicator
         size_t sub_comms_size = sub_comms.size();
         size_t *counter = sycl::malloc_device<size_t>(sub_comms_size, q);
+        // TODO: sycl graph are not supported for MT
         q.submit([=](sycl::handler &h) {
-             h.single_task([=]() {
-                 for (int i = 0; i < sub_comms_size; i++) {
-                     counter[i] = num_slots - 1;
-                 }
-             });
+             // h.single_task([=]() {
+             //     // for (int i = 0; i < sub_comms_size; i++) {
+             //     //     counter[i] = num_slots - 1;
+             //     // }
+             // });
          }).wait();
+
         for (size_t i = 0, j = sub_comms_size; i < sub_comms.size(); i++, j++) {
             size_t ptrs0_idx = i;
             size_t ptrs1_idx = j;
@@ -615,8 +775,7 @@ void coll_initExt(ccl_comm *comm,
                     i,
                     ptrs0_idx,
                     ipc_ptrs[ptrs0_idx],
-                    0,
-                    0,
+                    comm->global_current_id,
                     even_comm,
                     pair_comm);
             auto remote_ptrs1 =
@@ -626,11 +785,12 @@ void coll_initExt(ccl_comm *comm,
                     i,
                     ptrs1_idx,
                     ipc_ptrs[ptrs1_idx],
-                    0,
-                    0,
+                    comm->global_current_id,
                     even_comm,
                     pair_comm);
-            sub_comms[i]->set_barrier_ptrs(remote_ptrs0, remote_ptrs1, counter + i);
+            // TODO: sycl graph are not supported for MT
+            // sub_comms[i]->set_barrier_ptrs(remote_ptrs0, remote_ptrs1, counter + i);
+            sub_comms[i]->set_barrier_ptrs(remote_ptrs0, remote_ptrs1, nullptr);
         }
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
@@ -638,16 +798,31 @@ void coll_initExt(ccl_comm *comm,
         for (size_t i = 0, j = small_buf_ipc_idx; i < ccl_tmp_bufs::buf_count; i++, j++) {
             auto remote_ptrs =
                 ccl::global_data::get().shared_data->get_ipc_ptrsExt<void, MAX_NODE_RANKS>(
-                    node_comm, hash_table, 0 /*node*/, j, ipc_ptrs[j], 0, 0, even_comm, pair_comm);
+                    node_comm,
+                    hash_table,
+                    0 /*node*/,
+                    j,
+                    ipc_ptrs[j],
+                    comm->global_current_id,
+                    even_comm,
+                    pair_comm);
             node_comm->set_remote_tmp_bufs(remote_ptrs, i);
         }
+
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
         // get ipc pointers for small tmp gpu buffers and add them to node_comm
         for (size_t i = 0, j = small_buf_ipc_gpu_idx; i < ccl_tmp_bufs::buf_count; i++, j++) {
             auto remote_ptrs =
                 ccl::global_data::get().shared_data->get_ipc_ptrsExt<void, MAX_NODE_RANKS>(
-                    node_comm, hash_table, 0 /*node*/, j, ipc_ptrs[j], 0, 0, even_comm, pair_comm);
+                    node_comm,
+                    hash_table,
+                    0 /*node*/,
+                    j,
+                    ipc_ptrs[j],
+                    comm->global_current_id,
+                    even_comm,
+                    pair_comm);
             node_comm->set_remote_tmp_bufs_gpu(remote_ptrs, i); // TODO this crashes
         }
 
@@ -657,13 +832,34 @@ void coll_initExt(ccl_comm *comm,
         for (size_t i = 0, j = large_buf_ipc_idx; i < tmp_bufs.size(); i++, j++) {
             comm_large_tmp_bufs.remote_tmp_bufs[i] =
                 ccl::global_data::get().shared_data->get_ipc_ptrsExt<void, MAX_NODE_RANKS>(
-                    node_comm, hash_table, 0 /*node*/, j, ipc_ptrs[j], 0, 0, even_comm, pair_comm);
+                    node_comm,
+                    hash_table,
+                    0 /*node*/,
+                    j,
+                    ipc_ptrs[j],
+                    comm->global_current_id,
+                    even_comm,
+                    pair_comm);
             comm_large_tmp_bufs.remote_even_tmp_bufs[i] =
                 ccl::global_data::get().shared_data->get_ipc_ptrsExt<void, MAX_GPUS>(
-                    even_comm, hash_table, 1 /*even*/, j, ipc_ptrs[j], 0, 0, even_comm, pair_comm);
+                    even_comm,
+                    hash_table,
+                    1 /*even*/,
+                    j,
+                    ipc_ptrs[j],
+                    comm->global_current_id,
+                    even_comm,
+                    pair_comm);
             comm_large_tmp_bufs.remote_pair_tmp_bufs[i] =
                 ccl::global_data::get().shared_data->get_ipc_ptrsExt<void, 2>(
-                    pair_comm, hash_table, 2 /*pair*/, j, ipc_ptrs[j], 0, 0, even_comm, pair_comm);
+                    pair_comm,
+                    hash_table,
+                    2 /*pair*/,
+                    j,
+                    ipc_ptrs[j],
+                    comm->global_current_id,
+                    even_comm,
+                    pair_comm);
         }
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
@@ -715,6 +911,9 @@ std::vector<sycl::event> get_sycl_events(const ccl::vector_class<ccl::event> &de
     return ret;
 }
 
+// Kernel name template for comm_barrier
+class oneccl_invoke_barrier {};
+
 // invoke the global communication barrier kernel
 sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
                            sycl::queue q,
@@ -735,7 +934,7 @@ sycl::event invoke_barrier(const std::shared_ptr<ccl_comm> comm,
             gpu_increment ? comm->barrier_data() : comm->barrier_inc();
         e = q.submit([=](sycl::handler &h) {
             h.depends_on(dep_events);
-            h.parallel_for(
+            h.parallel_for<oneccl_invoke_barrier>(
                 sycl::nd_range<1>(MAX_NODE_RANKS, MAX_NODE_RANKS),
                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
                     comm_barrier(barrier_data, it, true, gpu_increment);
@@ -805,7 +1004,41 @@ sycl::event sycl_average(sycl::queue &q,
                 q, reduce_buf, reduce_count, total_ranks, dep_events);
         }
     };
-    return invoke_scaleout(lambda, dtype);
+    return invoke_scaleout_collective(lambda, dtype);
+}
+
+bool check_mpi_supports_rdma() {
+    auto lib_attr = atl_mpi_ctx::get_lib_attr();
+    if (lib_attr.type == atl_mpi_ctx::ATL_MPI_LIB_IMPI && lib_attr.hmem == 1) {
+        const char *env_val = getenv("I_MPI_OFFLOAD");
+        int offload = 0;
+        if (env_val != nullptr)
+            offload = atoi(env_val);
+
+        if (offload == 0) {
+            LOG_INFO("Intel MPI does not support GPU RDMA");
+            return false;
+        }
+        return true;
+    }
+    else if (lib_attr.type == atl_mpi_ctx::ATL_MPI_LIB_MPICH && lib_attr.hmem == 1) {
+        const char *env_val = getenv("MPIR_CVAR_CH4_OFI_ENABLE_HMEM");
+        int gpu_rdma = 0;
+        if (env_val != nullptr)
+            gpu_rdma = atoi(env_val);
+
+        env_val = getenv("MPIR_CVAR_CH4_OFI_ENABLE_GPU_PIPELINE");
+        int gpu_pipeline = 0;
+        if (env_val != nullptr)
+            gpu_pipeline = atoi(env_val);
+
+        if (!gpu_rdma && !gpu_pipeline) {
+            LOG_INFO("MPICH does not support GPU RDMA");
+            return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 sycl::event pt2pt_pre_sync(sycl::queue &q,
@@ -883,7 +1116,7 @@ sycl::event post_host_task_ack(sycl::queue &q,
                                bool do_send,
                                int peer_rank,
                                uint64_t ack_tag) {
-    auto ack_driver = [=](atl_req_t &req, bool init) -> bool {
+    auto ack_driver = [=](atl_req_t &req, bool sync, bool init) -> bool {
         int ep_idx = 0;
         char data[1] = { 1 };
         size_t n = sizeof(data);
@@ -899,6 +1132,11 @@ sycl::event post_host_task_ack(sycl::queue &q,
         }
 
         ATL_CALL_THROW_IF_ERROR(atl->check(ep_idx, req));
+
+        if (!sync) {
+            return req.is_completed;
+        }
+
         if (!req.is_completed) {
             ATL_CALL_THROW_IF_ERROR(atl->wait(ep_idx, req));
         }
@@ -917,11 +1155,11 @@ sycl::event post_host_task_ack(sycl::queue &q,
         e = q.submit([&](sycl::handler &h) {
             h.depends_on(deps);
             h.host_task([=, &req]() {
-                ack_driver(req, /*init=*/true);
+                ack_driver(req, true, /*init=*/true);
             });
         });
         e.wait();
-        ack_driver(req, /*init=*/false);
+        ack_driver(req, true, /*init=*/false);
     }
     else {
         e = submit_wait_on_events(q, deps);

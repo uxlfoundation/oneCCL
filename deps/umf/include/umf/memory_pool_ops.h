@@ -10,6 +10,8 @@
 #ifndef UMF_MEMORY_POOL_OPS_H
 #define UMF_MEMORY_POOL_OPS_H 1
 
+#include <stdarg.h>
+
 #include <umf/base.h>
 #include <umf/memory_provider.h>
 
@@ -20,7 +22,7 @@ extern "C" {
 /// @brief Version of the Memory Pool ops structure.
 /// NOTE: This is equal to the latest UMF version, in which the ops structure
 /// has been modified.
-#define UMF_POOL_OPS_VERSION_CURRENT UMF_MAKE_VERSION(0, 11)
+#define UMF_POOL_OPS_VERSION_CURRENT UMF_MAKE_VERSION(1, 0)
 
 ///
 /// @brief This structure comprises function pointers used by corresponding umfPool*
@@ -34,21 +36,20 @@ typedef struct umf_memory_pool_ops_t {
 
     ///
     /// @brief Initializes memory pool.
-    /// @param providers array of memory providers that will be used for coarse-grain allocations.
-    ///        Should contain at least one memory provider.
-    /// @param numProvider number of elements in the providers array
-    /// @param params pool-specific params
+    /// @param provider memory provider that will be used for coarse-grain allocations.
+    /// @param params pool-specific params, or NULL for defaults
     /// @param pool [out] returns pointer to the pool
     /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
     ///
     umf_result_t (*initialize)(umf_memory_provider_handle_t provider,
-                               void *params, void **pool);
+                               const void *params, void **pool);
 
     ///
     /// @brief Finalizes memory pool
     /// @param pool pool to finalize
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
     ///
-    void (*finalize)(void *pool);
+    umf_result_t (*finalize)(void *pool);
 
     ///
     /// @brief Allocates \p size bytes of uninitialized storage from \p pool
@@ -92,9 +93,11 @@ typedef struct umf_memory_pool_ops_t {
     /// @brief Obtains size of block of memory allocated from the \p pool for a given \p ptr
     /// @param pool pointer to the memory pool
     /// @param ptr pointer to the allocated memory
-    /// @return size of the memory block allocated from the \p pool
+    /// @param size [out] size of the memory block allocated from the \p pool
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
     ///
-    size_t (*malloc_usable_size)(void *pool, void *ptr);
+    umf_result_t (*malloc_usable_size)(void *pool, const void *ptr,
+                                       size_t *size);
 
     ///
     /// @brief Frees the memory space of the specified \p pool pointed by \p ptr
@@ -104,7 +107,7 @@ typedef struct umf_memory_pool_ops_t {
     ///         Whether any status other than UMF_RESULT_SUCCESS can be returned
     ///         depends on the memory provider used by the \p pool.
     ///
-    umf_result_t (*free)(void *pool, void *);
+    umf_result_t (*free)(void *pool, void *ptr);
 
     ///
     /// @brief Retrieve \p umf_result_t representing the error of the last failed allocation
@@ -125,6 +128,44 @@ typedef struct umf_memory_pool_ops_t {
     ///         The value is undefined if the previous allocation was successful.
     ///
     umf_result_t (*get_last_allocation_error)(void *pool);
+
+    ///
+    /// @brief Retrieves the name of the memory pool
+    /// @param pool valid pointer to the memory pool or NULL value
+    /// @param name [out] pointer to a constant character string that will be set to the pool's name
+    /// \details
+    /// * Implementations *must* return a literal null-terminated string.
+    ///
+    /// * Implementations *must* return default pool name when NULL is provided,
+    ///   otherwise the pool's name is returned.
+    /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
+    ///
+    umf_result_t (*get_name)(void *pool, const char **name);
+
+    ///
+    /// The following function is optional and memory pool implementation
+    /// can keep it NULL.
+    ///
+
+    ///
+    /// @brief Control operation for the memory pool.
+    ///        The function is used to perform various control operations
+    ///        on the memory pool.
+    ///
+    /// @param pool handle to the memory pool.
+    /// @param source source of the ctl operation.
+    /// @param name name associated with the operation.
+    /// @param arg argument for the operation.
+    /// @param size size of the argument [optional - check name requirements]
+    /// @param queryType type of the query to be performed.
+    /// @param args variable arguments for the operation.
+    ///
+    /// @return umf_result_t result of the control operation.
+    ///
+    umf_result_t (*ext_ctl)(void *hPool, umf_ctl_query_source_t source,
+                            const char *name, void *arg, size_t size,
+                            umf_ctl_query_type_t queryType, va_list args);
+
 } umf_memory_pool_ops_t;
 
 #ifdef __cplusplus

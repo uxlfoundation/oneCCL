@@ -52,7 +52,7 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
                                            bool& done,
                                            sycl_coll_scaleup_attr coll_attr = {});
 
-ccl::event reduce_scatter_sycl(sycl::queue& q,
+ccl::event reduce_scatter_sycl(sycl::queue q,
                                const void* send_buf,
                                void* recv_buf,
                                size_t recv_count,
@@ -99,3 +99,13 @@ ccl::event reduce_scatter_large(const void* send_buf,
                                 ccl_stream* global_stream,
                                 const ccl::vector_class<ccl::event>& deps,
                                 sycl_coll_scaleup_attr coll_attr = {});
+
+// ring with RT protocols
+ccl::event reduce_scatter_rt_ring(const void* src,
+                                  void* dst,
+                                  size_t recv_count,
+                                  ccl::datatype dtype,
+                                  ccl::reduction reduction,
+                                  ccl_comm* comm,
+                                  ccl_stream* global_stream,
+                                  bool& done);

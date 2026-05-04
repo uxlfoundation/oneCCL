@@ -29,6 +29,7 @@
 #include "internal_types.hpp"
 // TODO: think about the right place
 #include "MT/shared_resource.hpp"
+#include "coll/reduction/reduction.hpp"
 
 #include <memory>
 #include <thread>
@@ -38,6 +39,7 @@ class ccl_executor;
 class ccl_sched_cache;
 class ccl_parallelizer;
 class ccl_fusion_manager;
+class ccl_reduction_type_storage;
 
 template <ccl_coll_type... registered_types_id>
 class ccl_algorithm_selector_wrapper;
@@ -80,6 +82,7 @@ public:
     void reset_resize_dependent_objects();
 
     std::unique_ptr<ccl_datatype_storage> dtypes;
+    std::unique_ptr<ccl_reduction_type_storage> redtype_storage;
     std::unique_ptr<ccl_executor> executor;
     std::unique_ptr<ccl_sched_cache> sched_cache;
     std::unique_ptr<ccl::recycle_storage> recycle_storage;

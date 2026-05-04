@@ -123,7 +123,7 @@ fi
 CXX="g++"
 MPICH_VERSION="3.4a2"
 CXXFLAGS=""
-MPIVERSION="2021.16"
+MPIVERSION="2021.17"
 MPILIBNAME="mpi"
 MPICXXLIBNAME="mpicxx"
 
@@ -171,6 +171,7 @@ static_log=yes
 ilp64=no
 trace_opt=no
 no_rpath=no
+mpi_abi=no
 # Attempt to construct dynamic loading info, based on the user
 # preference of rpath, runpath or none and on the detected libdir
 # flags.
@@ -357,6 +358,10 @@ for arg in "$@" ; do
     addarg=no
     # Loading the profConf file is handled below
     ;;
+    -mpi-abi|-mpi_abi)
+    mpi_abi=yes
+    addarg=no
+    ;;
     -help)
     # Print mini-help if started without parameters
     echo "Simple script to compile and/or link MPI programs."
@@ -391,6 +396,7 @@ for arg in "$@" ; do
     echo "                   link against the specified version of the Intel(R) MPI Library"
     echo "                   i.e -link_mpi=opt|opt_mt|dbg|dbg_mt"
     echo "   -norpath        disable rpath for compiler wrapper of the Intel(R) MPI Library"
+    echo "   -mpi-abi        Compile and link using the standard MPI-5.0 ABI."
     echo "All other options will be passed to the compiler without changing."
     echo "----------------------------------------------------------------------------"
     echo "The following environment variables are used:"
@@ -539,6 +545,22 @@ if [ -n "$mpilib_override" ] ; then
     esac
 fi
 # -----------------------------------------------------------------------
+abi_cflags=
+if [ "$mpi_abi" = yes ] ; then
+    abi_cflags="-DMPI_ABI"
+    MPILIBNAME=mpi_abi
+    fortran_binding=no
+
+    if [ "$static_mpi" = yes ] ; then
+        echo "Error: the -mpi_abi option is not supported for static build."
+        exit 1
+    fi
+    if [ "$ilp64" = yes ]; then
+        echo "Error: the -mpi_abi option is not supported for ILP64 build."
+        exit 1
+    fi
+fi
+
 if [ "$static_mpi" = yes ] ; then
     if [ "x$fortran_binding" = "x" ]; then
         mpilibs="${libdir}/libmpifort.a ${libdir}${MPILIBDIR}/lib${MPILIBNAME}.a"
@@ -561,9 +583,12 @@ else
     fi
     I_MPI_OTHERLIBS=" -lrt -lpthread "
     if [ "$ilp64" = yes ]; then
-    mpilibs="-lmpi_ilp64 $mpilibs"
+        mpilibs="-lmpi_ilp64 $mpilibs"
     fi
-    CXX_BIND_LIB="-lmpicxx"
+    # MPI-2.0 CXX bindings are not supported with MPI-5.0 ABI
+    if [ "$mpi_abi" = no ] ; then
+        CXX_BIND_LIB="-lmpicxx"
+    fi 
 fi
 # Derived variables.  These are assembled from variables set from the
 # default, environment, configuration file (if any) and command-line
@@ -608,7 +633,7 @@ fi
 if [ "${static_mpi}" = "yes" ] ; then
     final_cxxflags="  -Xlinker --export-dynamic "
 else
-    final_cxxflags=" "
+    final_cxxflags="  ${abi_cflags}"
 fi
 
 final_cppflags=" "
@@ -629,7 +654,7 @@ if [ "$linking" = yes ] ; then
         $Show $CXX ${final_cppflags} $PROFILE_INCPATHS ${final_cxxflags} ${final_ldflags} $allargs -I\"${includedir}\"
         rc=$?
     else
-        $Show $CXX $CXXFLAGS $allargs -I\"${includedir}\" -L\"${libdir}${MPILIBDIR}\" -L\"${libdir}\" $rpath_opt $shllibpath $cxxlibs $mpilibs $I_MPI_OTHERLIBS ${final_ldflags}
+        $Show $CXX $CXXFLAGS ${abi_cflags} $allargs -I\"${includedir}\" -L\"${libdir}${MPILIBDIR}\" -L\"${libdir}\" $rpath_opt $shllibpath $cxxlibs $mpilibs $I_MPI_OTHERLIBS ${final_ldflags}
         rc=$?
         if [ $rc -eq 0 -a "x$strip_debug_info" = "xyes" ] ; then
             $Show objcopy --only-keep-debug ${executable} ${executable}.dbg
@@ -650,7 +675,7 @@ if [ "$linking" = yes ] ; then
 #        fi
 #    fi
 else
-    cmd_line="$CXX ${final_cppflags} $PROFILE_INCPATHS ${final_cxxflags} $allargs -I\"${includedir}\""
+    cmd_line="$CXX $CXXFLAGS ${abi_cflags} $PROFILE_INCPATHS ${final_cxxflags} $allargs -I\"${includedir}\""
     if [ "$Show" = echo ] ; then
         echo $cmd_line
     else

@@ -56,6 +56,7 @@ ccl::status ccl_coll_build_naive_allgather(ccl_sched* sched,
                                                  count,
                                                  recv_buf.get_ptr(),
                                                  recv_counts.data(),
+                                                 offsets.data(),
                                                  dtype.size(),
                                                  comm_rank,
                                                  comm_size);

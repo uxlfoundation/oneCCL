@@ -29,7 +29,7 @@ ccl::event alltoall_sycl_single_node(sycl::queue& q,
                                      const vector_class<event>& deps,
                                      bool& done);
 
-ccl::event alltoall_sycl(sycl::queue& q,
+ccl::event alltoall_sycl(sycl::queue q,
                          const void* send_buf,
                          void* recv_buf,
                          size_t count,

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2023-2024 Intel Corporation
+ * Copyright (C) 2023-2025 Intel Corporation
  *
  * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -24,7 +24,7 @@ typedef enum umf_memory_visibility_t {
 } umf_memory_visibility_t;
 
 /// @brief Protection of the memory allocations
-typedef enum umf_mem_protection_flags_t {
+typedef enum umf_mem_protection_flag_t {
     UMF_PROTECTION_NONE = (1 << 0),  ///< Memory allocations can not be accessed
     UMF_PROTECTION_READ = (1 << 1),  ///< Memory allocations can be read.
     UMF_PROTECTION_WRITE = (1 << 2), ///< Memory allocations can be written.
@@ -32,7 +32,7 @@ typedef enum umf_mem_protection_flags_t {
     /// @cond
     UMF_PROTECTION_MAX // must be the last one
     /// @endcond
-} umf_mem_protection_flags_t;
+} umf_mem_protection_flag_t;
 
 /// @brief A struct containing memory provider specific set of functions
 typedef struct umf_memory_provider_t *umf_memory_provider_handle_t;
@@ -45,14 +45,15 @@ typedef struct umf_memory_provider_t *umf_memory_provider_handle_t;
 /// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 ///
 umf_result_t umfMemoryProviderCreate(const umf_memory_provider_ops_t *ops,
-                                     void *params,
+                                     const void *params,
                                      umf_memory_provider_handle_t *hProvider);
 
 ///
 /// @brief Destroys memory provider.
 /// @param hProvider handle to the memory provider
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 ///
-void umfMemoryProviderDestroy(umf_memory_provider_handle_t hProvider);
+umf_result_t umfMemoryProviderDestroy(umf_memory_provider_handle_t hProvider);
 
 ///
 /// @brief Allocates \p size bytes of uninitialized storage from memory \p hProvider
@@ -99,10 +100,11 @@ umf_result_t umfMemoryProviderFree(umf_memory_provider_handle_t hProvider,
 /// @param ppMessage [out] pointer to a string containing provider specific
 ///        result in string representation
 /// @param pError [out] pointer to an integer where the adapter specific error code will be stored
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 ///
-void umfMemoryProviderGetLastNativeError(umf_memory_provider_handle_t hProvider,
-                                         const char **ppMessage,
-                                         int32_t *pError);
+umf_result_t
+umfMemoryProviderGetLastNativeError(umf_memory_provider_handle_t hProvider,
+                                    const char **ppMessage, int32_t *pError);
 
 ///
 /// @brief Retrieve recommended page size for a given allocation size.
@@ -125,7 +127,7 @@ umfMemoryProviderGetRecommendedPageSize(umf_memory_provider_handle_t hProvider,
 ///
 umf_result_t
 umfMemoryProviderGetMinPageSize(umf_memory_provider_handle_t hProvider,
-                                void *ptr, size_t *pageSize);
+                                const void *ptr, size_t *pageSize);
 
 ///
 /// @brief Discard physical pages within the virtual memory mapping associated at the given addr
@@ -216,21 +218,24 @@ umfMemoryProviderCloseIPCHandle(umf_memory_provider_handle_t hProvider,
 ///
 /// @brief Retrieve name of a given memory \p hProvider.
 /// @param hProvider handle to the memory provider
-/// @return pointer to a string containing the name of the \p hProvider
-///
-const char *umfMemoryProviderGetName(umf_memory_provider_handle_t hProvider);
+/// @param name [out] pointer to the provider name string
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure
+umf_result_t umfMemoryProviderGetName(umf_memory_provider_handle_t hProvider,
+                                      const char **name);
 
 ///
 /// @brief Retrieve handle to the last memory provider that returned status other
 ///        than UMF_RESULT_SUCCESS on the calling thread.
+/// @param provider [out] pointer to the handle to the last failed memory provider
 ///
 /// \details Handle to the memory provider is stored in  the thread local
 ///          storage. The handle is updated every time a memory provider
 ///          returns status other than UMF_RESULT_SUCCESS.
 ///
-/// @return Handle to the memory provider
+/// @return UMF_RESULT_SUCCESS on success or appropriate error code on failure.
 ///
-umf_memory_provider_handle_t umfGetLastFailedMemoryProvider(void);
+umf_result_t
+umfGetLastFailedMemoryProvider(umf_memory_provider_handle_t *provider);
 
 ///
 /// @brief Splits a coarse grain allocation into 2 adjacent allocations that

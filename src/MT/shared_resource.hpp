@@ -19,6 +19,8 @@
 #include <unordered_map>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
+#include <array>
 
 #ifdef CCL_ENABLE_SYCL
 #include <sycl/sycl.hpp>
@@ -32,13 +34,7 @@ namespace ccl {
 
 static std::atomic<int> next_op_id{ 0 };
 
-struct op_id_entry {
-    std::mutex m;
-    std::condition_variable cv;
-    int id = -1;
-    bool ready = false;
-};
-
+// === Handshake data for non-group operations ===
 struct handshake_data {
     std::mutex m;
     std::condition_variable cv;
@@ -50,6 +46,22 @@ struct handshake_data {
     bool copy_done = false;
 };
 
+struct op_id_entry {
+    std::mutex m;
+    std::condition_variable cv;
+    int id = -1;
+    bool ready = false;
+};
+
+// === Simplified group buffer management ===
+// this entry is unique for each pair of ranks
+struct group_buffer_entry {
+    void *buffer_ptr = nullptr;
+    bool group_discovery_phase{ true };
+    std::atomic<int> copy_done{ 0 }, reg_done{ 0 }; //signaling counters
+    int copy_counter = 1, reg_counter = 1; // checking counters
+};
+
 class shared_resources {
 private:
     std::unordered_map<int, std::mutex> resource_mutexes;
@@ -59,23 +71,30 @@ public:
     std::unordered_map<int, rank_info_vec_t> rank_info_vec_globs;
     std::unordered_map<int, std::vector<char>> all_hostnames_raw_globs;
     std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> hash_table;
+    std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> pt2pt_hash_table;
 #ifdef CCL_ENABLE_SYCL
     sycl::event copy_event;
 #endif // CCL_ENABLE_SYCL
     std::unordered_map<int, handshake_data> handshakes;
-    std::unordered_map<int, op_id_entry> op_id_map;
+    std::unordered_map<uint64_t, op_id_entry> op_id_map;
 #ifdef CCL_ENABLE_SYCL
     std::unordered_map<int, sycl::event> receiver_ready_events_map;
 #endif // CCL_ENABLE_SYCL
+    // === Simplified group buffer management ===
+    std::vector<std::vector<std::vector<group_buffer_entry>>> group_buffers;
+    std::mutex allocation_mutex;
+
+    bool is_multi_thread_instance = false;
     int current_global_id = ccl_comm::invalid_id;
     std::unordered_map<int, pthread_barrier_t> barrier_waits;
 
     shared_resources() = default;
-    shared_resources(const shared_resources &other) = default;
-    shared_resources &operator=(const shared_resources &other) = default;
+    shared_resources(const shared_resources &) = delete;
+    shared_resources &operator=(const shared_resources &) = delete;
 
     ~shared_resources() {
         hash_table.clear();
+        pt2pt_hash_table.clear();
         barrier_waits.clear();
         rank_info_vec_globs.clear();
         barrier_initialized_flags.clear();
@@ -168,7 +187,6 @@ public:
         const int handle_index,
         void *local_ptr,
         int exchange_id = 0,
-        bool dummy_copy = 0,
         std::shared_ptr<ccl_comm> even_comm = nullptr,
         std::shared_ptr<ccl_comm> pair_comm = nullptr) {
         std::array<T *, N> remote_ptrs = {};
@@ -199,10 +217,11 @@ public:
 
         if (is_sender) {
             // sender path: create & broadcast
-            std::unique_lock<std::mutex> lk(entry.m);
-            entry.id = next_op_id.fetch_add(1, std::memory_order_relaxed);
-            entry.ready = true;
-            lk.unlock();
+            {
+                std::unique_lock<std::mutex> lk(entry.m);
+                entry.id = next_op_id.fetch_add(1, std::memory_order_relaxed);
+                entry.ready = true;
+            } // lock is automatically released here
             entry.cv.notify_one(); // wake exactly one waiting receiver
             return entry.id;
         }

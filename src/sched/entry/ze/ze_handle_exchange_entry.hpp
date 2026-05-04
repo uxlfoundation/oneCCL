@@ -17,6 +17,7 @@
 
 #include "comm/comm.hpp"
 #include "common/utils/exchange_utils.hpp"
+#include "common/global/ze/ze_data.hpp"
 #include "common/utils/utils.hpp"
 #include "sched/entry/entry.hpp"
 #include "sched/sched.hpp"

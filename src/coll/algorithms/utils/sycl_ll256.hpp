@@ -22,6 +22,9 @@
 #include <sycl/sycl.hpp>
 
 using message_t = sycl::vec<uint32_t, 4>;
+#if defined(__SYCL_DEVICE_ONLY__)
+using inner_t = uint32_t __attribute__((ext_vector_type(4)));
+#endif
 typedef uint32_t pattern_t;
 extern uint16_t pattern_counter;
 
@@ -39,19 +42,19 @@ extern uint16_t pattern_counter;
 #ifdef CCL_SYCL_ENABLE_ARCA
 #define __LscLoadUnCachedVec(var, addr) \
     __asm__ __volatile__("lsc_load.ugm.uc.uc   (M1, 16)  %0:d32x4  flat[%1]:a64" \
-                         : "=rw"(reinterpret_cast<typename message_t::vector_t &>(var)) \
+                         : "=rw"(reinterpret_cast<inner_t &>(var)) \
                          : "rw"(addr) \
                          : "memory")
 #else
 #define __LscLoadUnCachedVec(var, addr) \
     __asm__ __volatile__("lsc_load.ugm.uc.ca   (M1, 16)  %0:d32x4  flat[%1]:a64" \
-                         : "=rw"(reinterpret_cast<typename message_t::vector_t &>(var)) \
+                         : "=rw"(reinterpret_cast<inner_t &>(var)) \
                          : "rw"(addr) \
                          : "memory")
 #endif
 #define __LscLoadCachedVec(var, addr) \
     __asm__ __volatile__("lsc_load.ugm.ca.ca   (M1, 16)  %0:d32x4  flat[%1]:a64" \
-                         : "=rw"(reinterpret_cast<typename message_t::vector_t &>(var)) \
+                         : "=rw"(reinterpret_cast<inner_t &>(var)) \
                          : "rw"(addr) \
                          : "memory")
 
@@ -69,19 +72,19 @@ extern uint16_t pattern_counter;
 #define __LscStoreUnCachedVec(addr, var) \
     __asm__ __volatile__("lsc_store.ugm.uc.uc  (M1, 16)  flat[%0]:a64  %1:d32x4" \
                          : \
-                         : "rw"(addr), "rw"(reinterpret_cast<typename message_t::vector_t &>(var)) \
+                         : "rw"(addr), "rw"(reinterpret_cast<inner_t &>(var)) \
                          : "memory")
 #else
 #define __LscStoreUnCachedVec(addr, var) \
     __asm__ __volatile__("lsc_store.ugm.uc.wb  (M1, 16)  flat[%0]:a64  %1:d32x4" \
                          : \
-                         : "rw"(addr), "rw"(reinterpret_cast<typename message_t::vector_t &>(var)) \
+                         : "rw"(addr), "rw"(reinterpret_cast<inner_t &>(var)) \
                          : "memory")
 #endif
 #define __LscStoreCachedVec(addr, var) \
     __asm__ __volatile__("lsc_store.ugm.ca.ca  (M1, 16)  flat[%0]:a64  %1:d32x4" \
                          : \
-                         : "rw"(addr), "rw"(reinterpret_cast<typename message_t::vector_t &>(var)) \
+                         : "rw"(addr), "rw"(reinterpret_cast<inner_t &>(var)) \
                          : "memory")
 
 #define LscLoadCached    __LscLoadCachedVec
@@ -112,13 +115,13 @@ static inline void shuffle_data(message_t &data) {
     __asm__ __volatile__("mov (M1, 1) %0(1, 7)<1> %0(6, 3)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 7)<1> %0(6, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(5, 7)<1> %0(7, 3)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(data))
+                         : "+rw"(reinterpret_cast<inner_t &>(data))
                          :);
 #else
     __asm__ __volatile__("mov (M1, 1) %0(0, 15)<1> %0(3, 3)<0;1,0>\n"
                          "mov (M1, 1) %0(1, 15)<1> %0(3, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(2, 15)<1> %0(3, 11)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(data))
+                         : "+rw"(reinterpret_cast<inner_t &>(data))
                          :);
 #endif
 }
@@ -129,14 +132,14 @@ static inline void insert_pattern(message_t &data, pattern_t pattern) {
                          "mov (M1, 1) %0(6, 7)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(7, 3)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(7, 7)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(data))
+                         : "+rw"(reinterpret_cast<inner_t &>(data))
                          : "rw"(pattern));
 #else
     __asm__ __volatile__("mov (M1, 1) %0(3, 3)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 7)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 11)<1> %1(0, 0)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 15)<1> %1(0, 0)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(data))
+                         : "+rw"(reinterpret_cast<inner_t &>(data))
                          : "rw"(pattern));
 #endif
 }
@@ -146,13 +149,13 @@ static inline void restore_data(message_t &data) {
     __asm__ __volatile__("mov (M1, 1) %0(6, 3)<1> %0(1, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(6, 7)<1> %0(3, 7)<0;1,0>\n"
                          "mov (M1, 1) %0(7, 3)<1> %0(5, 7)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(data))
+                         : "+rw"(reinterpret_cast<inner_t &>(data))
                          :);
 #else
     __asm__ __volatile__("mov (M1, 1) %0(3, 3)<1> %0(0, 15)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 7)<1> %0(1, 15)<0;1,0>\n"
                          "mov (M1, 1) %0(3, 11)<1> %0(2, 15)<0;1,0>\n"
-                         : "+rw"(reinterpret_cast<typename message_t::vector_t &>(data))
+                         : "+rw"(reinterpret_cast<inner_t &>(data))
                          :);
 #endif
 }

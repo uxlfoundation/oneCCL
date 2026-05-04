@@ -35,7 +35,6 @@
 #include "ccl_api_functions_generators.hpp"
 #include "common/global/global.hpp"
 #include "common/api_wrapper/mpi_api_wrapper.hpp"
-#include "coll/algorithms/utils/sycl_kernels.hpp"
 
 // TODO: timers can re used, but place in more general place
 class timer {
@@ -277,7 +276,7 @@ std::array<T *, N> get_ipc_ptrs(std::shared_ptr<ccl_comm> comm,
 
 void pipe_prep(size_t min_msg_count,
                size_t max_msg_count,
-               int dsize,
+               size_t dsize,
                size_t pipeline_chunk_size,
                size_t &nchunks);
 
@@ -451,6 +450,8 @@ std::array<T *, N> get_ipc_ptrs(std::shared_ptr<ccl_comm> comm,
         std::move(comm), handle_index, local_ptr, sched, q, dummy_copy, to_cache);
 }
 
+/* Invokers used in scale-up code */
+
 template <int NE, int NP, typename L>
 ccl::event invoke_collective_type(L lambda, ccl::datatype dtype) {
     ccl::event e;
@@ -472,6 +473,8 @@ ccl::event invoke_collective_type(L lambda, ccl::datatype dtype) {
                 "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
 #endif
             break;
+        case ccl::datatype::int8: e = lambda.template operator()<int8_t, NE, NP>(); break;
+        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t, NE, NP>(); break;
         case ccl::datatype::float32: e = lambda.template operator()<float, NE, NP>(); break;
         case ccl::datatype::float64: e = lambda.template operator()<double, NE, NP>(); break;
         case ccl::datatype::int32: e = lambda.template operator()<int, NE, NP>(); break;
@@ -514,8 +517,10 @@ ccl::event invoke_collective(L lambda, ccl_comm *global_comm, ccl::datatype dtyp
     return e;
 }
 
+/* Invokers used in scale-out code */
+
 template <typename L>
-sycl::event invoke_scaleout(L lambda, ccl::datatype dtype) {
+sycl::event invoke_scaleout_collective(L lambda, ccl::datatype dtype) {
     sycl::event e;
     switch (dtype) {
         case ccl::datatype::int16: e = lambda.template operator()<short>(); break;
@@ -535,12 +540,66 @@ sycl::event invoke_scaleout(L lambda, ccl::datatype dtype) {
                 "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
 #endif
             break;
+        case ccl::datatype::int8: e = lambda.template operator()<int8_t>(); break;
+        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t>(); break;
         case ccl::datatype::float32: e = lambda.template operator()<float>(); break;
         case ccl::datatype::float64: e = lambda.template operator()<double>(); break;
         case ccl::datatype::int32: e = lambda.template operator()<int>(); break;
         case ccl::datatype::uint32: e = lambda.template operator()<uint32_t>(); break;
         case ccl::datatype::int64: e = lambda.template operator()<int64_t>(); break;
         case ccl::datatype::uint64: e = lambda.template operator()<uint64_t>(); break;
+        default: CCL_THROW("unsupported datatype ", dtype); break;
+    }
+    return e;
+}
+
+// call by ESIMD kernel
+template <size_t align, typename L>
+auto invoke_esimd_function(L lambda, int world) {
+    switch (world) {
+        case 2: lambda.template operator()<2, align>(); break;
+        case 4: lambda.template operator()<4, align>(); break;
+        case 6: lambda.template operator()<6, align>(); break;
+        case 8: lambda.template operator()<8, align>(); break;
+        case 10: lambda.template operator()<10, align>(); break;
+        case 12: lambda.template operator()<12, align>(); break;
+        case 14: lambda.template operator()<14, align>(); break;
+        case 16: lambda.template operator()<16, align>(); break;
+        default: break;
+    }
+}
+
+//
+// PCIe LL256 algorithms
+template <template <typename, int> class Proto, typename L>
+sycl::event invoke_pcie_type(L lambda, int NRanks, ccl::datatype dtype) {
+    sycl::event e;
+    switch (dtype) {
+        case ccl::datatype::int8: e = lambda.template operator()<int8_t, Proto>(NRanks); break;
+        case ccl::datatype::uint8: e = lambda.template operator()<uint8_t, Proto>(NRanks); break;
+        case ccl::datatype::int16: e = lambda.template operator()<short, Proto>(NRanks); break;
+        case ccl::datatype::float16:
+#ifdef CCL_SYCL_VEC_SUPPORT_FP16
+            e = lambda.template operator()<sycl::half, Proto>(NRanks);
+#else
+            CCL_THROW(
+                "The Sycl compilers do not support Sycl::vec kernels with float16, please switch to ESIMD kernels, or build oneCCL with the latest version of cmake and oneAPI compiler");
+#endif
+            break;
+        case ccl::datatype::bfloat16:
+#ifdef CCL_SYCL_VEC_SUPPORT_BF16
+            e = lambda.template operator()<sycl::ext::oneapi::bfloat16, Proto>(NRanks);
+#else
+            CCL_THROW(
+                "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
+#endif
+            break;
+        case ccl::datatype::float32: e = lambda.template operator()<float, Proto>(NRanks); break;
+        case ccl::datatype::int32: e = lambda.template operator()<int, Proto>(NRanks); break;
+        case ccl::datatype::uint32: e = lambda.template operator()<uint32_t, Proto>(NRanks); break;
+        case ccl::datatype::int64: e = lambda.template operator()<int64_t, Proto>(NRanks); break;
+        case ccl::datatype::uint64: e = lambda.template operator()<uint64_t, Proto>(NRanks); break;
+        case ccl::datatype::float64: e = lambda.template operator()<double, Proto>(NRanks); break;
         default: CCL_THROW("unsupported datatype ", dtype); break;
     }
     return e;
@@ -654,72 +713,8 @@ inline sycl::event submit_wait_on_events(sycl::queue q, const std::vector<sycl::
     }
 }
 
-// call by ESIMD kernel
-template <size_t align, typename L>
-auto invoke_esimd_function(L lambda, int world) {
-    switch (world) {
-        case 2: lambda.template operator()<2, align>(); break;
-        case 4: lambda.template operator()<4, align>(); break;
-        case 6: lambda.template operator()<6, align>(); break;
-        case 8: lambda.template operator()<8, align>(); break;
-        case 10: lambda.template operator()<10, align>(); break;
-        case 12: lambda.template operator()<12, align>(); break;
-        case 14: lambda.template operator()<14, align>(); break;
-        case 16: lambda.template operator()<16, align>(); break;
-        default: break;
-    }
-}
-
-// PCIe LL256 algorithms
-template <int NRanks, template <typename, int> class Proto, typename L>
-sycl::event invoke_pcie_type(L lambda, ccl::datatype dtype) {
-    sycl::event e;
-    switch (dtype) {
-        case ccl::datatype::int16: e = lambda.template operator()<short, NRanks, Proto>(); break;
-        case ccl::datatype::float16:
-#ifdef CCL_SYCL_VEC_SUPPORT_FP16
-            e = lambda.template operator()<sycl::half, NRanks, Proto>();
-#else
-            CCL_THROW(
-                "The Sycl compilers do not support Sycl::vec kernels with float16, please switch to ESIMD kernels, or build oneCCL with the latest version of cmake and oneAPI compiler");
-#endif
-            break;
-        case ccl::datatype::bfloat16:
-#ifdef CCL_SYCL_VEC_SUPPORT_BF16
-            e = lambda.template operator()<sycl::ext::oneapi::bfloat16, NRanks, Proto>();
-#else
-            CCL_THROW(
-                "The Sycl compilers do not support Sycl::vec kernels with bfloat16, please switch to ESIMD kernels, or build oneCCL with oneAPI compiler that is newer than 2024.2.0");
-#endif
-            break;
-        case ccl::datatype::float32: e = lambda.template operator()<float, NRanks, Proto>(); break;
-        case ccl::datatype::int32: e = lambda.template operator()<int, NRanks, Proto>(); break;
-        case ccl::datatype::uint32:
-            e = lambda.template operator()<uint32_t, NRanks, Proto>();
-            break;
-        case ccl::datatype::int64: e = lambda.template operator()<int64_t, NRanks, Proto>(); break;
-        case ccl::datatype::uint64:
-            e = lambda.template operator()<uint64_t, NRanks, Proto>();
-            break;
-        case ccl::datatype::float64: e = lambda.template operator()<double, NRanks, Proto>(); break;
-        default: CCL_THROW("unsupported datatype ", dtype); break;
-    }
-    return e;
-}
-
-template <template <typename, int> class Proto, typename L>
-sycl::event invoke_pcie(L lambda, ccl_comm *comm, ccl::datatype dtype) {
-    sycl::event e;
-    switch (comm->size()) {
-        case 1: e = invoke_pcie_type<1, Proto>(lambda, dtype); break;
-        case 2: e = invoke_pcie_type<2, Proto>(lambda, dtype); break;
-        case 4: e = invoke_pcie_type<4, Proto>(lambda, dtype); break;
-        case 8: e = invoke_pcie_type<8, Proto>(lambda, dtype); break;
-        default: CCL_THROW("unsupported comm size ", comm->size()); break;
-    }
-    return e;
-}
-
+template <typename data_type>
+class oneccl_sycl_check_nan {};
 // helper function to check NAN or INF numbers in the input buffer
 template <typename data_type>
 sycl::event sycl_check_nan(sycl::queue &queue,
@@ -732,26 +727,27 @@ sycl::event sycl_check_nan(sycl::queue &queue,
     int nthreads = (count + wg_size - 1) / wg_size * wg_size;
     auto e = queue.submit([&](sycl::handler &cgh) {
         cgh.depends_on(deps);
-        cgh.parallel_for(sycl::nd_range<1>(nthreads, wg_size), [=](sycl::nd_item<1> idx2) {
-            uint32_t idx = idx2.get_global_id();
-            if (idx >= count)
-                return;
-            data_type *in = (data_type *)in_buffer;
-            bool has_inf = false;
-            if (std::numeric_limits<data_type>::has_infinity) {
-                has_inf = in[idx] == std::numeric_limits<data_type>::infinity() ||
-                          -in[idx] == std::numeric_limits<data_type>::infinity();
-            }
-            if (in[idx] != in[idx] || has_inf) {
-                sycl::_V1::ext::oneapi::experimental::printf(
-                    "[%d] NAN error %s: idx:%d count: %d val: %f \n",
-                    rank,
-                    str,
-                    idx,
-                    count,
-                    in[idx]);
-            }
-        });
+        cgh.parallel_for<oneccl_sycl_check_nan<data_type>>(
+            sycl::nd_range<1>(nthreads, wg_size), [=](sycl::nd_item<1> idx2) {
+                uint32_t idx = idx2.get_global_id();
+                if (idx >= count)
+                    return;
+                data_type *in = (data_type *)in_buffer;
+                bool has_inf = false;
+                if (std::numeric_limits<data_type>::has_infinity) {
+                    has_inf = in[idx] == std::numeric_limits<data_type>::infinity() ||
+                              -in[idx] == std::numeric_limits<data_type>::infinity();
+                }
+                if (in[idx] != in[idx] || has_inf) {
+                    sycl::_V1::ext::oneapi::experimental::printf(
+                        "[%d] NAN error %s: idx:%d count: %d val: %f \n",
+                        rank,
+                        str,
+                        idx,
+                        count,
+                        in[idx]);
+                }
+            });
     });
     return e;
 }
@@ -791,6 +787,8 @@ sycl::event sycl_average(sycl::queue &q,
                          const size_t total_ranks,
                          ccl::datatype dtype,
                          std::vector<sycl::event> &dep_events);
+
+bool check_mpi_supports_rdma();
 
 sycl::event pt2pt_pre_sync(sycl::queue &q,
                            const std::vector<sycl::event> &deps,

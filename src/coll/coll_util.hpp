@@ -70,6 +70,7 @@ CCL_API bool is_allgatherv_inplace(const void* send_buf,
                                    const size_t send_count,
                                    const void* recv_buf,
                                    const size_t* recv_counts,
+                                   const size_t* recv_offsets,
                                    const size_t dtype_size,
                                    const size_t rank,
                                    const size_t comm_size);

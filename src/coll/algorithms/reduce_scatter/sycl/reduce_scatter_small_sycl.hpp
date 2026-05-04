@@ -63,9 +63,9 @@ ESIMD_INLINE void reduce_kernel(void **temp_buffer, int buf_offset, int offset, 
 }
 
 template <typename dtype, int kernel_inner_loop, size_t alignment>
-class Reduce_scatter_small_kernel_esimd;
+class oneccl_reduce_scatter_small_kernel_esimd;
 template <typename dtype, int kernel_inner_loop_scalar, int wg_size>
-class Reduce_scatter_small_kernel_scalar;
+class oneccl_reduce_scatter_small_kernel_scalar;
 
 template <typename data_type, uint32_t max_rank = MAX_RANK, uint32_t max_buffer = 1024 /*KB*/>
 class sycl_reduce_scatter_small : public sycl_coll_base<data_type> {
@@ -237,7 +237,7 @@ public:
 
         e = queue.submit([&](sycl::handler &cgh) {
             cgh.depends_on(dep_events);
-            cgh.parallel_for<Reduce_scatter_small_kernel_esimd<data_type, kernel_inner_loop, align>>(
+            cgh.parallel_for<oneccl_reduce_scatter_small_kernel_esimd<data_type, kernel_inner_loop, align>>(
                 sycl::nd_range<1>({ total_threads_dispatched }, wg_size),
                 [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL {
                     //slm_init(1024);
@@ -725,7 +725,8 @@ public:
 
         e = queue.submit([&](sycl::handler &cgh) {
             cgh.depends_on(dep_events);
-            cgh.parallel_for<Reduce_scatter_small_kernel_scalar<data_type, kernel_inner_loop_scalar, wg_size>>(
+            cgh.parallel_for<
+                oneccl_reduce_scatter_small_kernel_scalar<data_type, kernel_inner_loop_scalar, wg_size>>(
                 sycl::nd_range<1>({ total_threads_dispatched }, wg_size),
                 [=](sycl::nd_item<1> idx2) [[sycl::reqd_sub_group_size(wg_size)]] {
                     uint32_t idx = idx2.get_global_id();

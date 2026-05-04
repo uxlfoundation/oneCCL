@@ -90,6 +90,7 @@ ccl::event broadcast_sycl_single_node(sycl::queue& q,
 static bool do_fallback_to_scheduler(size_t size) {
     bool is_above_threshold = size > ccl::global_data::env().sycl_broadcast_scaleout_threshold;
     bool exception_cases = ccl::global_data::env().atl_transport == ccl_atl_ofi;
+
     return is_above_threshold || exception_cases;
 }
 
@@ -225,7 +226,7 @@ ccl::event broadcast_sycl_multi_node(sycl::queue& q,
     return ev;
 }
 
-ccl::event broadcast_sycl(sycl::queue& q,
+ccl::event broadcast_sycl(sycl::queue q,
                           const void* send_buf,
                           void* recv_buf,
                           size_t count,

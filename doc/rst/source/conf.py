@@ -139,5 +139,5 @@ html_theme_options = {
     'extra_footer': '<p align="right"><a href="https://www.intel.com/content/www/us/en/privacy/intel-cookie-notice.html">Cookies</a></p><br><div>Last updated: ' + last_updated + '</div>'
 }
 
-html_theme_options["logo"] = {"text": "oneCCL Documentation 2021.16.1"}
+html_theme_options["logo"] = {"text": "oneCCL Documentation 2021.16.2"}
 

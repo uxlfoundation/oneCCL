@@ -330,21 +330,21 @@ void all_sum(int idx,
 }
 
 template <typename dtype, size_t align>
-class ReduceScatterMediumKernel_local_copy;
+class oneccl_reduce_scatter_medium_kernel_local_copy;
 template <typename dtype, size_t align>
-class ReduceScatterMediumKernel_reduce_read_write;
+class oneccl_reduce_scatter_medium_kernel_reduce_read_write;
 template <typename dtype, size_t align>
-class ReduceScatterMediumKernel_local_all_sum;
+class oneccl_reduce_scatter_medium_kernel_local_all_sum;
 
 template <typename dtype>
-class ReduceScatterMediumKernel_nocopy_reduce_read_write;
+class oneccl_reduce_scatter_medium_kernel_nocopy_reduce_read_write;
 template <typename dtype>
-class ReduceScatterMediumKernel_nocopy_local_all_sum;
+class oneccl_reduce_scatter_medium_kernel_nocopy_local_all_sum;
 
 template <typename dtype>
-class ReduceScatterMediumKernel_GlobalSync;
+class oneccl_reduce_scatter_medium_kernel_global_sync;
 template <typename dtype>
-class ReduceScatterMediumKernel_LocalSync;
+class oneccl_reduce_scatter_medium_kernel_local_sync;
 
 template <typename data_type, uint32_t max_rank = MAX_RANK, uint32_t max_buffer = 1024 /*KB*/>
 class sycl_reduce_scatter_medium : public sycl_coll_base<data_type> {
@@ -521,7 +521,7 @@ private:
             // local copy half of the data to tmp buffer
             e = queue.submit([&](sycl::handler &cgh) {
                 cgh.depends_on(dep_events);
-                    cgh.parallel_for<class ReduceScatterMediumKernel_local_copy<data_type, align>>(
+                    cgh.parallel_for<class oneccl_reduce_scatter_medium_kernel_local_copy<data_type, align>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         //ESIMD kernel
@@ -563,7 +563,7 @@ private:
             //local reduction kernel
             e = queue.submit([&](sycl::handler &cgh) {
                 cgh.depends_on(dep_events);
-                    cgh.parallel_for<class ReduceScatterMediumKernel_reduce_read_write<data_type, align>>(
+                    cgh.parallel_for<class oneccl_reduce_scatter_medium_kernel_reduce_read_write<data_type, align>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         //ESIMD kernel
@@ -617,7 +617,7 @@ private:
                 //local reduction kernel
                 e = queue.submit([&](sycl::handler &cgh) {
                     cgh.depends_on(dep_events);
-                    cgh.parallel_for<class ReduceScatterMediumKernel_local_all_sum<data_type, align>>(
+                    cgh.parallel_for<class oneccl_reduce_scatter_medium_kernel_local_all_sum<data_type, align>>(
                         sycl::nd_range<1>({ persist_local_sum_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         //ESIMD kernel
@@ -773,7 +773,7 @@ private:
             //local reduction kernel
             e = queue.submit([&](sycl::handler &cgh) {
                 cgh.depends_on(dep_events);
-                    cgh.parallel_for<class ReduceScatterMediumKernel_nocopy_reduce_read_write<data_type>>(
+                    cgh.parallel_for<class oneccl_reduce_scatter_medium_kernel_nocopy_reduce_read_write<data_type>>(
                         sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         //ESIMD kernel
@@ -930,7 +930,7 @@ private:
                 //local reduction kernel
                 e = queue.submit([&](sycl::handler &cgh) {
                     cgh.depends_on(dep_events);
-                    cgh.parallel_for<class ReduceScatterMediumKernel_nocopy_local_all_sum<data_type>>(
+                    cgh.parallel_for<class oneccl_reduce_scatter_medium_kernel_nocopy_local_all_sum<data_type>>(
                         sycl::nd_range<1>({ persist_local_sum_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                         {
                         //ESIMD kernel
@@ -1086,7 +1086,7 @@ private:
         int wg_size = 1;
         e = queue.submit([&](sycl::handler &cgh) {
             cgh.depends_on(dep_events);
-            cgh.parallel_for<class ReduceScatterMediumKernel_GlobalSync<data_type>>(
+            cgh.parallel_for<class oneccl_reduce_scatter_medium_kernel_global_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel
@@ -1171,7 +1171,7 @@ private:
 
         e = queue.submit([&](sycl::handler &cgh) {
             cgh.depends_on(dep_events);
-            cgh.parallel_for<class ReduceScatterMediumKernel_LocalSync<data_type>>(
+            cgh.parallel_for<class oneccl_reduce_scatter_medium_kernel_local_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel

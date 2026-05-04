@@ -119,7 +119,11 @@ ccl::event allreduce_large(const void *send_buf,
     // since we divide count such that all ranks have aligned addresses
     bool use_full_vector = can_use_full_vector(send_buf, recv_buf, 0, 0);
 
-    const bool is_use_tmp = ccl::global_data::env().sycl_allreduce_tmp_buf;
+    bool is_use_tmp = ccl::global_data::env().sycl_allreduce_tmp_buf;
+    // user defined reduction operations require to apply special scalar before
+    // doing reduction itself. Since user buffer (send_buf) cannot be modified,
+    // a temporary buffer is needed to hold the modified data.
+    is_use_tmp |= ccl_reduction_type_storage::is_custom(reduction);
 
     if (is_use_tmp) {
         // global rank of pair_comm neighbors should be adjacent for using tmp buffer
@@ -162,17 +166,8 @@ ccl::event allreduce_large(const void *send_buf,
 
         delete exchange_entry;
         delete sched;
-
-        coll_init(comm, global_stream);
     }
     else {
-        if (comm->is_multi_thread_instance() == true) {
-            coll_initExt(comm, ccl::global_data::get().shared_data->hash_table, global_stream);
-        }
-        else {
-            coll_init(comm, global_stream);
-        }
-
         // 0 index is used for tmp work buffer and
         // 1 index is used to copy input data
         // 2 index is used to copy output data
@@ -188,12 +183,28 @@ ccl::event allreduce_large(const void *send_buf,
 
     auto lambda = [&]<typename T, int NE, int NP>() {
         if (use_full_vector) {
-            return allreduce_large_impl<T, NE, NP, true>(
-                send_buf, recv_buf, count, dtype, reduction, comm, global_stream, sycl_ptrs, deps);
+            return allreduce_large_impl<T, NE, NP, true>(send_buf,
+                                                         recv_buf,
+                                                         count,
+                                                         dtype,
+                                                         reduction,
+                                                         comm,
+                                                         global_stream,
+                                                         sycl_ptrs,
+                                                         deps,
+                                                         is_use_tmp);
         }
         else {
-            return allreduce_large_impl<T, NE, NP, false>(
-                send_buf, recv_buf, count, dtype, reduction, comm, global_stream, sycl_ptrs, deps);
+            return allreduce_large_impl<T, NE, NP, false>(send_buf,
+                                                          recv_buf,
+                                                          count,
+                                                          dtype,
+                                                          reduction,
+                                                          comm,
+                                                          global_stream,
+                                                          sycl_ptrs,
+                                                          deps,
+                                                          is_use_tmp);
         }
     };
 

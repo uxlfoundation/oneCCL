@@ -148,7 +148,7 @@ typedef int MPI_Fint;
 # define MPI_MAX_INFO_KEY       255
 # define MPI_MAX_INFO_VAL      1024
 #endif
-
+#ifndef MPI_MODE_RDONLY
 #define MPI_MODE_RDONLY              2  /* ADIO_RDONLY */
 #define MPI_MODE_RDWR                8  /* ADIO_RDWR  */
 #define MPI_MODE_WRONLY              4  /* ADIO_WRONLY  */
@@ -158,8 +158,10 @@ typedef int MPI_Fint;
 #define MPI_MODE_UNIQUE_OPEN        32  /* ADIO_UNIQUE_OPEN */
 #define MPI_MODE_APPEND            128  /* ADIO_APPEND */
 #define MPI_MODE_SEQUENTIAL        256  /* ADIO_SEQUENTIAL */
-
+#endif
+#ifndef MPI_DISPLACEMENT_CURRENT
 #define MPI_DISPLACEMENT_CURRENT   -54278278
+#endif
 
 #ifndef MPICH
 /* FIXME: Make sure that we get a consistent definition of MPI_FILE_NULL

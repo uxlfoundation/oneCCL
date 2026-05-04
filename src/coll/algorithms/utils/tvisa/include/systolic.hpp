@@ -122,8 +122,8 @@ struct Dpas<sycl::half, sycl::half, sycl::half, sycl::half, SubGroupSize, systol
         asm volatile("{\n" \
                      ".decl aliasA v_type=G type=d num_elts=64 align=GRF alias=<%2,0>\n" \
                      ".decl aliasB v_type=G type=d num_elts=128 align=GRF alias=<%3,0>\n" \
-                     "dpas.hf.hf.8." str(M) " (M1, 16) %0.0 %1.0 aliasB.0 aliasA(0, 0)\n" \
-                                            "}\n" \
+                     "dpas.hf.hf.8." ll_str(M) " (M1, 16) %0.0 %1.0 aliasB.0 aliasA(0, 0)\n" \
+                                               "}\n" \
                      : "+rw"(C.getStorage()) \
                      : "rw"(Accum.getStorage()), "rw"(A.getStorage()), "rw"(B.getStorage())); \
     } \
@@ -137,8 +137,8 @@ struct Dpas<sycl::half, sycl::half, sycl::half, sycl::half, SubGroupSize, systol
         asm volatile("{\n" \
                      ".decl aliasA v_type=G type=d num_elts=64 align=GRF alias=<%1,0>\n" \
                      ".decl aliasB v_type=G type=d num_elts=128 align=GRF alias=<%2,0>\n" \
-                     "dpas.hf.hf.8." str(M) " (M1, 16) %0.0 %0.0 aliasB.0 aliasA(0, 0)\n" \
-                                            "}\n" \
+                     "dpas.hf.hf.8." ll_str(M) " (M1, 16) %0.0 %0.0 aliasB.0 aliasA(0, 0)\n" \
+                                               "}\n" \
                      : "+rw"(C.getStorage()) \
                      : "rw"(A.getStorage()), "rw"(B.getStorage())); \
     }

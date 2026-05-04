@@ -50,16 +50,8 @@ ccl::event broadcast_large(const void* send_buf,
 
         delete exchange_entry;
         delete sched;
-
-        coll_init(comm, global_stream);
     }
     else {
-        if (comm->is_multi_thread_instance() == true) {
-            coll_initExt(comm, ccl::global_data::get().shared_data->hash_table, global_stream);
-        }
-        else {
-            coll_init(comm, global_stream);
-        }
         sycl_ptrs.node_ptrs_rd = get_remote_node_tmp_buf(0, comm);
     }
 

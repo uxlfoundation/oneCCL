@@ -55,7 +55,7 @@ umfScalablePoolParamsSetKeepAllMemory(umf_scalable_pool_params_handle_t hParams,
 
 /// @brief  Return \p ops structure containing pointers to the scalable pool implementation.
 /// @return pointer to the \p umf_memory_pool_ops_t struct.
-umf_memory_pool_ops_t *umfScalablePoolOps(void);
+const umf_memory_pool_ops_t *umfScalablePoolOps(void);
 
 #ifdef __cplusplus
 }

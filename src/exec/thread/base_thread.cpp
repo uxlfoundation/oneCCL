@@ -25,13 +25,16 @@ ccl::status ccl_base_thread::start(int cpu_affinity, int mem_affinity) {
 
     /* start thread with initial CPU affinity */
     pthread_attr_t attr;
-    pthread_attr_init(&attr);
+    int err = pthread_attr_init(&attr);
+    CCL_THROW_IF_NOT(err == 0, "pthread_attr_init failed with error: ", err);
+
     cpu_set_t cpuset;
     __CPU_ZERO_S(sizeof(cpu_set_t), &cpuset);
     __CPU_SET_S(cpu_affinity, sizeof(cpu_set_t), &cpuset);
-    pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset);
+    err = pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset);
+    CCL_THROW_IF_NOT(err == 0, "pthread_attr_setaffinity_np failed with error: ", err);
 
-    int err = pthread_create(&thread, &attr, thread_function, get_this());
+    err = pthread_create(&thread, &attr, thread_function, get_this());
     if (err) {
         LOG_ERROR(
             "error while creating ", name(), " thread #", idx, " pthread_create returns ", err);

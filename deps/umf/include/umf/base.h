@@ -28,7 +28,7 @@ extern "C" {
 #define UMF_MINOR_VERSION(_ver) (_ver & 0x0000ffff)
 
 /// @brief Current version of the UMF headers
-#define UMF_VERSION_CURRENT UMF_MAKE_VERSION(0, 11)
+#define UMF_VERSION_CURRENT UMF_MAKE_VERSION(1, 0)
 
 /// @brief Operation results
 typedef enum umf_result_t {
@@ -50,6 +50,21 @@ typedef enum umf_result_t {
     UMF_RESULT_ERROR_OUT_OF_RESOURCES = 8, ///< Out of internal resources
     UMF_RESULT_ERROR_UNKNOWN = 0x7ffffffe  ///< Unknown error
 } umf_result_t;
+
+/// @brief Type of the CTL query
+typedef enum umf_ctl_query_type {
+    CTL_QUERY_READ,
+    CTL_QUERY_WRITE,
+    CTL_QUERY_RUNNABLE,
+} umf_ctl_query_type_t;
+
+typedef enum ctl_query_source {
+    CTL_UNKNOWN_QUERY_SOURCE,
+    /* query executed directly from the program */
+    CTL_QUERY_PROGRAMMATIC,
+    /* query executed from the config file */
+    CTL_QUERY_CONFIG_INPUT
+} umf_ctl_query_source_t;
 
 #ifdef __cplusplus
 }

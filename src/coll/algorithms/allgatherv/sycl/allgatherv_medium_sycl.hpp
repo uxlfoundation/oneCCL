@@ -340,19 +340,19 @@ void nocopy_read_write(int *even_ranks,
 //constexpr sycl::specialization_id<uint32_t> temp_world_const;
 
 template <typename dtype, size_t align>
-class AllgatherMediumKernel_local_copy;
+class oneccl_allgather_medium_kernel_local_copy;
 template <typename dtype, size_t align>
-class AllgatherMediumKernel_read_write;
+class oneccl_allgather_medium_kernel_read_write;
 template <typename dtype, size_t align>
-class AllgatherMediumKernel_write_output;
+class oneccl_allgather_medium_kernel_write_output;
 
 template <typename dtype>
-class AllgatherMediumKernel_nocopy_read_write;
+class oneccl_allgather_medium_kernel_nocopy_read_write;
 
 template <typename dtype>
-class AllgathervMediumKernel_GlobalSync;
+class oneccl_allgatherv_medium_kernel_global_sync;
 template <typename dtype>
-class AllgathervMediumKernel_LocalSync;
+class oneccl_allgatherv_medium_kernel_local_sync;
 
 template <typename data_type, uint32_t max_rank = MAX_RANK>
 class sycl_allgatherv_medium : public sycl_coll_base<data_type> {
@@ -494,7 +494,7 @@ private:
 
             // FIRST KERNEL
             e = queue.submit([&](sycl::handler &cgh) {
-                cgh.parallel_for<class AllgatherMediumKernel_local_copy<data_type, align>>(
+                cgh.parallel_for<class oneccl_allgather_medium_kernel_local_copy<data_type, align>>(
                     sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                     {
                     uint32_t idx = idx2.get_global_id();
@@ -521,7 +521,7 @@ private:
 
             // SECOND KERNEL
             e = queue.submit([&](sycl::handler &cgh) {
-                cgh.parallel_for<class AllgatherMediumKernel_read_write<data_type, align>>(
+                cgh.parallel_for<class oneccl_allgather_medium_kernel_read_write<data_type, align>>(
                     sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                     {
                     //ESIMD kernel
@@ -557,7 +557,7 @@ private:
 
             // THIRD KERNEL
             e = queue.submit([&](sycl::handler &cgh) {
-                cgh.parallel_for<class AllgatherMediumKernel_write_output<data_type, align>>(
+                cgh.parallel_for<class oneccl_allgather_medium_kernel_write_output<data_type, align>>(
                     sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                     {
                     uint32_t idx = idx2.get_global_id();
@@ -685,7 +685,7 @@ private:
             // Set the coefficient of the convolution as constant.
             // This will build a specific kernel the coefficient available as literals.
             //            cgh.set_specialization_constant<temp_world_const>(temp_world);
-            cgh.parallel_for<class AllgatherMediumKernel_nocopy_read_write<data_type>>(
+            cgh.parallel_for<class oneccl_allgather_medium_kernel_nocopy_read_write<data_type>>(
                 sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                 {
                 uint32_t idx = idx2.get_global_id();
@@ -749,7 +749,7 @@ private:
         uint32_t total_threads_needed_sync = 1;
         int wg_size = 1;
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class AllgathervMediumKernel_GlobalSync<data_type>>(
+            cgh.parallel_for<class oneccl_allgatherv_medium_kernel_global_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel
@@ -833,7 +833,7 @@ private:
         int wg_size = 1;
 
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class AllgathervMediumKernel_LocalSync<data_type>>(
+            cgh.parallel_for<class oneccl_allgatherv_medium_kernel_local_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 //ESIMD kernel

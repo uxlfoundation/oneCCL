@@ -37,11 +37,9 @@ ccl::event alltoall_large(const void* send_buf,
     // end-to-end transfers are performed
     if (comm->is_multi_thread_instance() == true) {
         LOG_DEBUG("|MT|: invoking alltoall_large");
-        coll_initExt(comm, ccl::global_data::get().shared_data->hash_table, global_stream);
     }
     else {
         LOG_DEBUG("invoking alltoall_large");
-        coll_init(comm, global_stream);
     }
 
     auto lambda = [&]<typename T, int NE, int NP>() {

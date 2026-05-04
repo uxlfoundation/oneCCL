@@ -131,7 +131,7 @@ LDFLAGS="-ldl"
 MPILIBNAME="mpi"
 
 # MPIVERSION is the version of the MPICH2 library that mpicc is intended for
-MPIVERSION="2021.16"
+MPIVERSION="2021.17"
 #
 # Internal variables
 # Show is set to echo to cause the compilation command to be echoed instead
@@ -144,6 +144,7 @@ executable=a.out
 ilp64=no
 no_rpath=no
 verbose=no
+use_mpi_abi=no
 #
 # End of initialization of variables
 #---------------------------------------------------------------------
@@ -319,6 +320,7 @@ for arg in "$@" ; do
         echo "                   link against the specified version of the Intel(R) MPI Library"
         echo "                   i.e -link_mpi=opt|opt_mt|dbg|dbg_mt"
         echo "   -norpath        disable rpath for compiler wrapper of the Intel(R) MPI Library"
+        echo "   -mpi-abi        Compile and link using the standard MPI ABI."
         echo "All other options will be passed to the compiler without changing."
         echo "----------------------------------------------------------------------------"
         echo "The following environment variables are used:"
@@ -415,6 +417,10 @@ for arg in "$@" ; do
         no_rpath=yes
         addarg=no
         ;;
+    -mpi-abi|-mpi_abi)
+        use_mpi_abi=yes
+        addarg=no
+        ;;
     # Other arguments.  We are careful to handle arguments with
     # quotes (we try to quote all arguments in case they include
     # any spaces)
@@ -461,6 +467,10 @@ fi
 # -----------------------------------------------------------------------
 
 if [ "$static_mpi" = yes ] ; then
+    if [ "$ilp64" = yes ]; then
+        echo "Error: the -mpi-abi option is not supported for static builds."
+        exit 1
+    fi
     mpilibs="${libdir}/libmpifort.a ${libdir}${MPILIBDIR}/lib${MPILIBNAME}.a"
     I_MPI_OTHERLIBS=""
     MPI_OTHERLIBS=" -lrt -lpthread "
@@ -471,12 +481,23 @@ if [ "$static_mpi" = yes ] ; then
         strip_debug_info=yes
     fi
 else
-    mpilibs="-lmpifort -l$MPILIBNAME"
+    if [ "$use_mpi_abi" = yes ]; then
+        mpilibs="-lmpi_abi"
+        CFLAGS="-DMPI_ABI $CFLAGS"
+        if [ "$ilp64" = yes ]; then
+            echo "Error: the -mpi-abi option is not supported for ILP64 builds."
+            exit 1
+        fi
+    else
+        mpilibs="-lmpifort -l$MPILIBNAME"
+        if [ "$ilp64" = yes ]; then
+            mpilibs="-lmpi_ilp64 $mpilibs"
+        fi
+    fi
+    
     I_MPI_OTHERLIBS=""
     MPI_OTHERLIBS=" -lrt -lpthread "
-    if [ "$ilp64" = yes ]; then
-        mpilibs="-lmpi_ilp64 $mpilibs"
-    fi
+    
 fi
 # Derived variables.  These are assembled from variables set from the
 # default, environment, configuration file (if any) and command-line

@@ -250,6 +250,35 @@ CCL_SYCL_ALLGATHERV_SCALEOUT
 
 Use this environment variable to specify the algorithm for ``ALLGATHER/ALLGATHERV``. Currently, the selected algorithm is used for all message sizes. 
 
+
+CCL_SYCL_ALLGATHERV_SCALEOUT_OVERLAP
+------------------------------------
+
+**Syntax**
+
+::
+
+  CCL_SYCL_ALLGATHERV_SCALEOUT_OVERLAP=<value>
+
+**Arguments**
+
+.. list-table::
+   :widths: 25 50
+   :header-rows: 1
+   :align: left
+
+   * - <value>
+     - Description
+   * - ``1``
+     - Default value. Enables overlapping for the direct algorithm.
+   * - ``0``
+     - Disables overlapping for the direct algorithm.
+
+**Description**
+
+Use this environment variable to enable or disable the overlapping in the direct algorithm for ``ALLGATHER/ALLGATHERV``.
+
+
 ALLREDUCE
 =========
 
@@ -2148,7 +2177,7 @@ Profiling
 #########
 
 CCL_ITT_LEVEL
-*************
+-------------
 
 **Syntax**
 
@@ -2174,10 +2203,10 @@ CCL_ITT_LEVEL
 
 Set this environment variable to specify Intel\ |reg|\  Instrumentation and Tracing Technology (ITT) profiling level.
 Once the environment variable is enabled (`value>0`), it is possible to collect and display profiling
-data for |product_short| using tools such as Intel\ |reg|\  VTune\ |tm|\  Profiler and `Unified Tracing and Profiling Tool <https://github.com/intel/pti-gpu/tree/master/tools/unitrace>`_.
+data for |product_short| using tools such as Intel\ |reg|\  VTune\ |tm|\  Profiler and `Unified Tracing and Profiling Tool<https://github.com/intel/pti-gpu/tree/master/tools/unitrace>_`.
 
 CCL_PROFILING_ENABLE 
-********************
+---------------------
 
 **Syntax**
 

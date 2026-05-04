@@ -5,8 +5,8 @@
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 */
 
-#ifndef UMF_PROVIDER_CUDA_H
-#define UMF_PROVIDER_CUDA_H
+#ifndef UMF_CUDA_PROVIDER_H
+#define UMF_CUDA_PROVIDER_H
 
 #include <umf/memory_provider_gpu.h>
 
@@ -61,10 +61,10 @@ umf_result_t umfCUDAMemoryProviderParamsSetMemoryType(
 umf_result_t umfCUDAMemoryProviderParamsSetAllocFlags(
     umf_cuda_memory_provider_params_handle_t hParams, unsigned int flags);
 
-umf_memory_provider_ops_t *umfCUDAMemoryProviderOps(void);
+const umf_memory_provider_ops_t *umfCUDAMemoryProviderOps(void);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* UMF_PROVIDER_CUDA_H */
+#endif /* UMF_CUDA_PROVIDER_H */

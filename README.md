@@ -31,7 +31,7 @@ oneCCL is governed by the [UXL Foundation](http://www.uxlfoundation.org) and is 
 - [Contribute](#contribute)
 - [License](#license)
 - [Security Policy](#security-policy)
-  
+
 ## Prerequisites 
 
 See [System Requirements](https://www.intel.com/content/www/us/en/developer/articles/system-requirements/oneapi-collective-communication-library-system-requirements.html) to learn about hardware and software requirements before getting started with oneCCL.

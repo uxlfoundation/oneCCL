@@ -16,10 +16,7 @@
 #pragma once
 
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
-
-#if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
-#include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_ring.hpp"
-#endif // defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
+#include "coll/algorithms/utils/sycl_kernels.hpp"
 
 namespace ccl {
 namespace v1 {
@@ -41,6 +38,7 @@ sycl::event allreduce_sycl_rabenseifner_blocking(sycl::queue &q,
     int rank = comm->rank();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     int pow2 = comm->pof2();
     if (count < pow2) {
@@ -79,25 +77,6 @@ sycl::event allreduce_sycl_rabenseifner_blocking(sycl::queue &q,
 
     int rem = world - pow2;
 
-    auto reduce_invoke = [=]<int VS, int SGS>(sycl::queue &q,
-                                              void *in1,
-                                              void *in2,
-                                              void *out,
-                                              size_t reduce_count,
-                                              std::vector<sycl::event> l_dep_events) {
-        constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
-        const size_t kernel_threads = reduce_count / vec_size + reduce_count % vec_size;
-        const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
-        return q.submit([=](sycl::handler &h) {
-            h.depends_on(l_dep_events);
-            h.parallel_for(sycl::nd_range<1>(kernel_size, wg_size),
-                           //[=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                           [=](sycl::nd_item<1> it) {
-                               reduce_pair<T, vec_size>(in1, in2, out, reduce_count, it);
-                           });
-        });
-    };
-
     int ep_idx = 0;
     // tag creation
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
@@ -128,13 +107,13 @@ sycl::event allreduce_sycl_rabenseifner_blocking(sycl::queue &q,
             bool use_full_vector = can_use_full_vector(tmp_buf, recv_buf, 1, 4);
             if (use_full_vector) {
                 constexpr int vec_size = get_num_elements<T, 8, true>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 16>(
-                    q, tmp_buf, recv_buf, recv_buf, count, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                    q, tmp_buf, recv_buf, recv_buf, count, reduction_op, { sycl_e });
             }
             else {
                 constexpr int vec_size = get_num_elements<T, 8, false>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 64>(
-                    q, tmp_buf, recv_buf, recv_buf, count, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                    q, tmp_buf, recv_buf, recv_buf, count, reduction_op, { sycl_e });
             }
             sycl_e.wait();
             newrank = rank / 2;
@@ -198,13 +177,13 @@ sycl::event allreduce_sycl_rabenseifner_blocking(sycl::queue &q,
             bool use_full_vector = can_use_full_vector(tbuf, rbuf, 4, 4);
             if (use_full_vector) {
                 constexpr int vec_size = get_num_elements<T, 8, true>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 16>(
-                    q, tbuf, rbuf, rbuf, recv_cnt, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                    q, tbuf, rbuf, rbuf, recv_cnt, reduction_op, { sycl_e });
             }
             else {
                 constexpr int vec_size = get_num_elements<T, 8, false>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 64>(
-                    q, tbuf, rbuf, rbuf, recv_cnt, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                    q, tbuf, rbuf, rbuf, recv_cnt, reduction_op, { sycl_e });
             }
             sycl_e.wait();
 
@@ -307,6 +286,7 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
     int rank = comm->rank();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     // tuning parameters
     size_t pipeline_chunk_size = tune_attr.pipeline_chunk_size;
@@ -354,25 +334,6 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
 
     int rem = world - pow2;
 
-    auto reduce_invoke = [=]<int VS, int SGS>(sycl::queue &q,
-                                              void *in1,
-                                              void *in2,
-                                              void *out,
-                                              size_t reduce_count,
-                                              std::vector<sycl::event> l_dep_events) {
-        constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
-        const size_t kernel_threads = reduce_count / vec_size + reduce_count % vec_size;
-        const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
-        return q.submit([=](sycl::handler &h) {
-            h.depends_on(l_dep_events);
-            h.parallel_for(sycl::nd_range<1>(kernel_size, wg_size),
-                           //[=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                           [=](sycl::nd_item<1> it) {
-                               reduce_pair<T, vec_size>(in1, in2, out, reduce_count, it);
-                           });
-        });
-    };
-
     int ep_idx = 0;
     // tag creation
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
@@ -396,13 +357,13 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
             bool use_full_vector = can_use_full_vector(tmp_buf, recv_buf, 1, 4);
             if (use_full_vector) {
                 constexpr int vec_size = get_num_elements<T, 8, true>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 16>(
-                    q, tmp_buf, recv_buf, recv_buf, count, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                    q, tmp_buf, recv_buf, recv_buf, count, reduction_op, { sycl_e });
             }
             else {
                 constexpr int vec_size = get_num_elements<T, 8, false>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 64>(
-                    q, tmp_buf, recv_buf, recv_buf, count, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                    q, tmp_buf, recv_buf, recv_buf, count, reduction_op, { sycl_e });
             }
             newrank = rank / 2;
         }
@@ -415,7 +376,7 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
 
     if (newrank != -1) {
         // out-of-order queue
-        sycl::queue q_worker(q.get_device());
+        sycl::queue q_worker(q.get_context(), q.get_device());
 
         std::vector<size_t> newcnts(pow2, count / pow2);
         std::vector<size_t> newdisps(pow2);
@@ -496,13 +457,13 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
             bool use_full_vector = can_use_full_vector(tbuf, rbuf, 4, 4);
             if (use_full_vector) {
                 constexpr int vec_size = get_num_elements<T, 8, true>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 16>(
-                    q_worker, tbuf, rbuf, rbuf, recv_cnt, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                    q_worker, tbuf, rbuf, rbuf, recv_cnt, reduction_op, { sycl_e });
             }
             else {
                 constexpr int vec_size = get_num_elements<T, 8, false>();
-                sycl_e = reduce_invoke.template operator()<vec_size, 64>(
-                    q_worker, tbuf, rbuf, rbuf, recv_cnt, { sycl_e });
+                sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                    q_worker, tbuf, rbuf, rbuf, recv_cnt, reduction_op, { sycl_e });
             }
             dep_events.clear();
             dep_events.push_back(std::move(sycl_e));
@@ -644,7 +605,7 @@ inline sycl::event allreduce_scaleout_sycl_rabenseifner(sycl::queue &q,
         }
     };
 
-    return invoke_scaleout(lambda, dtype);
+    return invoke_scaleout_collective(lambda, dtype);
 }
 
 } // namespace v1

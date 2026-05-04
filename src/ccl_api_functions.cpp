@@ -124,6 +124,21 @@ communicator create_communicator(const int size,
     return detail::environment::instance().create_communicator(size, rank, kvs, attr);
 }
 
+/*************** CUSTOM REDUCTIONS ****************/
+
+void reduction_create_pre_mul_sum(reduction* rtype,
+                                  void* scalar,
+                                  datatype dtype,
+                                  scalar_residence_type residence,
+                                  const communicator& comm) {
+    ccl::detail::environment::instance().reduction_create_pre_mul_sum(
+        rtype, scalar, dtype, residence, comm);
+}
+
+void reduction_destroy(reduction rtype, const communicator& comm) {
+    ccl::detail::environment::instance().reduction_destroy(rtype, comm);
+}
+
 /******************** GROUP CALLS ********************/
 
 void group_start() {

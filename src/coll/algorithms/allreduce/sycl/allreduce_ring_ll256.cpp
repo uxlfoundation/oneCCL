@@ -42,6 +42,8 @@ static inline message_t sum_kernel(message_t &dst, message_t &src, const ccl_dat
     message_t data;
 
     switch (dtype.idx()) {
+        case ccl::datatype::int8: data = _sum<int8_t>(dst, src); break;
+        case ccl::datatype::uint8: data = _sum<uint8_t>(dst, src); break;
         case ccl::datatype::float16: data = _sum<sycl::half>(dst, src); break;
         case ccl::datatype::bfloat16:
             data = _sum<sycl::_V1::ext::oneapi::bfloat16>(dst, src);
@@ -85,6 +87,7 @@ static inline void recv_reduce_send(sycl::sub_group &sg,
 }
 
 static inline void recv_reduce_copy_send(sycl::sub_group &sg,
+                                         char *sendbuf,
                                          char *dst,
                                          char *next,
                                          char *src,
@@ -98,8 +101,8 @@ static inline void recv_reduce_copy_send(sycl::sub_group &sg,
 
     ll256_recv_data(data, src + lid * sz, sg, lid, pattern);
 
-    message_t *dst_buf = (message_t *)dst;
-    data = sum_kernel(dst_buf[lid], data, dtype);
+    message_t *send_buf = (message_t *)sendbuf;
+    data = sum_kernel(send_buf[lid], data, dtype);
 
     if (lid < req_workitems) {
         LscStoreUnCached(dst + lid * sz, data);
@@ -109,6 +112,8 @@ static inline void recv_reduce_copy_send(sycl::sub_group &sg,
     ll256_send_data(data, next + lid * sz, pattern);
 #endif
 }
+
+class oneccl_arc_ll256_allreduce {};
 
 sycl::event arc_ll256_allreduce(const void *src,
                                 void *dst,
@@ -130,9 +135,6 @@ sycl::event arc_ll256_allreduce(const void *src,
     size_t dt_sz = ccl_dtype.size();
     char *recv_buf = static_cast<char *>(dst);
     char *send_buf = static_cast<char *>(const_cast<void *>(src));
-
-    if (send_buf != recv_buf)
-        q.memcpy(recv_buf, send_buf, dt_sz * count);
 
     /*
      * Intel(R) Arc(TM) A770 Graphics:
@@ -175,6 +177,11 @@ sycl::event arc_ll256_allreduce(const void *src,
     /* To avoid pattern not changed when "iters" is 1 */
     pattern_t pattern_prefix = ++pattern_counter << 16;
 
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(
+            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
+
     sycl_e = q.submit([&](auto &h) {
         //using namespace sycl::ext::intel::experimental::esimd;
 
@@ -183,7 +190,7 @@ sycl::event arc_ll256_allreduce(const void *src,
 
         int next_rank = (local_world_rank + 1) % local_world_size;
 
-        char *local_peer_bufs[ARC_NUM];
+        char *local_peer_bufs[ARC_MAX_NUM];
 #if 0
         auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
         for (int i = 0; i < local_world_size; i++) {
@@ -239,7 +246,7 @@ sycl::event arc_ll256_allreduce(const void *src,
 
         //sycl::ext::oneapi::experimental::printf("------> rank: %d, group num: %ld, loop count: %zu\n", local_world_rank, g_sz / l_sz, iters);
 
-        h.parallel_for(
+        h.template parallel_for<oneccl_arc_ll256_allreduce>(
             sycl::nd_range<1>(g_sz, l_sz),
             [=](sycl::nd_item<1> item) [[sycl::reqd_sub_group_size(SG_SZ)]] {
                 int idx = 0;
@@ -326,7 +333,7 @@ sycl::event arc_ll256_allreduce(const void *src,
                             offset_with_pattern = base_with_pattern + idx * chunk_with_pattern;
 
                             recv_reduce_send(sg,
-                                             recv_buf + offset,
+                                             send_buf + offset,
                                              next + offset_with_pattern,
                                              local_tmp_buf + offset_with_pattern,
                                              sg_lid,
@@ -342,6 +349,7 @@ sycl::event arc_ll256_allreduce(const void *src,
                             offset_with_pattern = base_with_pattern + idx * chunk_with_pattern;
 
                             recv_reduce_copy_send(sg,
+                                                  send_buf + offset,
                                                   recv_buf + offset,
                                                   next + GATHER_BUF_OFFSET + offset_with_pattern,
                                                   local_tmp_buf + offset_with_pattern,
@@ -386,10 +394,20 @@ sycl::event arc_ll256_allreduce(const void *src,
             });
     });
 
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(
+            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+    }
+
     if (reduction == ccl::reduction::avg) {
         std::vector<sycl::event> evs;
         evs.push_back(sycl_e);
         sycl_e = sycl_average(q, dst, count, comm_size, dtype, evs);
+    }
+
+    if (comm->is_multi_thread_instance() == true) {
+        pthread_barrier_wait(
+            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
     }
 
     return sycl_e;
@@ -402,8 +420,6 @@ ccl::event arc_allreduce(const void *src,
                          ccl::reduction reduction,
                          ccl_comm *comm,
                          ccl_stream *global_stream) {
-    coll_init(comm, global_stream);
-
     auto e = arc_ll256_allreduce(src, dst, count, dtype, reduction, comm, global_stream);
 
     return ccl::event::create_from_native(e);

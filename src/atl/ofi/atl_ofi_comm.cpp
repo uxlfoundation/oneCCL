@@ -177,14 +177,17 @@ atl_ofi_comm::atl_ofi_comm(atl_ofi_comm* parent, int color) {
     }
 
     atl_req req{};
-    parent->allgatherv(0 /* ep_idx */,
-                       &rank_info,
-                       sizeof(rank_info),
-                       ranks_info.data(),
-                       recv_lens.data(),
-                       offsets.data(),
-                       req);
-    wait(0, req);
+    atl_status_t status = parent->allgatherv(0 /* ep_idx */,
+                                             &rank_info,
+                                             sizeof(rank_info),
+                                             ranks_info.data(),
+                                             recv_lens.data(),
+                                             offsets.data(),
+                                             req);
+    CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "allgatherv failed with status: ", status);
+
+    status = wait(0, req);
+    CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "wait failed with status: ", status);
 
     CCL_THROW_IF_NOT(rank2proc_map.empty());
     CCL_THROW_IF_NOT(rank2rank_map.empty());

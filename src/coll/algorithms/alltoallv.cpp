@@ -399,23 +399,45 @@ ccl::status ccl_coll_build_topo_alltoallv(ccl_sched* main_sched,
     if (is_inplace) {
         CCL_THROW_IF_NOT(send_counts == recv_counts, "unexpected send_counts");
         for (int idx = 0; idx < comm_size; idx++) {
-            recv_bufs[idx].set(coll_param.get_send_buf(), total_recv_bytes, recv_offsets[idx]);
+            if (recv_counts[idx] == 0) {
+                recv_bufs[idx].set(nullptr, 0, 0);
+            }
+            else {
+                recv_bufs[idx].set(coll_param.get_send_buf(), total_recv_bytes, recv_offsets[idx]);
+            }
             send_bufs[idx] = recv_bufs[idx];
         }
 
         tmp_bufs.resize(comm_size);
         for (int idx = 0; idx < comm_size; idx++) {
-            ccl::alloc_param alloc_param(
-                send_counts[idx] * dtype.size(), ccl::buffer_type::ze, ccl::buffer_place::device);
-            tmp_bufs[idx] = sched->alloc_buffer(alloc_param);
+            if (send_counts[idx] == 0) {
+                tmp_bufs[idx].set(nullptr, 0, 0);
+            }
+            else {
+                ccl::alloc_param alloc_param(send_counts[idx] * dtype.size(),
+                                             ccl::buffer_type::ze,
+                                             ccl::buffer_place::device);
+                tmp_bufs[idx] = sched->alloc_buffer(alloc_param);
+            }
         }
     }
     else {
         CCL_THROW_IF_NOT(send_counts[comm_rank] == recv_counts[comm_rank],
                          "unexpected send_counts");
         for (int idx = 0; idx < comm_size; idx++) {
-            send_bufs[idx].set(coll_param.get_send_buf(), total_send_bytes, send_offsets[idx]);
-            recv_bufs[idx].set(coll_param.get_recv_buf(), total_recv_bytes, recv_offsets[idx]);
+            if (send_counts[idx] == 0) {
+                send_bufs[idx].set(nullptr, 0, 0);
+            }
+            else {
+                send_bufs[idx].set(coll_param.get_send_buf(), total_send_bytes, send_offsets[idx]);
+            }
+
+            if (recv_counts[idx] == 0) {
+                recv_bufs[idx].set(nullptr, 0, 0);
+            }
+            else {
+                recv_bufs[idx].set(coll_param.get_recv_buf(), total_recv_bytes, recv_offsets[idx]);
+            }
         }
     }
 

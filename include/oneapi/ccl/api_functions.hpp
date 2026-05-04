@@ -93,6 +93,33 @@ void CCL_API deregister_datatype(datatype dtype);
  */
 size_t CCL_API get_datatype_size(datatype dtype);
 
+/*************** CUSTOM REDUCTIONS ****************/
+
+/** @defgroup custom_reductions
+ * @{
+ */
+/**
+ * \ingroup custom_reductions
+ * \brief reduction_create_pre_mul_sum creates a custom reduction operation that performs a pre-multiplied sum.
+ * This function allows users to define a reduction operation where each element is multiplied by a specified scalar before summation.
+ * @param scalar the multiplier to be applied to each element before summing
+ * @param dtype datatype handle
+ */
+void CCL_API reduction_create_pre_mul_sum(reduction* rtype,
+                                          void* scalar,
+                                          datatype dtype,
+                                          scalar_residence_type residence,
+                                          const communicator& comm);
+
+/**
+ * \ingroup custom_reductions
+ * \brief reduction_destroy destroys a previously created custom reduction operation.
+ * This function releases any resources associated with the custom reduction operation.
+ * @param rtype handle to the custom reduction operation to be destroyed
+ */
+void CCL_API reduction_destroy(reduction rtype, const communicator& comm);
+/** @} */ // end of custom_reductions
+
 /******************** KVS ********************/
 
 /** @defgroup kvs

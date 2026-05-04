@@ -14,6 +14,7 @@
  limitations under the License.
 */
 #include "coll/algorithms/alltoall/sycl/alltoall_sycl.hpp"
+#include "coll/algorithms/alltoall/sycl/alltoall_ll256.hpp"
 
 namespace ccl {
 namespace v1 {
@@ -57,26 +58,59 @@ ccl::event alltoall_sycl_single_node(sycl::queue& q,
         return ccl::event::create_from_native(sycl_e);
     }
 
+    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
+        ccl::global_data::env().sycl_enable_arc_alltoall_ll) {
+        ccl::event e;
+        size_t dt_sz = ccl_dtype.size();
+        if (((count * dt_sz) % LS_SZ == 0) && ((world & (world - 1)) == 0)) {
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_begin("arc_alltoall", "send_size", count * ccl_dtype.size());
+#endif // CCL_ENABLE_ITT
+            LOG_DEBUG(
+                "|CCL_SYCL| alltoall selects arc_alltoall, count: ", count, " datatype: ", dtype);
+            e = arc_alltoall(send_buf, recv_buf, count, dtype, comm, global_stream);
+            LOG_DEBUG("|CCL_SYCL| alltoall selects arc_alltoall, count: ",
+                      count,
+                      " datatype: ",
+                      dtype,
+                      " done");
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
+            return e;
+        }
+    }
+
     if (ccl::global_data::env().sycl_esimd) {
         LOG_WARN(
             "|CCL_SYCL| sycl ESIMD requested for alltoall collective; ESIMD not supported, falling back to alltoall sycl implementation");
     }
 
+    if (send_buf != recv_buf) {
 #ifdef CCL_ENABLE_ITT
-    ccl::profile::itt::task_begin("alltoall_large", "send_size", count * ccl_dtype.size());
+        ccl::profile::itt::task_begin("alltoall_large", "send_size", count * ccl_dtype.size());
 #endif // CCL_ENABLE_ITT
-    LOG_DEBUG("|CCL_SYCL| alltoall selects large kernel, count: ", count, " datatype: ", dtype);
-    e = alltoall_large(send_buf, recv_buf, count, dtype, comm, global_stream, deps);
-    LOG_DEBUG(
-        "|CCL_SYCL| alltoall selects large kernel, count: ", count, " datatype: ", dtype, " done");
+        LOG_DEBUG("|CCL_SYCL| alltoall selects large kernel, count: ", count, " datatype: ", dtype);
+        e = alltoall_large(send_buf, recv_buf, count, dtype, comm, global_stream, deps);
+        LOG_DEBUG("|CCL_SYCL| alltoall selects large kernel, count: ",
+                  count,
+                  " datatype: ",
+                  dtype,
+                  " done");
 #ifdef CCL_ENABLE_ITT
-    ccl::profile::itt::task_end();
+        ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
+    }
+    else {
+        LOG_WARN(
+            "|CCL_SYCL| sycl inplace requested for alltoall collective; inplace not supported, falling back");
+        done = false;
+    }
 
     return e;
 }
 
-ccl::event alltoall_sycl(sycl::queue& q,
+ccl::event alltoall_sycl(sycl::queue q,
                          const void* send_buf,
                          void* recv_buf,
                          size_t count,
@@ -99,16 +133,10 @@ ccl::event alltoall_sycl(sycl::queue& q,
         is_single_node = topo_manager.is_single_node;
     }
 
-    if (is_single_node) {
-        if (send_buf != recv_buf) {
-            LOG_DEBUG("is_single_node");
-            return alltoall_sycl_single_node(
-                q, send_buf, recv_buf, count, dtype, comm, op_stream, deps, done);
-        }
-        else {
-            LOG_WARN(
-                "|CCL_SYCL| sycl inplace requested for alltoall collective; inplace not supported, falling back");
-        }
+    if (is_single_node && ccl::global_data::env().sycl_single_node_algorithm) {
+        LOG_DEBUG("is_single_node");
+        return alltoall_sycl_single_node(
+            q, send_buf, recv_buf, count, dtype, comm, op_stream, deps, done);
     }
 
     // multi-node scenario not supported, fallback

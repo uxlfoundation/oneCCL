@@ -17,39 +17,12 @@
 
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 #include "coll/algorithms/utils/sycl_selection.hpp"
+#include "coll/algorithms/utils/sycl_kernels.hpp"
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.hpp"
 #include "coll/coll_util.hpp"
 
 namespace ccl {
 namespace v1 {
-
-template <typename T>
-inline void reduce_kernel(const void *in1_, const void *in2_, void *out_, size_t idx) {
-    T *i1 = (T *)in1_;
-    T *i2 = (T *)in2_;
-    T *out = (T *)out_;
-    out[idx] = i1[idx] + i2[idx];
-}
-
-template <typename T, int vec_size>
-inline void reduce_pair(const void *in1,
-                        const void *in2,
-                        void *out,
-                        const size_t count,
-                        const sycl::nd_item<1> it) {
-    const size_t idx = it.get_global_linear_id();
-    using AT = sycl::vec<T, vec_size>;
-    const size_t packed_count = count / vec_size;
-    if (idx < packed_count) {
-        reduce_kernel<AT>(in1, in2, out, idx);
-    }
-    else {
-        const size_t new_idx = vec_size * packed_count + idx - packed_count;
-        if (new_idx < count) {
-            reduce_kernel<T>(in1, in2, out, new_idx);
-        }
-    }
-}
 
 //#define PRINT_TIMING
 
@@ -71,6 +44,7 @@ inline sycl::event reduce_scatter_ring_blocking_impl(sycl::queue &q,
     done = true;
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     // prepare ring block counts/sizes
     size_t main_block_count = count / world;
@@ -100,21 +74,6 @@ inline sycl::event reduce_scatter_ring_blocking_impl(sycl::queue &q,
 
     // blocking
     q.wait();
-
-    auto reduce_invoke =
-        [=, &q]<int VS, int SGS>(
-            void *in1, void *in2, void *out, size_t reduce_count, std::vector<sycl::event> l_dep_events) {
-            constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
-            const size_t kernel_threads = reduce_count / vec_size + reduce_count % vec_size;
-            const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
-            sycl::event local_event = q.submit([=](sycl::handler &h) {
-                h.depends_on(l_dep_events);
-                h.parallel_for(sycl::nd_range<1>(kernel_size, wg_size), [=](sycl::nd_item<1> it) {
-                    reduce_pair<T, vec_size>(in1, in2, out, reduce_count, it);
-                });
-            });
-            return local_event;
-        };
 
     // left and right neighbour
     const int right = (rank + 1) % world;
@@ -184,13 +143,13 @@ inline sycl::event reduce_scatter_ring_blocking_impl(sycl::queue &q,
             (uintptr_t)out_ptr % 4 == 0;
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8, true>();
-            sycl_e = reduce_invoke.template operator()<vec_size, 16>(
-                send_offset_ptr, recv_ptr, out_ptr, recv_block_count, {});
+            sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                q, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, {});
         }
         else {
             constexpr int vec_size = get_num_elements<T, 8, false>();
-            sycl_e = reduce_invoke.template operator()<vec_size, 64>(
-                send_offset_ptr, recv_ptr, out_ptr, recv_block_count, {});
+            sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                q, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, {});
         }
         sycl_e.wait();
 
@@ -261,6 +220,7 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
     int rank = comm->rank();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     // tuning parameters
     size_t pipeline_chunk_size = tune_attr.pipeline_chunk_size;
@@ -302,26 +262,7 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
     }
 
     // use an out-of-order queue
-    sycl::queue q_worker(q.get_device());
-
-    auto reduce_invoke = [=]<int VS, int SGS>(sycl::queue &q,
-                                              void *in1,
-                                              void *in2,
-                                              void *out,
-                                              size_t reduce_count,
-                                              std::vector<sycl::event> l_dep_events) {
-        constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
-        const size_t kernel_threads = reduce_count / vec_size + reduce_count % vec_size;
-        const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
-        return q.submit([=](sycl::handler &h) {
-            h.depends_on(l_dep_events);
-            h.parallel_for(sycl::nd_range<1>(kernel_size, wg_size),
-                           //[=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                           [=](sycl::nd_item<1> it) {
-                               reduce_pair<T, vec_size>(in1, in2, out, reduce_count, it);
-                           });
-        });
-    };
+    sycl::queue q_worker(q.get_context(), q.get_device());
 
     // left and right neighbour
     int right = (rank + 1) % world;
@@ -397,13 +338,13 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
             (uintptr_t)out_ptr % 4 == 0;
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8, true>();
-            sycl_e = reduce_invoke.template operator()<vec_size, 16>(
-                q_worker, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, { sendrecv_e });
+            sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                q_worker, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, { sendrecv_e });
         }
         else {
             constexpr int vec_size = get_num_elements<T, 8, false>();
-            sycl_e = reduce_invoke.template operator()<vec_size, 64>(
-                q_worker, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, { sendrecv_e });
+            sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                q_worker, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, { sendrecv_e });
         }
 
         dep_events.clear();
@@ -480,7 +421,7 @@ inline sycl::event reduce_scatter_ring(sycl::queue &q,
         }
     };
 
-    return invoke_scaleout(lambda, dtype);
+    return invoke_scaleout_collective(lambda, dtype);
 }
 
 } // namespace v1

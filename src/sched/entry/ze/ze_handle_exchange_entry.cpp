@@ -244,11 +244,9 @@ void ze_handle_exchange_entry::fill_payload(payload_t& payload, size_t buf_idx) 
         CCL_THROW("unable to get global id for context\n");
     }
     ssize_t remote_device_id{ ccl::utils::invalid_device_id };
-    if (ccl::global_data::env().enable_ze_cache_get_ipc_handles == 1 &&
-        ccl::global_data::env().enable_ze_cache_open_ipc_handles == 1) {
-        if (!ccl::ze::get_device_global_id(remote_device, &remote_device_id)) {
-            CCL_THROW("unable to get global id for device\n");
-        }
+    if ((remote_device && !ccl::ze::get_device_global_id(remote_device, &remote_device_id)) ||
+        (!remote_device && ccl::global_data::env().enable_ze_cache_get_ipc_handles != 0)) {
+        CCL_THROW("unable to get global id for device\n");
     }
 
     payload.remote_mem_alloc_id = mem_alloc_props.id;

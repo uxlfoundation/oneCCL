@@ -14,103 +14,23 @@
  limitations under the License.
 */
 #pragma once
+#include <cstdint>
+#include "comm/comm.hpp"
 #include "oneapi/ccl.hpp"
 #include "common/global/global.hpp"
 #include "coll/algorithms/utils/sycl_kernels.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
-#include "coll/algorithms/allreduce/sycl/allreduce_small_sycl_rw_kernel.hpp"
+#include "coll/reduction/reduction.hpp"
 
-template <typename T, int N, int read_all>
-inline void reduce_kernel(void *recv,
-                          std::array<void *, MAX_NODE_RANKS> in,
-                          std::array<void *, MAX_NODE_RANKS> out,
-                          size_t idx) {
-    T tmp_arr[N];
-    // copy from remote to local array
-    T sum = ((T *)in[0])[idx];
-#pragma unroll
-    for (int i = 1; i < N; i++) {
-        tmp_arr[i] = ((T *)in[i])[idx];
-    }
+// Kernel name templates for allreduce_small
+template <typename T, int V, int S, int L, int G, int NE, int NP>
+class oneccl_reduce_base {};
 
-    // reduce from local array
-    for (int i = 1; i < N; i++) {
-        sum += tmp_arr[i];
-    }
+template <typename T, int NE, int NP>
+class oneccl_reduce_base_general {};
 
-    // write to local recv buffer
-    if (read_all) {
-        ((T *)recv)[idx] = sum;
-    }
-    // write back to remote tmp buffers
-    else {
-#pragma unroll
-        for (int i = 0; i < N; i++) {
-            ((T *)out[i])[idx] = sum;
-        }
-    }
-}
-
-template <typename T,
-          int N,
-          int vec_size,
-          int use_block,
-          int use_local_barrier,
-          int use_global_barrier,
-          int read_all = 1,
-          int M = 1,
-          typename AT = sycl::vec<T, vec_size>>
-void inline reduce_sum(const void *send,
-                       void *recv,
-                       void *tmp,
-                       std::array<void *, MAX_NODE_RANKS> in,
-                       std::array<void *, MAX_NODE_RANKS> out,
-                       ccl_kernel_barrier_data kernel_barrier_data,
-                       const ccl_comm_barrier_data comm_barrier_data,
-                       const size_t count,
-                       const sycl::nd_item<1> it) {
-    const size_t idx = it.get_global_linear_id();
-
-    const size_t packed_count = count / vec_size;
-
-    if (use_local_barrier) {
-        // copy data from send buffer to tmp buffer
-        if (use_block && idx < packed_count) {
-            using MAT = sycl::marray<AT, M>;
-            ((MAT *)tmp)[idx] = ((MAT *)send)[idx];
-        }
-        else {
-            const size_t new_idx = idx + (vec_size - 1) * packed_count;
-            if (new_idx < count) {
-                using MT = sycl::marray<T, M>;
-                ((MT *)tmp)[new_idx] = ((MT *)send)[new_idx];
-            }
-        }
-
-        // local barrier within gpu
-        kernel_barrier(kernel_barrier_data.get_sync_ptr(), it);
-    }
-
-    if (use_global_barrier) {
-        // global communication barrier across ranks
-        comm_barrier(comm_barrier_data, it);
-    }
-
-    // reset local barrier counter
-    if (use_local_barrier && idx == 0) {
-        kernel_barrier_data.reset_sync_data();
-    }
-
-    if (use_block && idx < packed_count) {
-        reduce_kernel<AT, N, read_all>(recv, in, out, idx);
-    }
-    else {
-        const size_t new_idx = idx + (vec_size - 1) * packed_count;
-        if (new_idx < count) {
-            reduce_kernel<T, N, read_all>(recv, in, out, new_idx);
-        }
-    }
-}
+template <typename T, int NE, int NP>
+class oneccl_copy_data_internal {};
 
 // NE is the number of ranks in even_comm and
 // NP is the number of ranks in pair_comm
@@ -130,6 +50,9 @@ ccl::event allreduce_small_impl(const void *send_buf,
     const int dsize = ccl_dtype.size();
 
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+    const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
 
     const int comm_size = node_comm->size();
     const int comm_rank = node_comm->rank();
@@ -156,6 +79,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
 
     auto [local_tmp_buf, remote_ptrs] =
         is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
+    int *tmp_buf_idx = node_comm->get_tmp_buf_idx();
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
@@ -163,6 +87,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
     }
+
     // VS : vec_size, SGS : sub_group_size, LB : use_local_barrier, GB: use_global_barrier
     auto reduce_sum_invoke =
         [=, &q]<int VS, int SGS, int LB, int GB, typename AT = sycl::vec<T, VS>>(
@@ -193,18 +118,33 @@ ccl::event allreduce_small_impl(const void *send_buf,
 
         sycl::event local_event = q.submit([=](sycl::handler &h) {
             h.depends_on(l_dep_events);
-            h.parallel_for(
+            h.parallel_for<oneccl_reduce_base<T, VS, SGS, LB, GB, NE, NP>>(
                 sycl::nd_range<1>(kernel_size, wg_size),
                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                    reduce_sum<T, N, VS, use_block, LB, GB, 1, 1, AT>(send_buf,
-                                                                      recv_buf,
-                                                                      local_tmp_buf,
-                                                                      remote_ptrs,
-                                                                      remote_ptrs,
-                                                                      kernel_barrier_data,
-                                                                      comm_barrier_data,
-                                                                      count,
-                                                                      it);
+                    auto local_tmp_buf_cpy = local_tmp_buf;
+                    auto remote_ptrs_cpy = remote_ptrs;
+                    if (is_recording) {
+                        size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
+                        local_tmp_buf_cpy = static_cast<void *>(
+                            static_cast<uint8_t *>(local_tmp_buf) + offset_bytes);
+                        for (size_t rem_idx = 0; rem_idx < remote_ptrs.size(); ++rem_idx) {
+                            remote_ptrs_cpy[rem_idx] = static_cast<void *>(
+                                static_cast<uint8_t *>(remote_ptrs[rem_idx]) + offset_bytes);
+                        }
+                    }
+                    reduce_base<T, N, VS, use_block, LB, GB, 1, 1, AT>(send_buf,
+                                                                       recv_buf,
+                                                                       local_tmp_buf_cpy,
+                                                                       remote_ptrs_cpy,
+                                                                       remote_ptrs_cpy,
+                                                                       kernel_barrier_data,
+                                                                       comm_barrier_data,
+                                                                       reduction_op,
+                                                                       count,
+                                                                       it);
+                    if (is_recording && it.get_global_linear_id() == 0) {
+                        *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
+                    }
                 });
         });
         return local_event;
@@ -213,32 +153,47 @@ ccl::event allreduce_small_impl(const void *send_buf,
     // three phases of allreduce: local copy to tmp, comm_barrier, gather
     // VS : vec_size
     auto memcpy_reduce_sum = [=, &q]<int VS>() {
-        sycl::event memcpy_event = q.submit([=](sycl::handler &h) {
-            h.depends_on(dep_events);
-            h.memcpy(local_tmp_buf, send_buf, dsize * count);
-        });
+        void *local_tmp_buf_cpy = local_tmp_buf;
+        sycl::event memcpy_event;
+        if (is_recording) {
+            memcpy_event = kernel_memcpy(
+                q, send_buf, local_tmp_buf, nullptr, tmp_buf_idx, count, dsize, dep_events);
+        }
+        else {
+            memcpy_event = q.submit([=](sycl::handler &h) {
+                h.depends_on(dep_events);
+                h.memcpy(local_tmp_buf_cpy, send_buf, dsize * count);
+            });
+        }
+
+        if (reduce_has_pre_operation) {
+            // first applying pre-operation on each copied data element,
+            // supports recording path
+            memcpy_event = pre_operation_invoke<T, VS, 32>(
+                q, local_tmp_buf, count, is_recording, tmp_buf_idx, reduction_op, { memcpy_event });
+        }
 
         sycl::event barrier_event = invoke_barrier(node_comm, q, { memcpy_event }, use_cpu_barrier);
 
         sycl::event local_event =
             reduce_sum_invoke.template operator()<VS, 32, 0, 0>({ barrier_event });
 
-        if (is_recording) {
-            local_event = invoke_barrier(node_comm, q, { local_event }, use_cpu_barrier);
-        }
         return local_event;
     };
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
             &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
     }
+
     // run the three phases of collective as separate kernels.
     // when cpu barrier is enabled we cannot use single gpu kernel
     // since control has to go to cpu and perform the barrier.
     // also when user asks to remove the synchronization within kernel
     // run them as separate kernels since single kernel algorithm
     // will require the threads to synchronize between phases
-    if (use_cpu_barrier || !use_kernel_sync || is_recording) {
+    // user-defined reductions: for custom reduction operation it is required,
+    // to modify input buffer first before doing the reduction itself, use 3 step implementation.
+    if (use_cpu_barrier || !use_kernel_sync || is_recording || reduce_has_pre_operation) {
         // TODO: use cpu_barrier option with read_write kernel
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8>();
@@ -280,6 +235,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
                 constexpr int vec_size = get_num_elements<T, 16>();
                 // <vec_size, sub_group_size, use_local_barrier, use_global_barrier>
                 using AT = sycl::marray<sycl::vec<T, vec_size>, 8>;
+                // using AT = sycl::marray<T, vec_size * 8>;
                 kernel_event =
                     reduce_sum_invoke.template operator()<vec_size * 8, 32, 1, 1, AT>(dep_events);
             }
@@ -329,27 +285,28 @@ ccl::event allreduce_small_impl(const void *send_buf,
 
             kernel_event = q.submit([=](sycl::handler &h) {
                 h.depends_on(dep_events);
-                h.parallel_for(
+                h.parallel_for<oneccl_reduce_base_general<T, NE, NP>>(
                     sycl::nd_range<1>(kernel_size, wg_size),
                     [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
                         // <vec_size, use_block, use_local_barrier, use_global_barrier, read_all, multiplier>
-                        reduce_sum_general<T, N, vec_size, 1, 1, 1, 0, N>(send_buf,
-                                                                          recv_buf,
-                                                                          local_tmp_buf,
-                                                                          remote_ptrs_rank,
-                                                                          remote_ptrs_rank,
-                                                                          kernel_barrier_data,
-                                                                          comm_barrier_data,
-                                                                          count,
-                                                                          count_per_rank,
-                                                                          it);
+                        reduce_base_general<T, N, vec_size, 1, 1, 1, 0, N>(send_buf,
+                                                                           recv_buf,
+                                                                           local_tmp_buf,
+                                                                           remote_ptrs_rank,
+                                                                           remote_ptrs_rank,
+                                                                           kernel_barrier_data,
+                                                                           comm_barrier_data,
+                                                                           reduction_op,
+                                                                           count,
+                                                                           count_per_rank,
+                                                                           it);
                     });
             });
 
             ccl_comm_barrier_data comm_barrier_data_next = node_comm->barrier_inc();
             kernel_event = q.submit([=](sycl::handler &h) {
                 h.depends_on(kernel_event);
-                h.parallel_for(
+                h.parallel_for<oneccl_copy_data_internal<T, NE, NP>>(
                     sycl::nd_range<1>(kernel_size, wg_size),
                     [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
                         // global communication barrier across ranks

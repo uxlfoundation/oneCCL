@@ -108,7 +108,8 @@ fi
 LD_LIBRARY_PATH=$(prepend_path "${I_MPI_ROOT}/libfabric/lib" "${LD_LIBRARY_PATH:-}") ; export LD_LIBRARY_PATH
 FI_PROVIDER_PATH="${I_MPI_ROOT}/libfabric/lib/prov:/usr/lib64/libfabric"; export FI_PROVIDER_PATH
 
-CPATH=$(prepend_path "${I_MPI_ROOT}/include" "${CPATH:-}"); export CPATH
+C_INCLUDE_PATH=$(prepend_path "${I_MPI_ROOT}/include" "${C_INCLUDE_PATH:-}"); export C_INCLUDE_PATH
+CPLUS_INCLUDE_PATH=$(prepend_path "${I_MPI_ROOT}/include" "${CPLUS_INCLUDE_PATH:-}"); export CPLUS_INCLUDE_PATH
 LD_LIBRARY_PATH=$(prepend_path "${I_MPI_ROOT}/lib" "${LD_LIBRARY_PATH:-}") ; export LD_LIBRARY_PATH
 LIBRARY_PATH=$(prepend_path "${I_MPI_ROOT}/lib" "${LIBRARY_PATH:-}"); export LIBRARY_PATH
 PATH="${I_MPI_ROOT}/bin:${PATH}"; export PATH

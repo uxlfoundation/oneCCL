@@ -121,6 +121,10 @@ ccl::event reduce_scatter_large(const void *send_buf,
     }
     // scale-out step can force to use "tmp buffer version" for async support purposes
     is_tmp_used |= (coll_attr.force_use_tmp && ccl::global_data::env().sycl_force_use_tmp_buf_scaleout);
+    // user defined reduction operations require to apply special scalar before
+    // doing reduction itself. Since user buffer (send_buf) cannot be modified,
+    // a temporary buffer is needed to hold the modified data.
+    is_tmp_used |= ccl_reduction_type_storage::is_custom(reduction);
 
     if (is_tmp_used) {
         // global rank of pair_comm neighbors should be adjacent for using tmp buffer
@@ -152,16 +156,8 @@ ccl::event reduce_scatter_large(const void *send_buf,
         }
         delete exchange_entry;
         delete sched;
-
-        coll_init(comm, global_stream);
     }
     else {
-        if (comm->is_multi_thread_instance() == true) {
-            coll_initExt(comm, ccl::global_data::get().shared_data->hash_table, global_stream);
-        }
-        else {
-            coll_init(comm, global_stream);
-        }
         // 0 index is used for tmp work buffer and
         // 1 index is used to copy input data
         sycl_ptrs.xelink_ptrs_rd = get_remote_even_tmp_buf(1, comm);

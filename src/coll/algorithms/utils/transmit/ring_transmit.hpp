@@ -36,7 +36,7 @@ static inline void sbarrier_wait_compat(bool p2p) {
 #endif
 }
 
-template <typename T, int NRanks, template <typename, int> class Proto, int SubGroupSize = 16>
+template <typename T, template <typename, int> class Proto, int SubGroupSize = 16>
 class RingTransmit : public Proto<T, SubGroupSize> {
 protected:
     static constexpr int parallel_sg = 1;
@@ -71,7 +71,8 @@ public:
     typedef T (*ringPtr)[nSlot][maxLaunch][wireTransElems];
 
 public:
-    RingTransmit(T* input,
+    RingTransmit(int nranks,
+                 T* input,
                  T* scatterBuf,
                  T* gatherBuf,
                  T* const peerBuf0[],
@@ -80,7 +81,8 @@ public:
                  int rank,
                  uint32_t seqNo, // Serve as flag for checking
                  bool p2p)
-            : workElems(workSize / sizeof(T)),
+            : NRanks(nranks),
+              workElems(workSize / sizeof(T)),
               rank(rank),
               seqNo(seqNo),
               p2p(p2p) {
@@ -95,7 +97,8 @@ public:
         localGatherSink = reinterpret_cast<ringPtr>((uintptr_t)gatherBuf);
     }
 
-    RingTransmit(T* input,
+    RingTransmit(int nranks,
+                 T* input,
                  T* output,
                  T* scatterBuf,
                  T* gatherBuf,
@@ -105,7 +108,8 @@ public:
                  int rank,
                  uint32_t seqNo, // Serve as flag for checking
                  bool p2p)
-            : workElems(workSize / sizeof(T)),
+            : NRanks(nranks),
+              workElems(workSize / sizeof(T)),
               rank(rank),
               seqNo(seqNo),
               p2p(p2p) {
@@ -247,9 +251,53 @@ public:
         storeOutput(ptr, v, nelems);
     }
 
+    inline void loadRecvReduceWrtback(int wireId,
+                                      int peer,
+                                      size_t offset,
+                                      uint32_t flag,
+                                      uint32_t slot,
+                                      ssize_t nelems) {
+        message_t v;
+        message_t messages;
+
+        auto* ptr = ingress + peer * workElems + offset;
+        loadInput(v, ptr, nelems);
+
+        bool retry;
+        sbarrier_wait_compat(p2p);
+        do {
+            retry = false;
+            retry |= recvMessages(messages, localScatterSink[peer][slot][wireId], flag);
+        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+
+        shuffleData(v);
+        accumMessages(v, messages);
+
+        insertFlags(v, flag);
+        restoreData(v);
+
+        ptr = egress + offset;
+        storeOutput(ptr, v, nelems);
+    }
+
     inline void runAllreduce(size_t inputOffset, size_t tStep, ssize_t workLeft) {
-        if (workLeft <= 0)
+        if (workLeft <= 0) {
+            // threads without work paticipate in exactly same number of
+            // barrier as those threads with actual work
+            sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < NRanks - 1; ++i) {
+                sbarrier_wait_compat(p2p);
+                sbarrier_signal_compat(p2p);
+            }
+            sbarrier_wait_compat(p2p);
+            sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < NRanks - 1; ++i) {
+                sbarrier_wait_compat(p2p);
+                sbarrier_signal_compat(p2p);
+            }
+            sbarrier_wait_compat(p2p);
             return;
+        }
 
         auto wireId =
             sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
@@ -292,8 +340,15 @@ public:
     }
 
     inline void runAllgather(size_t inputOffset, size_t tStep, ssize_t workLeft) {
-        if (workLeft <= 0)
+        if (workLeft <= 0) {
+            sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < NRanks - 1; ++i) {
+                sbarrier_wait_compat(p2p);
+                sbarrier_signal_compat(p2p);
+            }
+            sbarrier_wait_compat(p2p);
             return;
+        }
 
         auto wireId =
             sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
@@ -334,10 +389,50 @@ public:
         recvWrtback(wireId, peer, inputOffInType, flag, slot, nelems);
     }
 
+    inline void runReduceScatter(size_t inputOffset, size_t tStep, ssize_t workLeft) {
+        if (workLeft <= 0) {
+            sbarrier_signal_compat(p2p);
+            for (uint32_t i = 1; i < NRanks - 1; ++i) {
+                sbarrier_wait_compat(p2p);
+                sbarrier_signal_compat(p2p);
+            }
+            sbarrier_wait_compat(p2p);
+            return;
+        }
+
+        auto wireId =
+            sycl::ext::oneapi::this_work_item::get_nd_item<1>().get_global_id(0) / SubGroupSize;
+
+        auto offset = inputOffset / sizeof(T);
+        auto flag = seqNo + tStep / nSlot;
+        auto slot = (seqNo + tStep) % nSlot;
+        auto nelems = workLeft / sizeof(T);
+
+        uint32_t p_idx = -1;
+        int peer = (rank + p_idx + NRanks) % NRanks;
+
+        // Step 0
+        send(wireId, peer, offset, flag, slot, nelems);
+
+        // Step 1 to N-1
+#pragma unroll
+        for (int i = 1; i < NRanks - 1; ++i) {
+            p_idx = (p_idx - 1) % NRanks;
+            peer = (rank + p_idx) % NRanks;
+            loadRecvReduceSend(wireId, peer, offset, flag, slot, nelems);
+        }
+
+        // Step N
+        p_idx = (p_idx - 1) % NRanks;
+        peer = (rank + p_idx) % NRanks;
+        loadRecvReduceWrtback(wireId, peer, offset, flag, slot, nelems);
+    }
+
 protected:
     T* ingress;
     T* egress;
 
+    int NRanks;
     ssize_t workElems;
     int rank;
     uint32_t seqNo;

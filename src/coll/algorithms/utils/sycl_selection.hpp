@@ -59,12 +59,14 @@ struct sycl_allgatherv_tune_attr {
 size_t allreduce_select_chunk_size(allreduce_scaleout_algo algo, size_t size, size_t comm_size);
 sycl_allreduce_tune_attr allreduce_select_tune_attr(size_t size,
                                                     size_t comm_size,
-                                                    ccl_datatype ccl_dtype);
+                                                    ccl_datatype ccl_dtype,
+                                                    bool is_recording);
 
 // reduce-scatter
 sycl_reduce_scatter_tune_attr reduce_scatter_select_tune_attr(size_t size,
                                                               size_t comm_size,
-                                                              ccl_datatype ccl_dtype);
+                                                              ccl_datatype ccl_dtype,
+                                                              bool is_recording);
 size_t reduce_scatter_select_chunk_size(reduce_scatter_scaleout_algo algo,
                                         size_t size,
                                         size_t comm_size);
@@ -72,6 +74,7 @@ size_t reduce_scatter_select_chunk_size(reduce_scatter_scaleout_algo algo,
 // allgatherv
 sycl_allgatherv_tune_attr allgatherv_select_tune_attr(size_t size,
                                                       size_t comm_size,
-                                                      ccl_datatype ccl_dtype);
+                                                      ccl_datatype ccl_dtype,
+                                                      bool is_recording);
 
 size_t allgatherv_select_chunk_size(allgatherv_scaleout_algo algo, size_t size, size_t comm_size);

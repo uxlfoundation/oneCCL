@@ -10,7 +10,7 @@
 #ifndef UMF_OS_MEMORY_PROVIDER_H
 #define UMF_OS_MEMORY_PROVIDER_H
 
-#include "umf/memory_provider.h"
+#include <umf/memory_provider.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -146,7 +146,7 @@ typedef enum umf_os_memory_provider_native_error {
     UMF_OS_RESULT_ERROR_TOPO_DISCOVERY_FAILED, ///< HWLOC topology discovery failed
 } umf_os_memory_provider_native_error_t;
 
-umf_memory_provider_ops_t *umfOsMemoryProviderOps(void);
+const umf_memory_provider_ops_t *umfOsMemoryProviderOps(void);
 
 #ifdef __cplusplus
 }

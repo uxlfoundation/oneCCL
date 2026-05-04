@@ -98,14 +98,17 @@ int atl_base_comm::create_comm_id() {
     }
 
     atl_req_t req{};
-    allgatherv(0 /* ep_idx */,
-               comm_id_map.data(),
-               send_bytes,
-               all_comm_id_maps.data(),
-               recv_bytes.data(),
-               offsets.data(),
-               req);
-    wait(0, req);
+    atl_status_t status = allgatherv(0 /* ep_idx */,
+                                     comm_id_map.data(),
+                                     send_bytes,
+                                     all_comm_id_maps.data(),
+                                     recv_bytes.data(),
+                                     offsets.data(),
+                                     req);
+    CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "allgatherv failed with status: ", status);
+
+    status = wait(0, req);
+    CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "wait failed with status: ", status);
 
     // LOG_DEBUG("all_comm_id_maps: ", ccl::utils::vec_to_string(all_comm_id_maps));
 

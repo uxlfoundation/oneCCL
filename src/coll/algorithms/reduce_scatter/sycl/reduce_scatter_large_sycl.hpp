@@ -402,15 +402,15 @@ void all_sum(int idx,
 }
 
 template <typename dtype, size_t align>
-class ReduceScatterLargeKernel;
+class oneccl_reduce_scatter_large_kernel;
 
 template <typename dtype>
-class ReduceScatterLargeNoCopyKernel;
+class oneccl_reduce_scatter_large_nocopy_kernel;
 
 template <typename dtype>
-class ReduceScatterLargeKernel_GlobalSync;
+class oneccl_reduce_scatter_large_kernel_global_sync;
 template <typename dtype>
-class ReduceScatterLargeKernel_LocalSync;
+class oneccl_reduce_scatter_large_kernel_local_sync;
 
 template <typename data_type, uint32_t max_rank = MAX_RANK, uint32_t max_buffer = 1024 /*KB*/>
 class sycl_reduce_scatter_large : public sycl_coll_base<data_type> {
@@ -628,7 +628,7 @@ private:
                 first_iter = 0;
 
                 e = queue.submit([&](sycl::handler &cgh) {
-                        cgh.parallel_for<class ReduceScatterLargeKernel<data_type, align>>(
+                        cgh.parallel_for<class oneccl_reduce_scatter_large_kernel<data_type, align>>(
                             sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                             {
                             uint32_t idx = idx2.get_global_id();
@@ -884,7 +884,7 @@ private:
                 first_iter = 0;
 
                 e = queue.submit([&](sycl::handler &cgh) {
-                        cgh.parallel_for<class ReduceScatterLargeNoCopyKernel<data_type>>(
+                        cgh.parallel_for<class oneccl_reduce_scatter_large_nocopy_kernel<data_type>>(
                             sycl::nd_range<1>({ persist_threads_needed }, wg_size), [=](sycl::nd_item<1> idx2) SYCL_ESIMD_KERNEL
                             {
                             uint32_t idx = idx2.get_global_id();
@@ -941,7 +941,7 @@ private:
         uint32_t total_threads_needed_sync = 1;
         int wg_size = 1;
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class ReduceScatterLargeKernel_GlobalSync<data_type>>(
+            cgh.parallel_for<class oneccl_reduce_scatter_large_kernel_global_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 simd<ushort, SIMD_SYNC> ramp;
@@ -1021,7 +1021,7 @@ private:
         int wg_size = 1;
 
         e = queue.submit([&](sycl::handler &cgh) {
-            cgh.parallel_for<class ReduceScatterLargeKernel_LocalSync<data_type>>(
+            cgh.parallel_for<class oneccl_reduce_scatter_large_kernel_local_sync<data_type>>(
                 sycl::nd_range<1>({ total_threads_needed_sync }, wg_size), [=](sycl::nd_item<1> idx) SYCL_ESIMD_KERNEL
                 {
                 simd<ushort, SIMD_SYNC> ramp;

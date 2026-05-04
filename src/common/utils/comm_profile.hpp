@@ -277,7 +277,7 @@ public:
     }
 };
 
-extern comm_profile comm_profiles;
+comm_profile& get_comm_profiles();
 
 comm_profile_key get_profile_key(int comm_id,
                                  int rank,

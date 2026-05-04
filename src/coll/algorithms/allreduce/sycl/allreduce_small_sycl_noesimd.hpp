@@ -39,9 +39,9 @@ const int kernel_inner_loop = 1;
 const uint32_t vec_size = 16;
 
 template <typename dtype>
-class Allreduce_small_kernel_scalar;
+class oneccl_allreduce_small_kernel_scalar;
 template <typename dtype>
-class Allreduce_small_kernel_block;
+class oneccl_allreduce_small_kernel_block;
 
 template <typename data_type, uint32_t max_rank = MAX_RANK, uint32_t max_buffer = 1024 /*KB*/>
 class sycl_allreducer_small : public sycl_coll_base<data_type> {
@@ -146,7 +146,7 @@ public:
 
             if (v == 1) {
                 e = queue.submit([&](sycl::handler &cgh) {
-                cgh.parallel_for<class Allreduce_small_kernel_scalar<data_type>>(
+                cgh.parallel_for<class oneccl_allreduce_small_kernel_scalar<data_type>>(
                     sycl::nd_range<1>( total_threads_dispatched, wg_size), [=](sycl::nd_item<1> idx2) {
                     uint32_t idx = idx2.get_global_id();
                     //uint32_t idx = idx2.get_linear_id();
@@ -364,7 +364,7 @@ public:
                 // block read kernel
                 e = queue.submit([&](sycl::handler &cgh) {
                     //                cgh.depends_on(memcpy_event);
-                cgh.parallel_for<class Allreduce_small_kernel_block<data_type>>(
+                cgh.parallel_for<class oneccl_allreduce_small_kernel_block<data_type>>(
                     sycl::nd_range<1>( total_threads_dispatched, wg_size), [=](sycl::nd_item<1> idx2) [[sycl::reqd_sub_group_size(subgroup_size)]] {
                     //                    sycl::nd_range<1>( total_threads_dispatched, wg_size), [=](sycl::nd_item<1> idx2) {
 

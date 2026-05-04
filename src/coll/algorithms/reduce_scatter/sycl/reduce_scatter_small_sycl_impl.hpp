@@ -16,9 +16,15 @@
 #pragma once
 #include "oneapi/ccl.hpp"
 #include "common/global/global.hpp"
-#include "coll/algorithms/utils/sycl_kernels.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
-#include "coll/algorithms/allreduce/sycl/allreduce_small_sycl_impl.hpp"
+#include "coll/algorithms/utils/sycl_kernels.hpp"
+
+// Kernel name templates for reduce_scatter_small
+template <typename T, int VS, int SGS, int LB, int GB, int NE, int NP>
+class oneccl_reduce_scatter_small {};
+
+template <typename T, int VS, int SGS, int LB, int GB, int NE, int NP>
+class oneccl_reduce_scatter_small_general {};
 
 // NE is the number of ranks in even_comm and
 // NP is the number of ranks in pair_comm
@@ -41,6 +47,9 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
     std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
     const int comm_size = node_comm->size();
     const int comm_rank = node_comm->rank();
+
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+    const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
 
     const size_t count = recv_count;
     // calculate the total count of data to be reduced and copied to tmp buffer,
@@ -70,6 +79,7 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
 
     auto [local_tmp_buf, remote_ptrs] =
         is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
+    int* tmp_buf_idx = node_comm->get_tmp_buf_idx();
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
@@ -121,18 +131,33 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
             // general case, original specification of reduce-scatter
             local_event = q.submit([=](sycl::handler& h) {
                 h.depends_on(l_dep_events);
-                h.parallel_for(
+                h.parallel_for<oneccl_reduce_scatter_small<T, VS, SGS, LB, GB, NE, NP>>(
                     sycl::nd_range<1>(kernel_size, wg_size),
                     [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                        reduce_sum<T, N, VS, use_block, LB, GB, 1, N>(send_buf,
-                                                                      recv_buf,
-                                                                      local_tmp_buf,
-                                                                      remote_ptrs_offset,
-                                                                      remote_ptrs_offset,
-                                                                      kernel_barrier_data,
-                                                                      comm_barrier_data,
-                                                                      count,
-                                                                      it);
+                        auto local_tmp_buf_cpy = local_tmp_buf;
+                        auto remote_ptrs_offset_cpy = remote_ptrs_offset;
+                        if (is_recording) {
+                            size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
+                            local_tmp_buf_cpy =
+                                static_cast<void*>(static_cast<uint8_t*>(local_tmp_buf) + offset_bytes);
+                            for (size_t rem_idx = 0; rem_idx < remote_ptrs_offset.size(); ++rem_idx) {
+                                remote_ptrs_offset_cpy[rem_idx] = static_cast<void*>(
+                                    static_cast<uint8_t*>(remote_ptrs_offset[rem_idx]) + offset_bytes);
+                            }
+                        }
+                        reduce_base<T, N, VS, use_block, LB, GB, 1, N>(send_buf,
+                                                                       recv_buf,
+                                                                       local_tmp_buf_cpy,
+                                                                       remote_ptrs_offset_cpy,
+                                                                       remote_ptrs_offset_cpy,
+                                                                       kernel_barrier_data,
+                                                                       comm_barrier_data,
+                                                                       reduction_op,
+                                                                       count,
+                                                                       it);
+                        if (is_recording && it.get_global_linear_id() == 0) {
+                            *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
+                        }
                     });
             });
         }
@@ -142,40 +167,67 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
             // we can merge conditions (MLSL-3401)
             local_event = q.submit([=](sycl::handler& h) {
                 h.depends_on(l_dep_events);
-                h.parallel_for(
+                h.parallel_for<oneccl_reduce_scatter_small_general<T, VS, SGS, LB, GB, NE, NP>>(
                     sycl::nd_range<1>(kernel_size, wg_size),
                     [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                        reduce_sum_general<T, N, vec_size, use_block, LB, GB, 1, N>(send_buf,
-                                                                                    recv_buf,
-                                                                                    local_tmp_buf,
-                                                                                    remote_ptrs_offset,
-                                                                                    remote_ptrs_offset,
-                                                                                    kernel_barrier_data,
-                                                                                    comm_barrier_data,
-                                                                                    copy_count,
-                                                                                    reduce_count,
-                                                                                    it);
+                        auto local_tmp_buf_cpy = local_tmp_buf;
+                        auto remote_ptrs_offset_cpy = remote_ptrs_offset;
+                        if (is_recording) {
+                            size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
+                            local_tmp_buf_cpy =
+                                static_cast<void*>(static_cast<uint8_t*>(local_tmp_buf) + offset_bytes);
+                            for (size_t rem_idx = 0; rem_idx < remote_ptrs_offset.size(); ++rem_idx) {
+                                remote_ptrs_offset_cpy[rem_idx] = static_cast<void*>(
+                                    static_cast<uint8_t*>(remote_ptrs_offset[rem_idx]) + offset_bytes);
+                            }
+                        }
+                        reduce_base_general<T, N, vec_size, use_block, LB, GB, 1, N>(send_buf,
+                                                                                     recv_buf,
+                                                                                     local_tmp_buf_cpy,
+                                                                                     remote_ptrs_offset_cpy,
+                                                                                     remote_ptrs_offset_cpy,
+                                                                                     kernel_barrier_data,
+                                                                                     comm_barrier_data,
+                                                                                     reduction_op,
+                                                                                     copy_count,
+                                                                                     reduce_count,
+                                                                                     it);
+                        if (is_recording && it.get_global_linear_id() == 0) {
+                            *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
+                        }
                     });
             });
         }
         return local_event;
     };
 
-    // three phases of allgather: local copy to tmp, comm_barrier, reduce
+    // three phases of reduce-scatter: local copy to tmp, comm_barrier, reduce
     // VS : vec_size
     auto memcpy_reduce_sum = [=, &q]<int VS>() {
-        sycl::event memcpy_event = q.submit([=](sycl::handler& h) {
-            h.depends_on(dep_events);
-            h.memcpy(local_tmp_buf, send_buf, dsize * copy_count);
-        });
+        sycl::event memcpy_event;
+
+        if (is_recording) {
+            memcpy_event =
+                kernel_memcpy(q, send_buf, local_tmp_buf, nullptr, tmp_buf_idx, copy_count, dsize, dep_events);
+        }
+        else {
+            memcpy_event = q.submit([=](sycl::handler& h) {
+                h.depends_on(dep_events);
+                h.memcpy(local_tmp_buf, send_buf, dsize * copy_count);
+            });
+        }
+
+        if (reduce_has_pre_operation) {
+            // first applying pre-operation on each copied data element,
+            // supports recording path
+            memcpy_event = pre_operation_invoke<T, VS, 32>(
+                q, local_tmp_buf, copy_count, is_recording, tmp_buf_idx, reduction_op, { memcpy_event });
+        }
 
         sycl::event barrier_event = invoke_barrier(node_comm, q, { memcpy_event }, use_cpu_barrier);
 
         sycl::event local_event = reduce_sum_invoke.template operator()<VS, 32, 0, 0>({ barrier_event });
 
-        if (is_recording) {
-            local_event = invoke_barrier(node_comm, q, { local_event }, use_cpu_barrier);
-        }
         return local_event;
     };
     if (comm->is_multi_thread_instance() == true) {
@@ -187,7 +239,9 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
     // also when user asks to remove the synchronization within kernel
     // run them as separate kernels since single kernel algorithm
     // will require the threads to synchronize between phases
-    if (use_cpu_barrier || !use_kernel_sync || is_recording) {
+    // user-defined reductions: for custom reduction operation it is required,
+    // to modify input buffer first before doing the reduction itself, use 3 step implementation.
+    if (use_cpu_barrier || !use_kernel_sync || is_recording || reduce_has_pre_operation) {
         if (use_full_vector) {
             constexpr int vec_size = get_num_elements<T, 8>();
             kernel_event = memcpy_reduce_sum.template operator()<vec_size>();
@@ -224,7 +278,8 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
         kernel_event = reduce_sum_invoke.template operator()<vec_size, 32, 1, 1>(dep_events);
     }
     else if (count * dsize <= sec_3) {
-        constexpr int vec_size = get_num_elements<T, 32>();
+        constexpr int vec_bytes = (std::is_same_v<T, int8_t> || std::is_same_v<T, uint8_t>) ? 16 : 32;
+        constexpr int vec_size = get_num_elements<T, vec_bytes>();
         // <vec_size, sub_group_size, use_local_barrier, use_global_barrier>
         kernel_event = reduce_sum_invoke.template operator()<vec_size, 16, 1, 1>(dep_events);
     }

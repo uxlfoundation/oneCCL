@@ -86,6 +86,7 @@ ccl::event run_allreduce_small(ccl::datatype dtype,
 }
 
 #include "coll/algorithms/allreduce/sycl/allreduce_small_sycl_impl.hpp"
+
 ccl::event allreduce_small(const void *send_buf,
                            void *recv_buf,
                            size_t count,
@@ -96,11 +97,9 @@ ccl::event allreduce_small(const void *send_buf,
                            const ccl::vector_class<ccl::event> &deps) {
     if (comm->is_multi_thread_instance() == true) {
         LOG_DEBUG("|MT|: invoking allreduce_small");
-        coll_initExt(comm, ccl::global_data::get().shared_data->hash_table, global_stream);
     }
     else {
         LOG_DEBUG("invoking allreduce_small");
-        coll_init(comm, global_stream);
     }
 
     auto lambda = [&]<typename T, int NE, int NP>() {

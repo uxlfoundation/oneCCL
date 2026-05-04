@@ -229,14 +229,10 @@ bool ccl_sched_base::check_pt2pt_pre_post_copy_support(const ccl_coll_param& par
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
 void ccl_sched_base::sched_complete_hook() {
-    if (!coll_attr.to_cache) {
-        /* don't wait sched dtor to clear memory */
-        clear_memory();
-    }
-    else {
-        /* just reset without destroy */
-        reset_memory_state();
-    }
+    /*
+     * just reset without destroying
+     */
+    reset_memory_state();
 
 #ifdef CCL_ENABLE_ZE
     for (auto& ze_entry : ze_entries) {
@@ -282,6 +278,13 @@ void ccl_sched_base::clear_memory() {
         if (memory.event_manager) {
             memory.event_manager->clear();
         }
+
+        /* TODO add a barrier; make sure the handles are not used before they are cleared
+         * issue with the barrier: we are within ccl_sched_base destructor
+         * and we can't freely construct and destroy new scheds here
+         * we can't easily omit that since we don't have access to atl_comm here
+         * sched->sched_bin seems to be nullptr in some cases and the barrier crashes */
+
         memory.handle_manager.clear();
         memory.ipc_event_pool_manager.clear();
 
@@ -320,6 +323,12 @@ void ccl_sched_base::free_memory_regions() {
     if (memory.mr_list.empty()) {
         return;
     }
+
+    /* TODO add a barrier; make sure the handles are not used before they are cleared
+     * issue with the barrier: we are within ccl_sched_base destructor
+     * and we can't freely construct and destroy new scheds here
+     * we can't easily omit that since we don't have access to atl_comm here
+     * sched->sched_bin seems to be nullptr in some cases and the barrier crashes */
 
     /* perform deregistration in worker thread */
 

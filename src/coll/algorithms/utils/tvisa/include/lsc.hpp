@@ -65,14 +65,14 @@ static inline void lscStore(void* addr, const T (&var)[N]) {
 
 template <int subGroupSize, CacheCtrl CTL = CacheCtrl::DEFAULT, typename T, int N>
 static inline void lscLoad(sycl::vec<T, N>& var, void* addr) {
-    LscLoad<sizeof(T), N, subGroupSize, CTL>::run(
-        reinterpret_cast<typename sycl::vec<T, N>::vector_t&>(var), addr);
+    using inner_t = T __attribute__((ext_vector_type(N)));
+    LscLoad<sizeof(T), N, subGroupSize, CTL>::run(reinterpret_cast<inner_t&>(var), addr);
 }
 
 template <int subGroupSize, CacheCtrl CTL = CacheCtrl::DEFAULT, typename T, int N>
 static inline void lscStore(void* addr, const sycl::vec<T, N>& var) {
-    LscStore<sizeof(T), N, subGroupSize, CTL>::run(
-        addr, reinterpret_cast<const typename sycl::vec<T, N>::vector_t&>(var));
+    using inner_t = T __attribute__((ext_vector_type(N)));
+    LscStore<sizeof(T), N, subGroupSize, CTL>::run(addr, reinterpret_cast<const inner_t&>(var));
 }
 
 // Usage: lscPrefetch<message_t>(ptr + local_off);

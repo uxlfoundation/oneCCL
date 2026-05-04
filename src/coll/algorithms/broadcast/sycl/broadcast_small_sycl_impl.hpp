@@ -19,7 +19,9 @@
 #include "common/global/global.hpp"
 #include "coll/algorithms/utils/sycl_kernels.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
-#include "coll/algorithms/allreduce/sycl/allreduce_small_sycl_rw_kernel.hpp"
+
+template <typename T, int VS, int use_block, int NE, int NP>
+class oneccl_broadcast_small {};
 
 template <typename T, int N>
 inline void broadcast_kernel(const void* in, std::array<void*, MAX_NODE_RANKS> out, size_t idx) {
@@ -80,6 +82,8 @@ ccl::event broadcast_small_impl(const void* send_buf,
 
     auto [local_tmp_buf, remote_ptrs] =
         is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
+    int* tmp_buf_idx = node_comm->get_tmp_buf_idx();
+    int* tmp_buf_secondary_idx = node_comm->get_tmp_buf_secondary_idx();
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
@@ -96,10 +100,22 @@ ccl::event broadcast_small_impl(const void* send_buf,
 
         sycl::event local_event = q.submit([=](sycl::handler& h) {
             h.depends_on(sycl_deps);
-            h.parallel_for(
+            h.parallel_for<oneccl_broadcast_small<T, VS, use_block, NE, NP>>(
                 sycl::nd_range<1>(kernel_size, wg_size),
                 [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(sg_size)]] {
-                    broadcast<T, N, VS, use_block>(send_buf, remote_ptrs, count, it);
+                    auto remote_ptrs_cpy = remote_ptrs;
+                    if (is_recording) {
+                        size_t offset_bytes = *tmp_buf_idx * ccl_tmp_bufs::buf_size;
+                        for (size_t rem_idx = 0; rem_idx < remote_ptrs.size(); ++rem_idx) {
+                            remote_ptrs_cpy[rem_idx] = static_cast<void*>(
+                                static_cast<uint8_t*>(remote_ptrs[rem_idx]) + offset_bytes);
+                        }
+                    }
+                    broadcast<T, N, VS, use_block>(send_buf, remote_ptrs_cpy, count, it);
+                    if (is_recording && it.get_global_linear_id() == 0) {
+                        *tmp_buf_secondary_idx = *tmp_buf_idx;
+                        *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
+                    }
                 });
         });
         return local_event;
@@ -115,17 +131,37 @@ ccl::event broadcast_small_impl(const void* send_buf,
         sycl::event barrier_event = invoke_barrier(node_comm, q, sycl_deps, use_cpu_barrier);
         sycl::event end_event{};
         if (comm_rank != root || !inplace) {
-            sycl::event copy_event = q.submit([=](sycl::handler& h) {
-                h.depends_on(dep_events);
-                h.memcpy(recv_buf, local_tmp_buf, dsize * count);
-            });
-            end_event = copy_event;
+            sycl::event memcpy_event;
+            if (is_recording) {
+                // other collectives:
+                // 1. memcpy
+                // 2. read
+                // 3. barrier
+                // 4. increase
+                // here:
+                // 1. read
+                // 2. barrier
+                // 3. increase
+                // 4. memcpy <- index is incorrect
+                memcpy_event = kernel_memcpy(q,
+                                             local_tmp_buf,
+                                             recv_buf,
+                                             tmp_buf_secondary_idx,
+                                             nullptr,
+                                             count,
+                                             dsize,
+                                             dep_events);
+            }
+            else {
+                memcpy_event = q.submit([=](sycl::handler& h) {
+                    h.depends_on(dep_events);
+                    h.memcpy(recv_buf, local_tmp_buf, dsize * count);
+                });
+            }
+            end_event = memcpy_event;
         }
         else {
             end_event = barrier_event;
-        }
-        if (is_recording) {
-            end_event = invoke_barrier(node_comm, q, { end_event }, use_cpu_barrier);
         }
 
         return end_event;

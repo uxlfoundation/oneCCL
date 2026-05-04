@@ -217,6 +217,7 @@ atl_status_t atl_mpi::allgatherv(atl_ep_t& ep,
                                               send_len,
                                               recv_buf,
                                               recv_lens_size_t.data(),
+                                              offsets,
                                               1 /*dtype_size*/, // size of MPI_CHAR dtype is 1
                                               rank,
                                               comm_size);
@@ -1036,7 +1037,7 @@ MPI_Op atl_mpi::atl2mpi_op(atl_reduction_t rtype, MPI_Datatype dtype) {
         case ATL_REDUCTION_PROD: return MPI_PROD;
         case ATL_REDUCTION_MIN: return MPI_MIN;
         case ATL_REDUCTION_MAX: return MPI_MAX;
-        default: printf("unknown reduction type: %d\n", rtype); exit(1);
+        default: CCL_THROW("unknown reduction type: ", static_cast<int>(rtype));
     }
 }
 

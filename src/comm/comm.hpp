@@ -37,13 +37,19 @@
 #include "oneapi/ccl/coll_attr_ids.hpp"
 #include "oneapi/ccl/coll_attr_ids_traits.hpp"
 #include "oneapi/ccl/coll_attr.hpp"
+#include "coll/algorithms/algorithm_utils.hpp"
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
 #include "common/global/ze/ze_fd_manager.hpp"
 #include "sched/entry/ze/ze_primitives.hpp"
+#include "sched/entry/ze/ze_handle_exchange_entry.hpp"
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 #include "types_generator_defines.hpp"
 #include "topology/topo_manager.hpp"
 #include "unordered_coll/unordered_coll.hpp"
+
+#define ARC_MAX_NUM (32)
+
+enum class pattern_type { collective, send, recv };
 
 // index = local_rank, value = global_rank
 using ccl_rank2rank_map = std::vector<int>;
@@ -207,6 +213,19 @@ public:
     // use largest threshold among all the small buffers algorithms
     static constexpr size_t buf_size = 2097152;
 
+    void set_tmp_buf_idx(int* ptr, int* secondary_ptr) {
+        tmp_bufs_gpu_index = ptr;
+        tmp_bufs_gpu_secondary_index = secondary_ptr;
+    }
+
+    int* get_tmp_buf_idx() {
+        return tmp_bufs_gpu_index;
+    }
+
+    int* get_tmp_buf_secondary_idx() {
+        return tmp_bufs_gpu_secondary_index;
+    }
+
     void set_tmp_buf(void* ptr, int idx) {
         tmp_bufs[idx] = ptr;
     }
@@ -256,6 +275,7 @@ public:
 private:
     void* tmp_bufs[buf_count];
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count];
+    int *tmp_bufs_gpu_index, *tmp_bufs_gpu_secondary_index;
     void* tmp_bufs_gpu[buf_count];
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs_gpu[buf_count];
 
@@ -339,6 +359,24 @@ public:
     ccl_internal_comm(int comm_id, int rank, int size);
     ~ccl_internal_comm() = default;
 
+#ifdef CCL_ENABLE_SYCL
+    // Group API send/recv structs
+    struct group_recv_request {
+        void* recv_user_buf;
+        atl_req_t atl_recv_req;
+        void* recv_host_buf;
+        size_t recv_size;
+        ccl_comm* comm;
+    };
+
+    struct group_send_request {
+        atl_req_t atl_send_req;
+        void* send_host_buf;
+        size_t send_size;
+        ccl_comm* comm;
+    };
+#endif // CCL_ENABLE_SYCL
+
     int rank() const noexcept {
         return m_rank;
     }
@@ -380,6 +418,18 @@ public:
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs_gpu(bool is_next) {
         return m_tmp_buf.get_all_tmp_bufs_gpu(is_next);
+    }
+
+    void set_tmp_buf_idx(int* ptr, int* secondary_ptr) {
+        m_tmp_buf.set_tmp_buf_idx(ptr, secondary_ptr);
+    }
+
+    int* get_tmp_buf_idx() {
+        return m_tmp_buf.get_tmp_buf_idx();
+    }
+
+    int* get_tmp_buf_secondary_idx() {
+        return m_tmp_buf.get_tmp_buf_secondary_idx();
     }
 
     void set_tmp_buf(void* ptr, int idx) {
@@ -442,6 +492,20 @@ public:
         return pipeline_recv_req;
     }
 
+    // Group API send/recv request accessors
+    std::vector<ccl_internal_comm::group_send_request>& get_group_send_requests() {
+        return group_send_requests;
+    }
+
+    std::vector<ccl_internal_comm::group_recv_request>& get_group_recv_requests() {
+        return group_recv_requests;
+    }
+
+    void clear_group_requests() {
+        group_send_requests.clear();
+        group_recv_requests.clear();
+    }
+
 #endif // CCL_ENABLE_SYCL
 
     std::shared_ptr<atl_base_comm> atl_comm;
@@ -462,6 +526,9 @@ private:
     // for sycl pipeline sendrecv
     ccl_scaleout_pipeline_bufs m_scaleout_pipeline_bufs;
     atl_req_t pipeline_send_req, pipeline_recv_req;
+
+    std::vector<group_send_request> group_send_requests;
+    std::vector<group_recv_request> group_recv_requests;
 #endif // CCL_ENABLE_SYCL
 };
 
@@ -680,6 +747,11 @@ public:
             return fd_manager;
         }
     }
+    void set_handle_exchange_data(std::shared_ptr<ze_handle_exchange_entry> handle_exchange_entry,
+                                  std::shared_ptr<ccl_sched> handle_exchange_sched) {
+        this->handle_exchange_entry = handle_exchange_entry;
+        this->handle_exchange_sched = handle_exchange_sched;
+    }
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     std::shared_ptr<ccl_comm_env> get_env() const {
@@ -731,6 +803,18 @@ public:
 
     std::pair<void*, std::array<void*, MAX_NODE_RANKS>> get_all_tmp_bufs_gpu(bool is_next) {
         return comm_impl->get_all_tmp_bufs_gpu(is_next);
+    }
+
+    void set_tmp_buf_idx(int* ptr, int* secondary_ptr) {
+        comm_impl->set_tmp_buf_idx(ptr, secondary_ptr);
+    }
+
+    int* get_tmp_buf_idx() {
+        return comm_impl->get_tmp_buf_idx();
+    }
+
+    int* get_tmp_buf_secondary_idx() {
+        return comm_impl->get_tmp_buf_secondary_idx();
     }
 
     void set_tmp_buf(void* ptr, int idx) {
@@ -789,10 +873,57 @@ public:
     atl_req_t& get_pipeline_recv_req() {
         return comm_impl->get_pipeline_recv_req();
     }
+
+    // Group API send/recv request accessors
+    std::vector<ccl_internal_comm::group_send_request>& get_group_send_requests() {
+        return comm_impl->get_group_send_requests();
+    }
+
+    std::vector<ccl_internal_comm::group_recv_request>& get_group_recv_requests() {
+        return comm_impl->get_group_recv_requests();
+    }
+
+    void clear_group_requests() {
+        return comm_impl->clear_group_requests();
+    }
+
     bool is_multi_thread_instance() {
         return enable_multi_thread_instance;
     }
 
+    // pattern: XYYY xxxx xxxx xxxx
+    // X: 1 is collective, 0 is pt2pt
+    // YYY: is the source rank of the pt2pt
+    uint32_t get_rt_pattern(pattern_type type, int peer_rank) {
+        uint16_t counter;
+        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+        const int mask = (1 << (16 - 1 - pof2)) - 1;
+        if (type == pattern_type::collective) {
+            counter = pattern_counter[ARC_MAX_NUM];
+            counter = counter & mask | 0x8000;
+        }
+        else if (type == pattern_type::send || type == pattern_type::recv) {
+            CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
+            counter = pattern_counter[peer_rank];
+            int src_rank = type == pattern_type::send ? comm_rank : peer_rank;
+            counter = counter & mask | src_rank << (16 - 1 - pof2);
+        }
+
+        return global_current_id << 16 | counter;
+    }
+
+    void update_rt_pattern(pattern_type type, int peer_rank, uint32_t pattern) {
+        const int pof2 = sizeof(unsigned int) * 8 - __builtin_clz((unsigned int)ARC_MAX_NUM) - 1;
+        const int mask = (1 << (16 - 1 - pof2)) - 1;
+        uint16_t counter = pattern & mask;
+        if (type == pattern_type::collective) {
+            pattern_counter[ARC_MAX_NUM] = counter;
+        }
+        else if (type == pattern_type::send || type == pattern_type::recv) {
+            CCL_THROW_IF_NOT(peer_rank < ARC_MAX_NUM, "invalid rank: ", peer_rank);
+            pattern_counter[peer_rank] = counter;
+        }
+    }
 #endif // CCL_ENABLE_SYCL
 
     // collectives operation declarations
@@ -830,6 +961,10 @@ private:
     std::shared_ptr<ccl_comm> node_comm;
     std::shared_ptr<ccl_comm> even_comm;
     std::shared_ptr<ccl_comm> pair_comm;
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    std::shared_ptr<ze_handle_exchange_entry> handle_exchange_entry;
+    std::shared_ptr<ccl_sched> handle_exchange_sched;
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     // these fields are duplicate with the ones in ccl_internal_comm
     // but having them here allows to get them without going
@@ -844,9 +979,15 @@ private:
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     std::shared_ptr<ccl::ze::fd_manager> fd_manager;
     void init_ipc_exchange_mode(std::shared_ptr<ccl_comm> comm);
+    uint16_t pattern_counter[ARC_MAX_NUM + 1];
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     ccl_sched_id_t next_sched_id_internal{};
     ccl_sched_id_t next_sched_id_external{};
 
 }; // class ccl_comm
+
+void coll_init(ccl_comm* comm, ccl_stream* stream);
+void coll_initExt(ccl_comm* comm,
+                  std::unordered_map<int, std::unordered_map<int, std::vector<void*>>>& hash_table,
+                  ccl_stream* global_stream);

@@ -872,8 +872,8 @@ atl_status_t atl_ofi_prov_ep_init(atl_ofi_prov_t* prov, size_t ep_idx) {
 
         ATL_OFI_CALL(fi_ep_bind(ep->tx, &ep->cq->fid, FI_SEND), ret, goto err);
 
-        fi_enable(ep->rx);
-        fi_enable(ep->tx);
+        ATL_OFI_CALL(fi_enable(ep->rx), ret, goto err);
+        ATL_OFI_CALL(fi_enable(ep->tx), ret, goto err);
     }
     else {
         struct fid_ep* endpoint;
@@ -886,7 +886,7 @@ atl_status_t atl_ofi_prov_ep_init(atl_ofi_prov_t* prov, size_t ep_idx) {
 
         ATL_OFI_CALL(fi_ep_bind(endpoint, &prov->av->fid, 0), ret, goto err);
 
-        fi_enable(endpoint);
+        ATL_OFI_CALL(fi_enable(endpoint), ret, goto err);
     }
 
     return ATL_STATUS_SUCCESS;
@@ -1215,9 +1215,22 @@ atl_status_t atl_ofi_prov_init(atl_ofi_ctx_t& ctx,
 
     ATL_OFI_CALL(fi_av_open(prov->domain, &av_attr, &prov->av, nullptr), ret, goto err);
 
+    if (!prov->av) {
+        LOG_ERROR("fi_av_open succeeded but prov->av is null");
+        ret = -1;
+        goto err;
+    }
+
     if (info->domain_attr->max_ep_tx_ctx > 1) {
         ATL_OFI_CALL(fi_scalable_ep(prov->domain, info, &prov->sep, nullptr), ret, goto err);
-        ATL_OFI_CALL(fi_scalable_ep_bind(prov->sep, &prov->av->fid, 0), ret, goto err);
+        if (prov->sep && prov->av) {
+            ATL_OFI_CALL(fi_scalable_ep_bind(prov->sep, &prov->av->fid, 0), ret, goto err);
+        }
+        else {
+            LOG_ERROR("Invalid sep or av pointer");
+            ret = -1;
+            goto err;
+        }
     }
 
     prov->eps = (atl_ofi_prov_ep_t*)calloc(1, sizeof(atl_ofi_prov_ep_t) * ctx.ep_count);
@@ -1235,7 +1248,7 @@ atl_status_t atl_ofi_prov_init(atl_ofi_ctx_t& ctx,
     }
 
     if (prov->sep) {
-        fi_enable(prov->sep);
+        ATL_OFI_CALL(fi_enable(prov->sep), ret, goto err);
     }
 
     /* TODO: make separate function to be called on CCL comm creation */
@@ -1448,14 +1461,14 @@ int atl_ofi_is_allowed_nic_name(atl_ofi_ctx_t& ctx, struct fi_info* info) {
         should_include = 1;
     }
 
-    for (auto& name : include_names) {
+    for (const auto& name : include_names) {
         if (nic_name.substr(0, name.size()) == name) {
             should_include = 1;
             break;
         }
     }
 
-    for (auto& name : exclude_names) {
+    for (const auto& name : exclude_names) {
         if (nic_name.substr(0, name.size()) == name) {
             should_exclude = 1;
             break;

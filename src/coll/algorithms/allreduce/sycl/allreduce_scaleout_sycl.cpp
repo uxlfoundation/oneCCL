@@ -63,9 +63,11 @@ sycl::event allreduce_scaleout_sycl_simple(sycl::queue& q,
         dep_events.push_back(std::move(copy_e));
     }
     else if (!is_cpu_buffers) {
+        if (!check_mpi_supports_rdma()) {
+            LOG_WARN("copy_to_host=false with a GPU buffer. "
+                     "TODO: make sure I_MPI_OFFLOAD is set or GPU RDMA is enabled");
+        }
         // TODO: check if I_MPI_OFFLOAD is set, then let the scaleout allreduce go through.
-        LOG_WARN("copy_to_host=false with a GPU buffer. "
-                 "TODO: make sure I_MPI_OFFLOAD is set or GPU RDMA is enabled");
         // TODO: determine whether we want to fallback or not. For now, no.
         // done = false;
         // ccl::event e;

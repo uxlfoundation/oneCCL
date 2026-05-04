@@ -21,7 +21,7 @@
 namespace ccl {
 namespace v1 {
 
-ccl::event send_sycl(sycl::queue& q,
+ccl::event send_sycl(sycl::queue q,
                      const void* send_buf,
                      size_t send_count,
                      ccl::datatype dtype,

@@ -110,7 +110,7 @@ WORK_DIR=$(get_script_path "${vars_script_name:-}")
 
 CCL_ROOT="$(cd "${WORK_DIR}"/../; pwd -P)"; export CCL_ROOT
 
-CPATH=$(prepend_path "${CCL_ROOT}/include" "${CPATH:-}"); export CPATH
+CPLUS_INCLUDE_PATH=$(prepend_path "${CCL_ROOT}/include" "${CPLUS_INCLUDE_PATH:-}"); export CPLUS_INCLUDE_PATH
 CMAKE_PREFIX_PATH=$(prepend_path "${CCL_ROOT}/lib/cmake/oneCCL" "${CMAKE_PREFIX_PATH:-}"); export CMAKE_PREFIX_PATH
 LIBRARY_PATH=$(prepend_path "${CCL_ROOT}/lib" "${LIBRARY_PATH:-}"); export LIBRARY_PATH
 LD_LIBRARY_PATH=$(prepend_path "${CCL_ROOT}/lib" "${LD_LIBRARY_PATH:-}"); export LD_LIBRARY_PATH
@@ -136,7 +136,8 @@ if [ -z "${SETVARS_CALL:-}" ] ; then
 
     if [ "$ccl_bundled_mpi" = "yes" ] ; then
         export I_MPI_ROOT="${CCL_ROOT}/opt/mpi"
-        CPATH=$(prepend_path "${I_MPI_ROOT}/include" "${CPATH:-}"); export CPATH
+        C_INCLUDE_PATH=$(prepend_path "${I_MPI_ROOT}/include" "${C_INCLUDE_PATH:-}"); export C_INCLUDE_PATH
+        CPLUS_INCLUDE_PATH=$(prepend_path "${I_MPI_ROOT}/include" "${CPLUS_INCLUDE_PATH:-}"); export CPLUS_INCLUDE_PATH
         LD_LIBRARY_PATH=$(prepend_path "${I_MPI_ROOT}/lib" "${LD_LIBRARY_PATH:-}") ; export LD_LIBRARY_PATH
         LIBRARY_PATH=$(prepend_path "${I_MPI_ROOT}/lib" "${LIBRARY_PATH:-}"); export LIBRARY_PATH
         PATH="${I_MPI_ROOT}/bin:${PATH}"; export PATH

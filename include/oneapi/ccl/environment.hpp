@@ -121,6 +121,16 @@ public:
     void deregister_datatype(ccl::datatype dtype);
     size_t get_datatype_size(ccl::datatype dtype) const;
 
+    /*************** CUSTOM REDUCTIONS ****************/
+
+    void reduction_create_pre_mul_sum(reduction* rtype,
+                                      void* scalar,
+                                      datatype dtype,
+                                      scalar_residence_type residence,
+                                      const communicator& comm);
+
+    void reduction_destroy(reduction rtype, const communicator& comm);
+
     /******************** KVS ********************/
 
     template <class... attr_val_type>

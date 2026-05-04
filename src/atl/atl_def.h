@@ -151,6 +151,7 @@ typedef enum {
     ATL_REDUCTION_PROD,
     ATL_REDUCTION_MIN,
     ATL_REDUCTION_MAX,
+    ATL_REDUCTION_AVG,
     ATL_REDUCTION_CUSTOM
 } atl_reduction_t;
 

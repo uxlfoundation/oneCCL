@@ -41,7 +41,7 @@ SYCL_ALLREDUCE_FUNCTIONS(large)
 namespace ccl {
 
 namespace v1 {
-event allreduce_sycl(sycl::queue& q,
+event allreduce_sycl(sycl::queue q,
                      const void* send_buf,
                      void* recv_buf,
                      size_t count,

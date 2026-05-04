@@ -76,6 +76,7 @@ bool allgatherv(const std::shared_ptr<atl_base_comm>& comm,
                                                   send_len,
                                                   recv_buf,
                                                   recv_lens_size_t.data(),
+                                                  offsets.data(),
                                                   1 /*dtype_size*/,
                                                   comm_rank,
                                                   comm_size);
@@ -91,15 +92,18 @@ bool allgatherv(const std::shared_ptr<atl_base_comm>& comm,
         ret = mpi_ret == MPI_SUCCESS;
     }
     else {
-        comm->allgatherv(0 /* ep_idx */,
-                         send_buf,
-                         recv_bytes[comm_rank],
-                         recv_buf,
-                         recv_bytes.data(),
-                         offsets.data(),
-                         req);
+        atl_status_t status = comm->allgatherv(0 /* ep_idx */,
+                                               send_buf,
+                                               recv_bytes[comm_rank],
+                                               recv_buf,
+                                               recv_bytes.data(),
+                                               offsets.data(),
+                                               req);
+        CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "allgatherv failed with status: ", status);
+
         if (sync) {
-            comm->wait(0 /* ep_idx */, req);
+            status = comm->wait(0 /* ep_idx */, req);
+            CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "wait failed with status: ", status);
         }
         else {
             CCL_THROW("unexpected sync parameter");
@@ -143,7 +147,8 @@ atl_req_t recv(const std::shared_ptr<atl_base_comm>& comm,
                uint64_t tag,
                bool sync) {
     atl_req_t req{};
-    comm->recv(0 /* ep_idx */, buf, count, peer_rank /*src rank*/, tag, req);
+    atl_status_t status = comm->recv(0 /* ep_idx */, buf, count, peer_rank /*src rank*/, tag, req);
+    CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "recv failed with status: ", status);
 
     if (sync) {
         check(comm, req);
@@ -159,7 +164,8 @@ atl_req_t send(const std::shared_ptr<atl_base_comm>& comm,
                uint64_t tag,
                bool sync) {
     atl_req_t req{};
-    comm->send(0 /* ep_idx */, buf, count, peer_rank /*dst rank*/, tag, req);
+    atl_status_t status = comm->send(0 /* ep_idx */, buf, count, peer_rank /*dst rank*/, tag, req);
+    CCL_THROW_IF_NOT(status == ATL_STATUS_SUCCESS, "send failed with status: ", status);
 
     if (sync) {
         check(comm, req);

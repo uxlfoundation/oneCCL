@@ -18,7 +18,10 @@
 
 #ifdef CCL_ENABLE_PROFILING
 
-comm_profile comm_profiles;
+comm_profile& get_comm_profiles() {
+    static comm_profile instance;
+    return instance;
+}
 
 std::chrono::time_point<std::chrono::high_resolution_clock> get_profile_time() {
     auto now = std::chrono::high_resolution_clock::now();
@@ -62,16 +65,18 @@ void profiler_record_comm_event_enter(const ccl_comm* comm,
         comm->get_comm_id(), comm->rank(), comm->size(), op_name, reduction, dtype, count);
     comm_event_session.set_key(coll_prof_key);
 
-    comm_profiles.record_prof_key(comm_event_session.comm_key);
-    comm_profiles.record_prof_info_call_count(comm_event_session.comm_key);
-    comm_profiles.record_prof_info_submit_time(comm_event_session.comm_key, get_profile_time());
+    get_comm_profiles().record_prof_key(comm_event_session.comm_key);
+    get_comm_profiles().record_prof_info_call_count(comm_event_session.comm_key);
+    get_comm_profiles().record_prof_info_submit_time(comm_event_session.comm_key,
+                                                     get_profile_time());
 }
 
 void profiler_record_comm_event_exit(int rank, comm_session& comm_event_session) {
     if (skip_profiling(rank))
         return;
 
-    comm_profiles.record_prof_info_return_time(comm_event_session.comm_key, get_profile_time());
+    get_comm_profiles().record_prof_info_return_time(comm_event_session.comm_key,
+                                                     get_profile_time());
 }
 
 #endif //CCL_ENABLE_PROFILING

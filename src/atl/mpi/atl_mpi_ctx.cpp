@@ -530,7 +530,7 @@ MPI_Op atl_mpi_ctx::atl2mpi_op_bf16(atl_reduction_t rtype) {
         case ATL_REDUCTION_PROD: return bf16.prod_op;
         case ATL_REDUCTION_MIN: return bf16.min_op;
         case ATL_REDUCTION_MAX: return bf16.max_op;
-        default: printf("unknown reduction type: %d\n", rtype); exit(1);
+        default: CCL_THROW("unknown reduction type: ", static_cast<int>(rtype));
     }
 }
 
@@ -541,7 +541,7 @@ MPI_Op atl_mpi_ctx::atl2mpi_op_fp16(atl_reduction_t rtype) {
         case ATL_REDUCTION_PROD: return fp16.prod_op;
         case ATL_REDUCTION_MIN: return fp16.min_op;
         case ATL_REDUCTION_MAX: return fp16.max_op;
-        default: printf("unknown reduction type: %d\n", rtype); exit(1);
+        default: CCL_THROW("unknown reduction type: ", static_cast<int>(rtype));
     }
 }
 #endif // ATL_MPI_FP16
@@ -606,7 +606,8 @@ atl_status_t atl_mpi_ctx::set_base_env(const atl_attr_t& attr) {
 
 atl_status_t atl_mpi_ctx::set_impi_env(const atl_attr_t& attr, const atl_mpi_lib_attr_t& lib_attr) {
     char ep_count_str[MPI_MAX_INFO_VAL] = { 0 };
-    snprintf(ep_count_str, MPI_MAX_INFO_VAL, "%zu", get_ep_count(attr));
+    size_t ep_count = get_ep_count(attr);
+    snprintf(ep_count_str, MPI_MAX_INFO_VAL, "%zu", ep_count);
 
     if (attr.in.ep_count)
         setenv("I_MPI_OFI_ISEND_INJECT_THRESHOLD", "0", 0);
@@ -624,9 +625,26 @@ atl_status_t atl_mpi_ctx::set_impi_env(const atl_attr_t& attr, const atl_mpi_lib
     }
 #endif // CCL_ENABLE_SYCL
 
-    setenv("I_MPI_THREAD_SPLIT", "1", 0);
+    if (ep_count > 1) {
+        setenv("I_MPI_THREAD_SPLIT", "1", 0);
+        if (strcmp(getenv("I_MPI_THREAD_SPLIT"), "1") != 0) {
+            LOG_WARN_ROOT(
+                "I_MPI_THREAD_SPLIT should be unset or set to '1' when using multiple ccl workers");
+        }
+    }
 #ifdef CCL_ENABLE_OMP
-    if (getenv("OMP_NUM_THREADS") != NULL) {
+    const char* omp_num_threads_str = getenv("OMP_NUM_THREADS");
+    if (omp_num_threads_str != NULL) {
+        errno = 0;
+        int omp_num_threads = strtol(omp_num_threads_str, NULL, 10);
+        CCL_THROW_IF_NOT(errno == 0, "parsing OMP_NUM_THREADS failed [", omp_num_threads_str, "]");
+        if (omp_num_threads > 1) {
+            setenv("I_MPI_THREAD_SPLIT", "1", 0);
+            if (strcmp(getenv("I_MPI_THREAD_SPLIT"), "1") != 0) {
+                LOG_WARN_ROOT(
+                    "I_MPI_THREAD_SPLIT should be unset or set to '1' when using multiple openmp threads");
+            }
+        }
         setenv("I_MPI_THREAD_RUNTIME", "openmp", 0);
         if (strcmp(getenv("I_MPI_THREAD_RUNTIME"), "openmp") != 0) {
             LOG_WARN_ROOT(
@@ -638,6 +656,7 @@ atl_status_t atl_mpi_ctx::set_impi_env(const atl_attr_t& attr, const atl_mpi_lib
             LOG_WARN_ROOT(
                 "I_MPI_THREAD_LOCK_LEVEL must be unset or set to 'vci' to achieve optimal performance");
         }
+        // IMPI will set I_MPI_THREAD_MAX itself when using openmp
     }
     // disable omp collectives when OMP_NUM_THREADS is not specified
     else {
@@ -688,17 +707,12 @@ atl_status_t atl_mpi_ctx::check_impi_env(const atl_attr_t& attr) {
 
     if (!getenv("ONEAPI_ROOT") && !getenv("I_MPI_ROOT")) {
         atl_mpi_lib_type_t type = ATL_MPI_LIB_IMPI;
-        LOG_ERROR("CCL/MPI uses ",
-                  mpi_lib_infos[type].version_prefix_1,
-                  " but neither I_MPI_ROOT nor ONEAPI_ROOT is set. ",
-                  "Please source ",
-                  mpi_lib_infos[type].kind_value,
-                  " version of ",
-                  mpi_lib_infos[type].version_prefix_1,
-                  " (",
-                  mpi_lib_infos[type].min_version_value,
-                  " or higher version).");
-        return ATL_STATUS_FAILURE;
+        const auto& lib_info = mpi_lib_infos[type];
+        LOG_INFO("oneCCL MPI network transport layer is using ",
+                 lib_info.version_prefix_1 ? lib_info.version_prefix_1 : "unknown",
+                 " but $I_MPI_ROOT is not set.",
+                 " Transport variables will be initialized automatically.",
+                 " To override them run `source $I_MPI_ROOT/env/vars.sh`");
     }
 
     return ATL_STATUS_SUCCESS;
@@ -768,7 +782,11 @@ std::string atl_mpi_ctx::to_string() {
     std::stringstream ss;
     ss << "{\n"
        << "  is_external_init: " << is_external_init << "\n"
-       << "  mpi_lib_attr.type: " << mpi_lib_infos[mpi_lib_attr.type].name << "\n"
+       << "  mpi_lib_attr.type: "
+       << (mpi_lib_attr.type < MPI_LIB_INFO_MAX_COUNT && mpi_lib_attr.type >= 0
+               ? mpi_lib_infos[mpi_lib_attr.type].name
+               : "unknown")
+       << "\n"
        << "  mpi_lib_attr.hmem: " << mpi_lib_attr.hmem << "\n"
        << "  extra_ep: " << extra_ep << "\n"
        << "  mnic_type: " << ::to_string(mnic_type) << "\n";

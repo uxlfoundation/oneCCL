@@ -81,12 +81,19 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
             return e;
         }
         if (!ccl::global_data::env().sycl_enable_arc_allreduce) {
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_begin(
+                "allreduce_ll_ring", "send_size", count * ccl_dtype.size());
+#endif // CCL_ENABLE_ITT
             LOG_DEBUG("invoking allreduce LL256 kernel allreduce_ll_ring, count:",
                       count,
                       " datatype: ",
                       dtype);
             e = allreduce_ll_ring(
                 send_buf, recv_buf, count, dtype, reduction, global_comm, global_stream, done);
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
             if (done) {
                 LOG_DEBUG("invoking allreduce LL256 kernel, count:",
                           count,
@@ -105,10 +112,16 @@ ccl::event allreduce_sycl_single_node(sycl::queue& q,
             done = false;
             return e;
         }
+#ifdef CCL_ENABLE_ITT
+        ccl::profile::itt::task_begin("arc_allreduce", "send_size", count * ccl_dtype.size());
+#endif // CCL_ENABLE_ITT
         LOG_DEBUG(
             "invoking allreduce LL256 kernel arc_allreduce, count:", count, " datatype: ", dtype);
         e = arc_allreduce(send_buf, recv_buf, count, dtype, reduction, global_comm, global_stream);
         LOG_DEBUG("invoking allreduce LL256 kernel, count:", count, " datatype: ", dtype, " done");
+#ifdef CCL_ENABLE_ITT
+        ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
         return e;
     }
 
@@ -247,12 +260,6 @@ ccl::event allreduce_sycl_multi_node_rs_phase(sycl::queue& q,
     ccl::event ev;
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
 
-    // in scale-out case, average kernel is invoked
-    // after scale-up phase calculated the sum first
-    if (reduction == ccl::reduction::avg) {
-        reduction = ccl::reduction::sum;
-    }
-
     if (is_rs_remainder_supported(recv_count, remainder_count, node_comm->size(), ccl_dtype)) {
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_begin(
@@ -345,7 +352,9 @@ ccl::event allreduce_sycl_multi_node_ag_phase(sycl::queue& q,
         ccl::profile::itt::task_begin(
             "allgatherv_small", "send_size", ag_send_count * ccl_dtype.size());
 #endif // CCL_ENABLE_ITT
-        ev = allgatherv_small(send_buf,
+        auto sycl_q = global_stream->get_native_stream();
+        ev = allgatherv_small(sycl_q,
+                              send_buf,
                               ag_send_count,
                               recv_buf,
                               recv_counts,
@@ -438,6 +447,13 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
         return ev;
     }
 
+    // for the scale-out case, use sum reduction to calculate the total sum,
+    // then submit average kernel
+    ccl::reduction ar_reduction = reduction;
+    if (reduction == ccl::reduction::avg) {
+        ar_reduction = ccl::reduction::sum;
+    }
+
     // TODO: Sycl allgatherv does not support counts that are non-divisible by the node_comm size.
     //       Once this support is enabled, the algorithm will be simplified.
 
@@ -518,7 +534,7 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                                          (char*)recv_buf + displ,
                                          iter_count,
                                          dtype,
-                                         ccl::reduction::sum,
+                                         ar_reduction,
                                          global_comm,
                                          evs,
                                          true, /* original_deps */
@@ -577,7 +593,7 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                                                     remainder_recv_buf,
                                                     remainder_count,
                                                     dtype,
-                                                    reduction,
+                                                    ar_reduction,
                                                     node_comm,
                                                     global_stream,
                                                     evs,
@@ -594,8 +610,11 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
 
         // scaleout allreduce phase
         {
-            sycl_allreduce_tune_attr scaleout_tune_attr = allreduce_select_tune_attr(
-                counts_per_rank * ccl_dtype.size(), r2r_comm->size(), ccl_dtype);
+            sycl_allreduce_tune_attr scaleout_tune_attr =
+                allreduce_select_tune_attr(counts_per_rank * ccl_dtype.size(),
+                                           r2r_comm->size(),
+                                           ccl_dtype,
+                                           use_recording_path(q));
             LOG_DEBUG("allreduce_sycl scaleout count: ",
                       count,
                       " and scaleout_count: ",
@@ -615,7 +634,7 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
                                          recv_rank_ptr,
                                          scaleout_counts,
                                          dtype,
-                                         ccl::reduction::sum,
+                                         ar_reduction,
                                          r2r_comm,
                                          evs,
                                          original_deps,
@@ -679,7 +698,7 @@ ccl::event allreduce_sycl_multi_node(sycl::queue& q,
     return ev;
 }
 
-event allreduce_sycl(sycl::queue& q,
+event allreduce_sycl(sycl::queue q,
                      const void* send_buf,
                      void* recv_buf,
                      size_t count,

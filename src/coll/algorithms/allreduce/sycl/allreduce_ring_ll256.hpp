@@ -17,8 +17,6 @@
 
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 
-#define ARC_NUM (8)
-
 #define LL256_BUF_SIZE    (32 * 1024 * 1024)
 #define GATHER_BUF_OFFSET (LL256_BUF_SIZE / 2)
 

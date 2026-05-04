@@ -21,7 +21,7 @@
 namespace ccl {
 namespace v1 {
 
-ccl::event recv_sycl(sycl::queue& q,
+ccl::event recv_sycl(sycl::queue q,
                      void* recv_buf,
                      size_t count,
                      ccl::datatype dtype,

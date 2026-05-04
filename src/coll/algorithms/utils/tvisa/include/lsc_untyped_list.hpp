@@ -15,8 +15,8 @@
 */
 #pragma once
 
-#define xstr(s) str(s)
-#define str(x)  #x
+#define xstr(s)   ll_str(s)
+#define ll_str(x) #x
 
 // enumeration for all Sends
 template <int DataWidth, int DestRegNumber, DataShuffle Transpose, CacheCtrl Cache>
@@ -46,7 +46,7 @@ struct RawSendStore32_32 {
         template <typename T, typename AddressPayload> \
         static inline void run(T& target, const AddressPayload& address) { \
             asm volatile("\n" \
-                         "raw_sends.15.1.0." str(DestRegNumber) " (M1, 1) 0x0:ud " str( \
+                         "raw_sends.15.1.0." ll_str(DestRegNumber) " (M1, 1) 0x0:ud " ll_str( \
                              DescStr) ":ud %1.0 V0.0 %0.0\n" \
                          : "=rw"(target) \
                          : "rw"(address.getPayload())); \
@@ -61,7 +61,7 @@ struct RawSendStore32_32 {
         template <typename T, typename AddressPayload> \
         static inline void run(const AddressPayload& address, const T& target) { \
             asm volatile("\n" \
-                         "raw_sends.15.1." str(SrcRegNumber) ".0 (M1, 1) 0x0:ud " str( \
+                         "raw_sends.15.1." ll_str(SrcRegNumber) ".0 (M1, 1) 0x0:ud " ll_str( \
                              DescStr) ":ud %0.0 %1.0 V0.0\n" ::"rw"(address.getPayload()), \
                          "rw"(target)); \
         } \
@@ -76,10 +76,10 @@ struct RawSendStore32_32 {
         static inline void run(const AddressPayload& address, const T& target) { \
             asm volatile( \
                 "\n" \
-                "raw_sends.15.1.8.0 (M1, 1)  0x0:ud " str( \
+                "raw_sends.15.1.8.0 (M1, 1)  0x0:ud " ll_str( \
                     DescStr) ":ud %0.0 %1.0 V0.0\n" \
                              "add (M1, 1) %0(0, 6)<1> %0(0, 6)<0;1,0> %2\n" \
-                             "raw_sends.15.1.8.0 (M1, 1) 0x0:ud " str( \
+                             "raw_sends.15.1.8.0 (M1, 1) 0x0:ud " ll_str( \
                                  DescStr) ":ud %0.0 %1.512 V0.0\n" ::"rw"(address.getPayload()), \
                 "rw"(target), \
                 "i"(16)); \
@@ -116,8 +116,8 @@ struct LscStore {
         template <typename T> \
         static inline void run(T& var, const void* addr) { \
             asm volatile("\n" \
-                         "lsc_load.ugm." str(CacheStr) " (M1, " str(SubGroupSize) ") %0:" str( \
-                             DtypeStr) " flat[%1]:a64\n" \
+                         "lsc_load.ugm." ll_str(CacheStr) " (M1, " ll_str( \
+                             SubGroupSize) ") %0:" ll_str(DtypeStr) " flat[%1]:a64\n" \
                          : "=rw"(var) \
                          : "rw"(addr)); \
         } \
@@ -130,10 +130,11 @@ struct LscStore {
     struct LscStore<DataWidth, VectorSize, SubGroupSize, CacheCtrl> { \
         template <typename T> \
         static inline void run(void* addr, const T& var) { \
-            asm volatile("\n" \
-                         "lsc_store.ugm." str(CacheStr) " (M1, " str( \
-                             SubGroupSize) ") flat[%0]:a64 %1:" str(DtypeStr) "\n" ::"rw"(addr), \
-                         "rw"(var)); \
+            asm volatile( \
+                "\n" \
+                "lsc_store.ugm." ll_str(CacheStr) " (M1, " ll_str( \
+                    SubGroupSize) ") flat[%0]:a64 %1:" ll_str(DtypeStr) "\n" ::"rw"(addr), \
+                "rw"(var)); \
         } \
     };
 
@@ -160,7 +161,7 @@ struct LscPrefetch {
         template <typename AddressPayload> \
         static inline void run(const AddressPayload& address) { \
             asm volatile("\n" \
-                         "raw_sends.15.1.0." str(DestRegNumber) " (M1, 1) 0x0:ud " str( \
+                         "raw_sends.15.1.0." ll_str(DestRegNumber) " (M1, 1) 0x0:ud " ll_str( \
                              DescStr) ":ud %0.0 V0.0 V0.0\n" \
                          : \
                          : "rw"(address.getPayload())); \
@@ -174,8 +175,8 @@ struct LscPrefetch {
     struct LscPrefetch<DataWidth, VectorSize, SubGroupSize, CacheCtrl> { \
         static inline void run(const void* addr) { \
             asm volatile("\n" \
-                         "lsc_load.ugm." str(CacheStr) " (M1, " str(SubGroupSize) ") V0:" str( \
-                             DtypeStr) " flat[%0]:a64\n" \
+                         "lsc_load.ugm." ll_str(CacheStr) " (M1, " ll_str( \
+                             SubGroupSize) ") V0:" ll_str(DtypeStr) " flat[%0]:a64\n" \
                          : \
                          : "rw"(addr)); \
         } \

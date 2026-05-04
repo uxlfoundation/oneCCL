@@ -651,6 +651,7 @@ CCL_API bool is_allgatherv_inplace(const void* send_buf,
                                    const size_t send_count,
                                    const void* recv_buf,
                                    const size_t* recv_counts,
+                                   const size_t* recv_offsets,
                                    const size_t dtype_size,
                                    const size_t rank,
                                    const size_t comm_size) {
@@ -686,7 +687,8 @@ CCL_API bool is_allgatherv_inplace(const void* send_buf,
     bool address_aliasing =
         (send_buf_ptr >= recv_buf_start_ptr) && (send_buf_ptr < recv_buf_end_ptr);
 
-    size_t curr_recv_buf_offset = curr_recv_buf_offset_count * dtype_size;
+    size_t curr_recv_buf_offset =
+        recv_offsets ? recv_offsets[rank] : curr_recv_buf_offset_count * dtype_size;
     const char* curr_recv_buf = recv_buf_start_ptr + curr_recv_buf_offset;
     bool inplace = (send_buf_ptr == nullptr) || (send_buf_ptr == curr_recv_buf);
 

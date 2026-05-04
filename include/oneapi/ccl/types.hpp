@@ -40,12 +40,30 @@ namespace v1 {
  */
 enum class reduction : int {
     sum = 0,
-    prod,
-    min,
-    max,
-    avg,
-    custom,
-    none,
+    prod = 1,
+    min = 2,
+    max = 3,
+    avg = 4,
+    custom = 5, // TODO: remove with new API
+    /* indicates number of predefined operations */
+    predefined_ops = 6,
+    /* indicates maximum valid operation */
+    max_ops = std::numeric_limits<int>::max() - 6,
+    /* indicates no operation */
+    none = std::numeric_limits<int>::max()
+};
+
+/**
+ * Scalar residence for user-defined operations
+ */
+enum class scalar_residence_type : int {
+    /* scalar_device: The scalar is in device-visible memory and will be
+     * dereferenced while the collective is running. */
+    scalar_device = 0,
+
+    /* scalar_host_immediate: The scalar is in host-visible memory and will be
+     * dereferenced and stored before collective call. */
+    scalar_host_immediate = 1
 };
 
 /**
@@ -81,6 +99,7 @@ enum class cl_backend_type : int {
 } // namespace v1
 
 using v1::reduction;
+using v1::scalar_residence_type;
 using v1::datatype;
 using v1::cl_backend_type;
 

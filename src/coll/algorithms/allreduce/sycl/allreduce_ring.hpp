@@ -56,8 +56,17 @@ inline sycl::event allreduce_ring_blocking(sycl::queue &q,
     recv_counts.push_back(last_block_count);
 
     void *send_local_buf = recv_local_buf;
-    sycl::event ag_event = allgatherv_ring_blocking<T>(
-        q, send_local_buf, ag_send_count, recv_buf, recv_counts, dtype, comm, vector_events, done);
+    std::vector<size_t> offsets;
+    sycl::event ag_event = allgatherv_ring_blocking<T>(q,
+                                                       send_local_buf,
+                                                       ag_send_count,
+                                                       recv_buf,
+                                                       recv_counts,
+                                                       offsets,
+                                                       dtype,
+                                                       comm,
+                                                       vector_events,
+                                                       done);
 
     done = true;
     return ag_event;
@@ -108,11 +117,13 @@ inline sycl::event allreduce_ring_nonblocking(sycl::queue &q,
     void *send_local_buf = recv_local_buf;
     sycl_allgatherv_tune_attr ag_tune_attr = { allgatherv_scaleout_algo::ring,
                                                tune_attr.pipeline_chunk_size };
+    std::vector<size_t> offsets;
     sycl::event ag_event = allgatherv_ring_nonblocking<T>(q,
                                                           send_local_buf,
                                                           ag_send_count,
                                                           recv_buf,
                                                           recv_counts,
+                                                          offsets,
                                                           dtype,
                                                           comm,
                                                           vector_events,
@@ -155,7 +166,7 @@ inline sycl::event allreduce_scaleout_sycl_ring(sycl::queue &q,
         }
     };
 
-    return invoke_scaleout(lambda, dtype);
+    return invoke_scaleout_collective(lambda, dtype);
 }
 
 } // namespace v1

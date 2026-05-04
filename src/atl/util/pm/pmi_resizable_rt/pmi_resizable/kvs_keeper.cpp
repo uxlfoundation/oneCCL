@@ -94,13 +94,13 @@ size_t get_keys_values(const char* kvs_name,
 
     *kvs_values = (char**)malloc(sizeof(char*) * count);
     if (*kvs_values == NULL) {
-        printf("Memory allocation failed\n");
-        exit(1);
+        throw std::runtime_error("Memory allocation failed at for kvs_values: " __FILE__ ":" +
+                                 std::to_string(__LINE__));
     }
     *kvs_keys = (char**)malloc(sizeof(char*) * count);
     if (*kvs_keys == NULL) {
-        printf("Memory allocation failed\n");
-        exit(1);
+        throw std::runtime_error("Memory allocation failed at for kvs_keys: " __FILE__ ":" +
+                                 std::to_string(__LINE__));
     }
 
     for (i = 0; i < count; i++) {
