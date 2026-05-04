@@ -64,9 +64,6 @@ void ccl_check_usm_pointers(const ccl_coll_param& param) {
     if ((usm_type == sycl::usm::alloc::device) && !(dev.is_gpu() || dev.is_accelerator()))
         is_valid_type = false;
 
-    if (usm_type == sycl::usm::alloc::unknown)
-        is_valid_type = false;
-
     LOG_DEBUG("coll: ",
               ccl_coll_type_to_str(param.ctype),
               ", usm pointer type: ",
