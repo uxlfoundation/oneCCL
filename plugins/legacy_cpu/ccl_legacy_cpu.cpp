@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -352,6 +352,63 @@ onecclResult_t oneccl_platform_score_impl(int *score) {
     return onecclSuccess;
 }
 
+onecclResult_t oneccl_mem_alloc_impl(void ** /*ptr*/, size_t /*size*/) {
+    return onecclNotImplemented;
+}
+
+onecclResult_t oneccl_mem_free_impl(void * /*ptr*/) {
+    return onecclNotImplemented;
+}
+
+onecclResult_t oneccl_comm_register_impl(onecclComm_t /*comm*/, void * /*buff*/,
+                                         size_t /*size*/, void ** /*handle*/) {
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_deregister_impl(onecclComm_t /*comm*/,
+                                           void * /*handle*/) {
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_window_register_impl(onecclComm_t comm, void *buff,
+                                                size_t size,
+                                                onecclWindow_t *window,
+                                                onecclWindowFlags_t flags) {
+    if (comm == nullptr || buff == nullptr || window == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *comm_legacy = static_cast<CommunicatorLegacyCpu *>(comm->pExt);
+    if (comm_legacy == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::window window_obj = ccl::comm_window_register(
+        comm_legacy->comm, buff, size, static_cast<int>(flags));
+    *window = new ccl::window(std::move(window_obj));
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_window_deregister_impl(onecclComm_t comm,
+                                                  onecclWindow_t window) {
+    if (comm == nullptr || window == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *comm_legacy = static_cast<CommunicatorLegacyCpu *>(comm->pExt);
+    if (comm_legacy == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *window_obj = static_cast<ccl::window *>(window);
+    ccl::comm_window_deregister(comm_legacy->comm, *window_obj);
+    delete window_obj;
+
+    return onecclSuccess;
+}
+
 onecclResult_t
 oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
                               onecclUniqueId commId, int rank,
@@ -382,6 +439,10 @@ oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
     (*comm)->get_local_rank = oneccl_get_local_rank_impl;
     (*comm)->get_size = oneccl_get_size_impl;
     (*comm)->get_local_size = oneccl_get_local_size_impl;
+    (*comm)->comm_register = oneccl_comm_register_impl;
+    (*comm)->comm_deregister = oneccl_comm_deregister_impl;
+    (*comm)->comm_window_register = oneccl_comm_window_register_impl;
+    (*comm)->comm_window_deregister = oneccl_comm_window_deregister_impl;
     return onecclSuccess;
 }
 
@@ -403,6 +464,12 @@ extern "C" void *onecclPluginCall(onecclPluginCall_t call_type) {
 
     case ONECCL_PLUGIN_INIT_ID:
         return reinterpret_cast<void *>(&oneccl_get_unique_id_impl);
+
+    case ONECCL_PLUGIN_MEM_ALLOC:
+        return reinterpret_cast<void *>(&oneccl_mem_alloc_impl);
+
+    case ONECCL_PLUGIN_MEM_FREE:
+        return reinterpret_cast<void *>(&oneccl_mem_free_impl);
 
     case ONECCL_PLUGIN_INIT_COMM:
         return reinterpret_cast<void *>(&oneccl_init_communicator_impl);

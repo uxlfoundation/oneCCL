@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -37,9 +37,11 @@
 
 namespace {
 std::map<ccl::kvs::address_type, ccl::shared_ptr_class<ccl::kvs>> kvs_for;
-std::optional<int> selected_device_index;
-std::optional<sycl::device> selected_device;
-std::optional<sycl::context> selected_context;
+std::mutex kvs_for_mutex;
+thread_local std::optional<int> selected_device_index;
+thread_local std::optional<sycl::device> selected_device;
+thread_local std::optional<sycl::context> selected_context;
+thread_local std::optional<ccl::stream> default_stream;
 
 using onecclUniqueIdLegacy = struct onecclUniqueIdLegacy {
     onecclPluginType_t magic;
@@ -56,21 +58,20 @@ class CommunicatorLegacy {
     ccl::communicator comm;
 
     // Constructor using initializer list
-    CommunicatorLegacy(int rank, int size, ccl::kvs::address_type address,
+    CommunicatorLegacy(int rank, int size, ccl::shared_ptr_class<ccl::kvs> kvs,
                        int device_index, ccl::device in_device,
                        ccl::context in_context, bool is_ext)
         : rank(rank), size(size), device_index(device_index),
           device(std::move(in_device)), context(std::move(in_context)),
           comm(is_ext ? std::move(ccl::create_communicatorExt(
-                            size, rank, *device, *context, kvs_for[address]))
-                      : std::move(ccl::create_communicator(
-                            size, rank, *device, *context, kvs_for[address]))) {
-    }
+                            size, rank, *device, *context, kvs))
+                      : std::move(ccl::create_communicator(size, rank, *device,
+                                                           *context, kvs))) {}
 
     // Constructor using initializer list
-    CommunicatorLegacy(int rank, int size, ccl::kvs::address_type address)
-        : rank(rank), size(size), comm(std::move(ccl::create_communicator(
-                                      size, rank, kvs_for[address]))) {}
+    CommunicatorLegacy(int rank, int size, ccl::shared_ptr_class<ccl::kvs> kvs)
+        : rank(rank), size(size),
+          comm(std::move(ccl::create_communicator(size, rank, kvs))) {}
 
     // Construction using external ccl::communicator, for example as a result of
     // a split
@@ -243,7 +244,7 @@ std::vector<ccl::event> get_deps(sycl::queue * /*sycl_queue*/) {
 }
 
 ccl::stream &get_stream(sycl::queue *sycl_queue) {
-    static std::unordered_map<sycl::queue, ccl::stream> stream_map;
+    thread_local std::unordered_map<sycl::queue, ccl::stream> stream_map;
 
     auto streams_iterator = stream_map.find(*sycl_queue);
     if (streams_iterator == stream_map.end()) {
@@ -477,7 +478,10 @@ onecclResult_t oneccl_get_unique_id_impl(onecclUniqueId *id_ptr) {
     auto address = kvs->get_address();
 
     legacy_id->address = address;
-    kvs_for[address] = kvs;
+    {
+        std::lock_guard<std::mutex> lock(kvs_for_mutex);
+        kvs_for[address] = kvs;
+    }
 
     return onecclSuccess;
 }
@@ -512,6 +516,11 @@ onecclResult_t oneccl_set_device_impl(uint32_t index) {
 #else
     selected_context = l0_platform.ext_oneapi_get_default_context();
 #endif
+
+    auto default_queue = sycl::queue(*selected_context, *selected_device,
+                                     {sycl::property::queue::in_order{}});
+    default_stream = ccl::create_stream(default_queue);
+
     return onecclSuccess;
 }
 
@@ -553,6 +562,98 @@ onecclResult_t oneccl_platform_score_impl(int *score) {
     return onecclSuccess;
 }
 
+onecclResult_t oneccl_mem_alloc_impl(void **ptr, size_t size) {
+    if (ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    if (!(selected_device && selected_context)) {
+        ONECCL_WARN("Device is not selected. Call onecclSetDevice before "
+                    "onecclMemAlloc.");
+        return onecclInvalidUsage;
+    }
+
+    ccl::mem_alloc(*default_stream, size, ptr);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_mem_free_impl(void *ptr) {
+    if (ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    if (!(selected_device && selected_context)) {
+        ONECCL_WARN("Device is not selected. Call onecclSetDevice before "
+                    "onecclMemFree.");
+        return onecclInvalidUsage;
+    }
+
+    ccl::mem_free(*default_stream, ptr);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_register_impl(onecclComm_t comm, void *buff,
+                                         size_t size, void **handle) {
+    auto *comm_legacy = static_cast<CommunicatorLegacy *>(comm->pExt);
+    if (comm_legacy == nullptr || buff == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::comm_register(comm_legacy->comm, buff, size, handle);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_deregister_impl(onecclComm_t comm, void *handle) {
+    auto *comm_legacy = static_cast<CommunicatorLegacy *>(comm->pExt);
+    if (comm_legacy == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::comm_deregister(comm_legacy->comm, handle);
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_window_register_impl(onecclComm_t comm, void *buff,
+                                                size_t size,
+                                                onecclWindow_t *window,
+                                                onecclWindowFlags_t flags) {
+    if (comm == nullptr || buff == nullptr || window == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *comm_legacy = static_cast<CommunicatorLegacy *>(comm->pExt);
+    if (comm_legacy == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::window window_obj = ccl::comm_window_register(
+        comm_legacy->comm, buff, size, static_cast<int>(flags));
+    *window = new ccl::window(std::move(window_obj));
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_window_deregister_impl(onecclComm_t comm,
+                                                  onecclWindow_t window) {
+    if (comm == nullptr || window == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *comm_legacy = static_cast<CommunicatorLegacy *>(comm->pExt);
+    if (comm_legacy == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *window_obj = static_cast<ccl::window *>(window);
+    ccl::comm_window_deregister(comm_legacy->comm, *window_obj);
+    delete window_obj;
+
+    return onecclSuccess;
+}
+
 onecclResult_t oneccl_create_pre_mul_sum_impl(onecclRedOp_t *redop,
                                               void *scalar,
                                               onecclDataType_t datatype,
@@ -578,27 +679,30 @@ onecclResult_t oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
                                              const onecclConfig_t *config) {
     auto *legacy_id = reinterpret_cast<onecclUniqueIdLegacy *>(&commId.legacy);
 
-    if (kvs_for.find(legacy_id->address) == kvs_for.end()) {
-        kvs_for[legacy_id->address] =
-            ccl::create_kvs(legacy_id->address); // Create missing kvs
+    ccl::shared_ptr_class<ccl::kvs> kvs;
+    {
+        std::lock_guard<std::mutex> lock(kvs_for_mutex);
+        if (kvs_for.find(legacy_id->address) == kvs_for.end()) {
+            kvs_for[legacy_id->address] =
+                ccl::create_kvs(legacy_id->address); // Create missing kvs
+        }
+        kvs = kvs_for[legacy_id->address];
     }
 
     CommunicatorLegacy *comm_legacy = nullptr; // NOLINT(misc-const-correctness)
     if ((selected_device && selected_context && selected_device_index)) {
         // SYCL path
         int const device_index = *selected_device_index;
-        sycl::device device = *selected_device;
-        sycl::context context = *selected_context;
 
         auto multi_threaded = config->multiThreaded == 1;
         comm_legacy = new CommunicatorLegacy(
-            rank, static_cast<int>(nranks), legacy_id->address, device_index,
-            std::move(ccl::create_device(device)),
-            std::move(ccl::create_context(context)), multi_threaded);
+            rank, static_cast<int>(nranks), kvs, device_index,
+            std::move(ccl::create_device(*selected_device)),
+            std::move(ccl::create_context(*selected_context)), multi_threaded);
     } else {
         // CPU only path
-        comm_legacy = new CommunicatorLegacy(rank, static_cast<int>(nranks),
-                                             legacy_id->address);
+        comm_legacy =
+            new CommunicatorLegacy(rank, static_cast<int>(nranks), kvs);
     }
 
     (*comm)->pExt = comm_legacy;
@@ -618,6 +722,10 @@ onecclResult_t oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
     (*comm)->get_size = oneccl_get_size_impl;
     (*comm)->get_local_size = oneccl_get_local_size_impl;
     (*comm)->get_device = oneccl_get_device_impl;
+    (*comm)->comm_register = oneccl_comm_register_impl;
+    (*comm)->comm_deregister = oneccl_comm_deregister_impl;
+    (*comm)->comm_window_register = oneccl_comm_window_register_impl;
+    (*comm)->comm_window_deregister = oneccl_comm_window_deregister_impl;
     (*comm)->create_pre_mul_sum = oneccl_create_pre_mul_sum_impl;
     (*comm)->reduction_destroy = oneccl_reduction_destroy_impl;
     return onecclSuccess;
@@ -644,6 +752,12 @@ extern "C" void *onecclPluginCall(onecclPluginCall_t call_type) {
 
     case ONECCL_PLUGIN_INIT_DEVICE:
         return reinterpret_cast<void *>(&oneccl_set_device_impl);
+
+    case ONECCL_PLUGIN_MEM_ALLOC:
+        return reinterpret_cast<void *>(&oneccl_mem_alloc_impl);
+
+    case ONECCL_PLUGIN_MEM_FREE:
+        return reinterpret_cast<void *>(&oneccl_mem_free_impl);
 
     case ONECCL_PLUGIN_INIT_COMM:
         return reinterpret_cast<void *>(&oneccl_init_communicator_impl);

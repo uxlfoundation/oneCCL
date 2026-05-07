@@ -1,4 +1,4 @@
-# Copyright 2016-2025 Intel Corporation
+# Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,6 +43,44 @@ target_link_options(oneCCL2 PRIVATE "${EXTRA_CXX_FLAGS}")
 if(COMPILER_SUPPORTS_STATIC_INTEL_LIB)
     target_link_options(oneCCL2 PRIVATE "-static-intel")
 endif()
+
+# Add flags for build identification
+# --- Git commit ---
+find_package(Git QUIET)
+if(GIT_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --short=12 HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+else()
+  set(GIT_COMMIT "unknown")
+endif()
+
+# --- Build timestamp ---
+string(TIMESTAMP BUILD_TIME_UTC "%Y-%m-%dT%H:%M:%SZ" UTC)
+
+# --- Compiler info ---
+set(COMPILER_ID   "${CMAKE_CXX_COMPILER_ID}")
+set(COMPILER_VER  "${CMAKE_CXX_COMPILER_VERSION}")
+set(COMPILER_PATH "${CMAKE_CXX_COMPILER}")
+
+# --- Platform / config ---
+set(BUILD_TYPE    "${CMAKE_BUILD_TYPE}")
+set(SYSTEM_NAME   "${CMAKE_SYSTEM_NAME}")
+set(SYSTEM_PROC   "${CMAKE_SYSTEM_PROCESSOR}")
+
+target_compile_definitions(oneCCL2 PRIVATE
+  BUILD_GIT_COMMIT="${GIT_COMMIT}"
+  BUILD_TIME_UTC="${BUILD_TIME_UTC}"
+  BUILD_COMPILER_ID="${COMPILER_ID}"
+  BUILD_COMPILER_VERSION="${COMPILER_VER}"
+  BUILD_COMPILER_PATH="${COMPILER_PATH}"
+  BUILD_TYPE="${BUILD_TYPE}"
+  BUILD_SYSTEM_NAME="${SYSTEM_NAME}"
+  BUILD_SYSTEM_PROCESSOR="${SYSTEM_PROC}"
+)
 
 set_target_properties(oneCCL2 PROPERTIES OUTPUT_NAME ccl)
 set_target_properties(oneCCL2 PROPERTIES VERSION 2.0)

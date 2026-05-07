@@ -34,10 +34,69 @@ git submodule update
 mkdir build
 cd build
 
-cmake .. -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx -DCMAKE_BUILD_TYPE=debug -DCMAKE_INSTALL_PREFIX=$(pwd)/_install
+cmake .. -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx -DCMAKE_BUILD_TYPE=release -DCMAKE_INSTALL_PREFIX=$(pwd)/_install
 make -j install
 ```
 
+`DONECCL_USE_SYSTEM_LIBCCL` option can be used to use `libccl` implementation from the system rather than compiling it from sources ar deps/libccl
+To compile legacy libccl code and use it with the flag use following steps:
+
+```sh
+git clone https://github.com/intel-innersource/libraries.performance.communication.oneccl ccl
+
+git clone https://github.com/intel-innersource/libraries.performance.communication.oneccl-v2 ccl-v2
+
+# Build legacy libccl with SYCL support
+cd ccl
+mkdir build
+cd build
+cmake .. -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && make -j install
+
+# Build legacy libccl for CPU only
+cd ..
+mkdir build_cpu
+cd build_cpu
+cmake .. && make -j install
+cd ..
+
+# Copy CPU only binaries of legacy libccl
+mkdir -p build/_install/lib/ccl/cpu/
+cp -r build_cpu/_install/lib build/_install/lib/ccl/cpu/
+
+# Go back to the new repo, assuming both repos were cloned at `~`
+cd ~/ccl-v2
+mkdir build
+cd build
+# Source previously build libccl, so CMAKE_PREFIX_PATH is set to `~/ccl/build/_install/lib/cmake`
+source ~/ccl/build/_install/env/vars.sh
+# Run cmake, please note DONECCL_USE_SYSTEM_LIBCCL=ON to use oneCCL through cmake's `find_package`
+cmake .. -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx -DONECCL_USE_SYSTEM_LIBCCL=ON -DCMAKE_INSTALL_PREFIX=$(pwd)/_install
+make install -j
+```
+### Additional flag for ARC and BMG GPU
+if you build this package for ARC or BMG GPU with embedded libccl(DONECCL_USE_SYSTEM_LIBCCL=OFF), you need to add an additional flag during the cmake process. Commands below show the build process.
+#### ARC GPU
+```sh
+git submodule init # The two steps are not required if -DONECCL_USE_SYSTEM_LIBCCL=ON
+git submodule update
+
+mkdir build
+cd build
+
+cmake .. -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx -DCMAKE_BUILD_TYPE=release -DCMAKE_INSTALL_PREFIX=$(pwd)/_install -DCCL_ENABLE_ARCA=ON
+make -j install
+```
+#### BMG GPU
+```sh
+git submodule init # The two steps are not required if -DONECCL_USE_SYSTEM_LIBCCL=ON
+git submodule update
+
+mkdir build
+cd build
+
+cmake .. -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx -DCMAKE_BUILD_TYPE=release -DCMAKE_INSTALL_PREFIX=$(pwd)/_install -DCCL_ENABLE_ARCB=ON
+make -j install
+```
 ## Usage
 
 ### Launching Example Application

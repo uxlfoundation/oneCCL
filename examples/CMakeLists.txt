@@ -1,4 +1,4 @@
-# Copyright 2016-2025 Intel Corporation
+# Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,4 +18,8 @@ if(COMPILER_SUPPORTS_SYCL)
     add_subdirectory(multi)
     add_subdirectory(sycl)
     add_subdirectory(split)
+
+    if(NOT WIN32)
+        add_subdirectory(launcher)
+    endif()
 endif()

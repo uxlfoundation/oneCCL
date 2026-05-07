@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -47,10 +47,15 @@ thread_local struct onecclThreadContext {
 
 std::shared_mutex plugin_lock;
 std::unordered_map<std::string, dl_handle> library_cache;
-const std::map<onecclPluginType_t, std::string> kPluginPaths = {
-    {onecclLegacy, "libccl_legacy.so"},
-    {onecclLegacyCPU, "libccl_legacy_cpu.so"},
-    {onecclNull, "libccl_null.so"}};
+
+// This a map is storing possible names for plugins used by oneCCL,
+// The name `libexternal_Soneccl_Slibccl_Ulegacy` was added to support
+// XLA and it's build system based on bazel.
+const std::map<onecclPluginType_t, std::vector<std::string>> kPluginPaths = {
+    {onecclLegacy,
+     {"libccl_legacy.so", "libexternal_Soneccl_Slibccl_Ulegacy.so"}},
+    {onecclLegacyCPU, {"libccl_legacy_cpu.so"}},
+    {onecclNull, {"libccl_null.so"}}};
 
 // Safe call which will never throw exceptions
 template <typename Func, typename... Args>
@@ -83,10 +88,35 @@ onecclResult_t __safe_call_impl(const char *func_name, Func &&func,
         return onecclAllocFailureCPU;                                          \
     }
 
+#ifndef BUILD_GIT_COMMIT
+#define BUILD_GIT_COMMIT "unknown"
+#endif
+#ifndef BUILD_TIME_UTC
+#define BUILD_TIME_UTC "unknown"
+#endif
+#ifndef BUILD_COMPILER_ID
+#define BUILD_COMPILER_ID "unknown"
+#endif
+#ifndef BUILD_COMPILER_VERSION
+#define BUILD_COMPILER_VERSION "unknown"
+#endif
+#ifndef BUILD_COMPILER_PATH
+#define BUILD_COMPILER_PATH "unknown"
+#endif
+#ifndef BUILD_TYPE
+#define BUILD_TYPE "unknown"
+#endif
+#ifndef BUILD_SYSTEM_NAME
+#define BUILD_SYSTEM_NAME "unknown"
+#endif
+#ifndef BUILD_SYSTEM_PROCESSOR
+#define BUILD_SYSTEM_PROCESSOR "unknown"
+#endif
+
 // Read-write access to plugin structures
 template <typename Func, typename... Args>
 onecclResult_t plugin_write(Func func, Args &&...args) {
-    std::lock_guard<std::shared_mutex> const lock(plugin_lock);
+    std::scoped_lock const lock(plugin_lock);
     return func(std::forward<Args>(args)...);
 }
 
@@ -129,7 +159,7 @@ onecclResult_t load_plugin(onecclPlugin_t *plugin, const std::string &path) {
 
     if (handle == nullptr) {
         {
-            std::lock_guard<std::shared_mutex> const lock(plugin_lock);
+            std::scoped_lock const lock(plugin_lock);
             handle = dlopen(path.c_str(), RTLD_LAZY);
             if (handle == nullptr) {
                 ONECCL_INFO("Cannot open plugin library: %s", dlerror());
@@ -169,14 +199,16 @@ onecclResult_t init_library_with_override(const char *ccl_plugin) {
     std::string plugin_str(ccl_plugin);
 
     // Check if it matches any known plugin names
-    for (const auto &[type, path] : kPluginPaths) {
+    for (const auto &[type, paths] : kPluginPaths) {
         if (plugin_str == to_string(type)) {
-            onecclResult_t const result =
-                load_plugin(&thread_context.plugin, path);
-            if (result == onecclSuccess) {
-                thread_context.plugin_type = type;
-                thread_context.init_done = true;
-                return onecclSuccess;
+            for (const auto &path : paths) {
+                onecclResult_t const result =
+                    load_plugin(&thread_context.plugin, path);
+                if (result == onecclSuccess) {
+                    thread_context.plugin_type = type;
+                    thread_context.init_done = true;
+                    return onecclSuccess;
+                }
             }
             break; // If loading fails, proceed to the default procedure
         }
@@ -207,7 +239,7 @@ onecclResult_t init_library_without_override() {
         conflicts_map = {{onecclLegacy, {onecclLegacyCPU}},
                          {onecclLegacyCPU, {onecclLegacy}}};
 
-    for (const auto &[type, path] : kPluginPaths) {
+    for (const auto &[type, paths] : kPluginPaths) {
 
         auto conflicts_with = conflicts_map.find(type);
 
@@ -232,7 +264,13 @@ onecclResult_t init_library_without_override() {
         }
 
         onecclPlugin plugin;
-        onecclResult_t result = load_plugin(&plugin, path);
+        onecclResult_t result = onecclError;
+        for (const auto &path : paths) {
+            result = load_plugin(&plugin, path);
+            if (result == onecclSuccess) {
+                break; // Successfully loaded, no need to try other paths
+            }
+        }
         if (result != onecclSuccess) {
             ONECCL_INFO("Failed to load plugin, type: %s",
                         to_string(type).c_str());
@@ -283,6 +321,21 @@ onecclResult_t init_library() {
     if (thread_context.init_done) {
         return onecclSuccess;
     }
+
+    ONECCL_INFO("\n  oneCCL V2 build info:\n"
+                "    ONECCL_VERSION      : %d.%d.%d\n"
+                "    GIT_COMMIT          : %s\n"
+                "    BUILD_TIME_UTC      : %s\n"
+                "    COMPILER_ID         : %s\n"
+                "    COMPILER_VERSION    : %s\n"
+                "    COMPILER_PATH       : %s\n"
+                "    BUILD_TYPE          : %s\n"
+                "    SYSTEM_NAME         : %s\n"
+                "    SYSTEM_PROCESSOR    : %s\n",
+                ONECCL_MAJOR, ONECCL_MINOR, ONECCL_PATCH, BUILD_GIT_COMMIT,
+                BUILD_TIME_UTC, BUILD_COMPILER_ID, BUILD_COMPILER_VERSION,
+                BUILD_COMPILER_PATH, BUILD_TYPE, BUILD_SYSTEM_NAME,
+                BUILD_SYSTEM_PROCESSOR);
 
     // Try initializing with CCL_PLUGIN environment variable if set
     const char *ccl2_plugin = utils_getenv("CCL_PLUGIN");
@@ -504,8 +557,6 @@ onecclResult_t onecclAllReduce(void *sendbuff, void *recvbuff, size_t count,
                                void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(sendbuff);
-    ONECCL_CHECK_PTR(recvbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->allreduce == nullptr) {
@@ -524,8 +575,6 @@ onecclResult_t onecclAllGather(const void *sendbuff, void *recvbuff,
                                onecclComm_t comm, void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(sendbuff);
-    ONECCL_CHECK_PTR(recvbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->allgather == nullptr) {
@@ -544,8 +593,6 @@ onecclResult_t CCL_C_API onecclAllToAll(const void *sendbuff, void *recvbuff,
                                         onecclComm_t comm, void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(sendbuff);
-    ONECCL_CHECK_PTR(recvbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->allgather == nullptr) {
@@ -564,8 +611,6 @@ onecclResult_t onecclBroadcast(const void *sendbuff, void *recvbuff,
                                int root, onecclComm_t comm, void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(sendbuff);
-    ONECCL_CHECK_PTR(recvbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->broadcast == nullptr) {
@@ -584,8 +629,6 @@ onecclResult_t onecclReduce(const void *sendbuff, void *recvbuff, size_t count,
                             int root, onecclComm_t comm, void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(sendbuff);
-    ONECCL_CHECK_PTR(recvbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->reduce == nullptr) {
@@ -604,8 +647,6 @@ onecclResult_t onecclReduceScatter(const void *sendbuff, void *recvbuff,
                                    void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(sendbuff);
-    ONECCL_CHECK_PTR(recvbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->reduce_scatter == nullptr) {
@@ -623,7 +664,6 @@ onecclResult_t onecclSend(const void *sendbuff, size_t count,
                           onecclComm_t comm, void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(sendbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->send == nullptr) {
@@ -640,7 +680,6 @@ onecclResult_t onecclRecv(void *recvbuff, size_t count,
                           onecclComm_t comm, void *stream) {
     INIT_CCL;
 
-    ONECCL_CHECK_PTR(recvbuff);
     ONECCL_CHECK_PTR(comm);
 
     if (comm->recv == nullptr) {
@@ -710,6 +749,101 @@ onecclResult_t onecclSetDevice(uint32_t index) {
         return onecclNotImplemented;
     }
     return SAFE_CALL([=]() { return init_device_func(index); });
+}
+
+onecclResult_t onecclMemAlloc(void **ptr, size_t size) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(ptr);
+
+    auto mem_alloc_func = reinterpret_cast<onecclPluginCallMemAlloc_t>(
+        thread_context.plugin.call(ONECCL_PLUGIN_MEM_ALLOC));
+    if (mem_alloc_func == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclMemAlloc");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() { return mem_alloc_func(ptr, size); });
+}
+
+onecclResult_t onecclMemFree(void *ptr) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(ptr);
+
+    auto mem_free_func = reinterpret_cast<onecclPluginCallMemFree_t>(
+        thread_context.plugin.call(ONECCL_PLUGIN_MEM_FREE));
+    if (mem_free_func == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclMemFree");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() { return mem_free_func(ptr); });
+}
+
+onecclResult_t onecclCommRegister(onecclComm_t comm, void *buff, size_t size,
+                                  void **handle) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+    ONECCL_CHECK_PTR(buff);
+    ONECCL_CHECK_PTR(handle);
+
+    if (comm->comm_register == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclCommRegister");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL(
+        [=]() { return comm->comm_register(comm, buff, size, handle); });
+}
+
+onecclResult_t onecclCommDeregister(onecclComm_t comm, void *handle) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+
+    if (comm->comm_deregister == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclCommDeregister");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() { return comm->comm_deregister(comm, handle); });
+}
+
+onecclResult_t onecclCommWindowRegister(onecclComm_t comm, void *buff,
+                                        size_t size, onecclWindow_t *window,
+                                        onecclWindowFlags_t flags) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+    ONECCL_CHECK_PTR(buff);
+    ONECCL_CHECK_PTR(window);
+
+    if (comm->comm_window_register == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclCommWindowRegister");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() {
+        return comm->comm_window_register(comm, buff, size, window, flags);
+    });
+}
+
+onecclResult_t onecclCommWindowDeregister(onecclComm_t comm,
+                                          onecclWindow_t window) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+    // Allow nullptr window as a no-op, consistent with onecclCommDeregister
+
+    if (comm->comm_window_deregister == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclCommWindowDeregister");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL(
+        [=]() { return comm->comm_window_deregister(comm, window); });
 }
 
 onecclResult_t onecclCommDevice(onecclComm_t comm, int *device) {

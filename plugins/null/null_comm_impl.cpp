@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 
 #include "internal/api/comm.h"
 #include "internal/api/plugin.h"
@@ -179,6 +180,93 @@ onecclResult_t oneccl_set_device_impl(uint32_t /*index*/) {
     return onecclSuccess;
 }
 
+onecclResult_t oneccl_mem_alloc_impl(void **ptr, size_t size) {
+    PROCESS_HOOKS(ONECCL_BEFORE_MEM_ALLOC);
+
+    if (ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    *ptr = std::malloc(size);
+    if (*ptr == nullptr) {
+        return onecclAllocFailureCPU;
+    }
+
+    PROCESS_HOOKS(ONECCL_AFTER_MEM_ALLOC);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_mem_free_impl(void *ptr) {
+    PROCESS_HOOKS(ONECCL_BEFORE_MEM_FREE);
+
+    if (ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    std::free(ptr);
+
+    PROCESS_HOOKS(ONECCL_AFTER_MEM_FREE);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_register_impl(onecclComm_t /*comm*/, void *buff,
+                                         size_t /*size*/, void **handle) {
+    PROCESS_HOOKS(ONECCL_BEFORE_COMM_REGISTER);
+
+    if (buff == nullptr || handle == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    *handle = buff;
+
+    PROCESS_HOOKS(ONECCL_AFTER_COMM_REGISTER);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_deregister_impl(onecclComm_t /*comm*/,
+                                           void *handle) {
+    PROCESS_HOOKS(ONECCL_BEFORE_COMM_DEREGISTER);
+
+    // Allow nullptr as a no-op, similar to free(NULL)
+    (void)handle;
+
+    PROCESS_HOOKS(ONECCL_AFTER_COMM_DEREGISTER);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_window_register_impl(onecclComm_t /*comm*/,
+                                                void *buff, size_t /*size*/,
+                                                onecclWindow_t *window,
+                                                onecclWindowFlags_t /*flags*/) {
+    PROCESS_HOOKS(ONECCL_BEFORE_COMM_WINDOW_REGISTER);
+
+    if (buff == nullptr || window == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    *window = buff;
+
+    PROCESS_HOOKS(ONECCL_AFTER_COMM_WINDOW_REGISTER);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_comm_window_deregister_impl(onecclComm_t /*comm*/,
+                                                  onecclWindow_t window) {
+    PROCESS_HOOKS(ONECCL_BEFORE_COMM_WINDOW_DEREGISTER);
+
+    // Allow nullptr as a no-op, consistent with onecclCommDeregister
+    (void)window;
+
+    PROCESS_HOOKS(ONECCL_AFTER_COMM_WINDOW_DEREGISTER);
+
+    return onecclSuccess;
+}
+
 onecclResult_t oneccl_platform_score_impl(int *score) {
     *score = 10;
     return onecclSuccess;
@@ -217,6 +305,10 @@ oneccl_init_communicator_impl(onecclComm_t *comm, size_t /*nranks*/,
     (*comm)->send = oneccl_send_impl;
     (*comm)->recv = oneccl_recv_impl;
     (*comm)->get_device = oneccl_comm_device_impl;
+    (*comm)->comm_register = oneccl_comm_register_impl;
+    (*comm)->comm_deregister = oneccl_comm_deregister_impl;
+    (*comm)->comm_window_register = oneccl_comm_window_register_impl;
+    (*comm)->comm_window_deregister = oneccl_comm_window_deregister_impl;
     (*comm)->get_rank = oneccl_get_rank_impl;
     (*comm)->get_size = oneccl_get_size_impl;
     (*comm)->create_pre_mul_sum = oneccl_create_pre_mul_sum_impl;
@@ -243,6 +335,12 @@ extern "C" void *onecclPluginCall(onecclPluginCall_t call_type) {
 
     case ONECCL_PLUGIN_INIT_DEVICE:
         return reinterpret_cast<void *>(&oneccl_set_device_impl);
+
+    case ONECCL_PLUGIN_MEM_ALLOC:
+        return reinterpret_cast<void *>(&oneccl_mem_alloc_impl);
+
+    case ONECCL_PLUGIN_MEM_FREE:
+        return reinterpret_cast<void *>(&oneccl_mem_free_impl);
 
     case ONECCL_PLUGIN_PLATFORM_SCORE:
         return reinterpret_cast<void *>(&oneccl_platform_score_impl);

@@ -2,29 +2,14 @@
 
 ```{eval-rst}
 .. note::
-    This document describes the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard. Documentation for the legacy C++ API can be found `here <../index.html>`_.
+    In oneCCL version 2021.17 included with the 2025.3 oneAPI release, oneCCL has added support for a new **C API** that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. Details about the new API, instructions on how to build, and run an example can be found `here <./index.html>`_.
+
+    The existing C++ API will remain the default API for the 2021.17 release and can be found `here <../index.html>`_.
 ```
 
-This guide explains:
+This example showcases a simple app using oneCCL for communication across GPUs. The example uses MPI as process launcher, but a different process launcher can also be used with oneCCL.
 
-* How to set up oneCCL with the NCCL-like C API.
-* How to build and run a simple GPU-based collective communication example.
-* How to integrate MPI and SYCL for process management and GPU execution.
-
-### Prerequisites
-Before starting, ensure the following:
-
-* Intel oneAPI Base Toolkit or any other distribution of oneCCL is installed.
-* MPI implementation (e.g., Intel MPI or MPICH) is available.
-* The C++ compiler supports SYCL (e.g., `icpx` from oneAPI).
-* (Optional) A system with multiple GPUs or a multi-node cluster is used.
-
-### 1. Include Required Headers
-Add the following headers to your source file:
-
-* `oneapi/ccl.h` for oneCCL C API.
-* `mpi.h` for MPI initialization and communication.
-* `sycl/sycl.hpp` for GPU operations.
+The first step to use **NCCL-like C API** for oneCCL is to include `oneapi/ccl.h` header. `mpi.h` is included as the example uses **MPI** to broadcast the uniqueId needed to build a oneCCL communicator. `sycl/sycl.hpp` is included to execute GPU kernels.
 ```cpp
 #include <iostream>
 #include <mpi.h>
@@ -32,11 +17,7 @@ Add the following headers to your source file:
 #include <sycl/sycl.hpp>
 ```
 
-### 2. Initialize MPI and oneCCL
-
-* Initialize MPI with multithreading support.
-* Retrieve oneCCL version for verification.
-* Determine global rank, world size, and local rank.
+Next we will declre a few variables that will be used later in the example.
 ```cpp
 int rank = 0;
 int local_rank = 0;
@@ -48,9 +29,12 @@ MPI_Comm local_comm = 0;
 onecclComm_t comm = nullptr;
 onecclResult_t result = onecclSuccess;
 onecclUniqueId uid;
+```
 
+The first step required to setup `onecclComm_t` is the creation of `onecclUniqueId`. One rank calls `onecclGetUniqueId` and then broadcast the `uniqueId` to all the ranks that will participate in the communicator. This example `MPI_Bcast`, but applications can use a different method.
+```cpp
 onecclGetVersion(&version);
-std::cout << "Running oneCCL version: " << version << "\n";
+std::cout << "Running oneCLL version: " << version << "\n";
 
 MPI_Init_thread(nullptr, nullptr, MPI_THREAD_MULTIPLE, nullptr);
 MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -58,23 +42,14 @@ MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL,
                     &local_comm);
 MPI_Comm_rank(local_comm, &local_rank);
-```
 
-### 3. Create and Share Unique ID
-
-* Generate a unique ID for the communicator on rank 0 using onecclGetUniqueId.
-* Broadcast the ID to all ranks using MPI, so the processes will form one communicator later.
-```cpp
 if (rank == 0) {
     onecclGetUniqueId(&uid);
 }
 MPI_Bcast(&uid, sizeof(uid), MPI_BYTE, 0, MPI_COMM_WORLD);
 ```
 
-### 4. Associate GPU Device
-
-* Assign each rank to a GPU device using `onecclSetDevice`.
-* Create a SYCL queue for GPU execution.
+Before creating a communicator, each rank needs to be associated with a GPU device. This can be done by calling `onecclSetDevice` before `onecclCommInitRank`. This example uses a simple helper function `create_queue` to create a `sycl::queue` based on `local_rank`, so process with local index 0 will be using GPU at index 0, and so on.
 ```cpp
 auto sycl_queue = create_queue(local_rank);
 result = onecclSetDevice(local_rank);
@@ -84,9 +59,7 @@ if (result != onecclSuccess) {
 }
 ```
 
-### 5. Initialize Communicator
-
-* Create a communicator using onecclCommInitRank.
+Now the communicator can be created.
 ```cpp
 result = onecclCommInitRank(&comm, world_size, uid, rank);
 if (result != onecclSuccess) {
@@ -95,10 +68,7 @@ if (result != onecclSuccess) {
 }
 ```
 
-### 6. Allocate Buffers and Prepare Data
-
-* Allocate GPU memory using SYCL.
-* Initialize data with a GPU kernel.
+Next, the example allocates GPU buffers using `SYCL` APIs and submits a simple kernel to setup their content.
 ```cpp
 int *sendbuff = static_cast<int *>(
     sycl::malloc_device(kCount * sizeof(int), sycl_queue));
@@ -113,10 +83,7 @@ sycl_queue.submit([&](sycl::handler &h) {
 });
 ```
 
-### 7. Perform a Collective Operation
-
-* Execute `onecclAllReduce` to sum data across ranks.
-* Pass a pointer to the SYCL queue as the last argument of the collective operation to ensure proper scheduling of the operation.
+Now `onecclAllReduce` can execute on the created communicator. Note that the last argument of `onecclAllReduce` is a pointer to `sycl::queue`. This is required to execute collectives on the GPU and properly schedule them with respect to other kernels submitted to the same GPU and SYCL queue.
 ```cpp
 result = onecclAllReduce(
     sendbuff, recvbuff, kCount, onecclInt, onecclSum, comm, &sycl_queue);
@@ -126,10 +93,8 @@ if (result != onecclSuccess) {
 }
 ```
 
-### 8. Post-Processing
-
-* Compute average on GPU.
-* Copy results to host then and print.
+As a final step, this example application submits a kernel to compute the average and copy back to the host.
+Finally, the call to `onecclCommDestroy` frees the resources allocated to the communicator
 ```cpp
 sycl_queue.submit([&](sycl::handler &cgh) {
     cgh.parallel_for<class average>(
@@ -146,11 +111,7 @@ for (int i = 0; i < recvbuff_host.size(); i++) {
     std::cout << recvbuff_host[i] << " ";
 }
 std::cout << '\n';
-```
-### 9. Cleanup
 
-* Destroy communicator and finalize MPI.
-```cpp
 result = onecclCommDestroy(comm);
 if (result != onecclSuccess) {
     std::cerr << "Destroy communicator failed.\n";
@@ -160,8 +121,7 @@ if (result != onecclSuccess) {
 MPI_Finalize();
 ```
 
-### Complete code
-
+Here's complete code for the example, feel free to experiment with that!
 ```cpp
 #include <iostream>
 #include <mpi.h>
@@ -277,9 +237,8 @@ int main() {
     return 0;
 }
 ```
-### Build and run
 
-* To build and execute this app you can use:
+To build and execute this app you can use:
 ```sh
 # Setup environment for oneCCL
 source <oneCCL install directory>/env/vars.sh

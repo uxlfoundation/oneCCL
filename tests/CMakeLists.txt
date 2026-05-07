@@ -1,4 +1,4 @@
-# Copyright 2016-2025 Intel Corporation
+# Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,15 +51,20 @@ function(add_test_internal)
     find_package(MPI REQUIRED)
 
     # Link necessary libraries
-    target_link_libraries(${ARGS_TARGET} PRIVATE
+    set(LIBRARIES_TO_LINK
         oneCCL2
         ccl_null
-        ittnotify
         gtest
         gtest_main
         MPI::MPI_CXX
         Threads::Threads
     )
+
+    if(ONECCL_ENABLE_ITT)
+        list(APPEND LIBRARIES_TO_LINK ittnotify)
+    endif()
+
+    target_link_libraries(${ARGS_TARGET} PRIVATE ${LIBRARIES_TO_LINK})
 
     target_include_directories(${ARGS_TARGET} PRIVATE "${PROJECT_SOURCE_DIR}/src")
 
@@ -170,4 +175,8 @@ if(NOT ${ONECCL_USE_SYSTEM_LIBCCL})
 
     set(ENV_MODIFICATION "${ENV_MODIFICATION}LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:ccl_null>;")
     set_property(TEST both_apis PROPERTY ENVIRONMENT_MODIFICATION "${ENV_MODIFICATION}")
+endif()
+
+if(COMPILER_SUPPORTS_SYCL)
+    add_subdirectory(benchmark)
 endif()
