@@ -25,6 +25,7 @@ set(PROJECT_FULL_NAME "oneAPI Collective Communications Library")
 
 project(${PROJECT_NAME})
 
+include(CMakeDependentOption)
 include(${PROJECT_SOURCE_DIR}/cmake/helpers.cmake)
 
 check_compiler_version()
@@ -60,15 +61,17 @@ else()
     set(ENABLE_DRM FALSE)
 endif()
 
+option(USE_SYSTEM_DEPS "Use dependencies provided by the system" FALSE)
+
 option(BUILD_EXAMPLES "Build examples" TRUE)
 option(BUILD_FT "Build functional tests" TRUE)
 option(BUILD_CONFIG "Build cmake configs" TRUE)
-option(ENABLE_MPI "Enable MPI support" TRUE)
-option(ENABLE_MPI_TESTS "Enable MPI tests support" TRUE)
+cmake_dependent_option(ENABLE_MPI "Enable MPI support" TRUE "NOT USE_SYSTEM_DEPS" FALSE)
+cmake_dependent_option(ENABLE_MPI_TESTS "Enable MPI tests support" TRUE "ENABLE_MPI" FALSE)
 option(ENABLE_SYCL_INTEROP_EVENT "Enable SYCL interop event support" TRUE)
 option(ENABLE_OFI_HMEM "Enable OFI HMEM support" TRUE)
 option(ENABLE_OFI_OOT_PROV "Enable OFI out-of-tree providers support" FALSE)
-option(ENABLE_ITT "Enable ITT profiling support" TRUE)
+cmake_dependent_option(ENABLE_ITT "Enable ITT profiling support" TRUE "NOT USE_SYSTEM_DEPS" FALSE)
 option(ENABLE_PROFILING "Enable profiling support" TRUE)
 option(ENABLE_PMIX "Enable PMIX support" TRUE)
 option(ENABLE_UMF "Enable UMF support" TRUE)
@@ -80,6 +83,18 @@ option(ENABLE_SYCL_PER_KERNEL_COMPILE "Enable SYCL device code module assembly p
 
 option(USE_CODECOV_FLAGS "Calculate code coverage" FALSE)
 option(WITH_ASAN "Use address sanitizer, can only be used in Debug build" FALSE)
+
+if (USE_SYSTEM_DEPS)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(HWLOC REQUIRED IMPORTED_TARGET hwloc)
+    pkg_check_modules(LIBFABRIC REQUIRED IMPORTED_TARGET libfabric)
+    if (ENABLE_PMIX)
+        pkg_check_modules(PMIX REQUIRED IMPORTED_TARGET pmix)
+    endif()
+    if (ENABLE_UMF)
+        find_package(UMF REQUIRED)
+    endif()
+endif()
 
 #installation path variables
 include(GNUInstallDirs)
@@ -132,49 +147,76 @@ set(CCL_INSTALL_EXAMPLES "${CMAKE_INSTALL_PREFIX}/examples")
 set(CCL_INSTALL_TESTS "${CMAKE_INSTALL_PREFIX}/tests")
 set(CCL_INSTALL_KERNELS "${CMAKE_INSTALL_PREFIX}/lib/ccl/kernels")
 
-# setup dependency directories
-set(DEPS_DIR "${PROJECT_SOURCE_DIR}/deps")
+if (NOT USE_SYSTEM_DEPS)
+    # setup dependency directories
+    set(DEPS_DIR "${PROJECT_SOURCE_DIR}/deps")
 
-if ("${MPI_DIR}" STREQUAL "")
-    set(MPI_INCLUDE_DIR "${DEPS_DIR}/mpi/include/")
-    set(MPI_LIB_DIR "${DEPS_DIR}/mpi/lib/")
-else()
-    set(MPI_INCLUDE_DIR "${MPI_DIR}/include/")
-    set(MPI_LIB_DIR "${MPI_DIR}/lib/")
+    if ("${MPI_DIR}" STREQUAL "")
+        set(MPI_INCLUDE_DIR "${DEPS_DIR}/mpi/include/")
+        set(MPI_LIB_DIR "${DEPS_DIR}/mpi/lib/")
+    else()
+        set(MPI_INCLUDE_DIR "${MPI_DIR}/include/")
+        set(MPI_LIB_DIR "${MPI_DIR}/lib/")
+    endif()
+    message(STATUS "MPI_INCLUDE_DIR: ${MPI_INCLUDE_DIR}")
+    message(STATUS "MPI_LIB_DIR: ${MPI_LIB_DIR}")
+
+    if ("${LIBFABRIC_DIR}" STREQUAL "")
+        set(LIBFABRIC_INCLUDE_DIR "${DEPS_DIR}/ofi/include")
+        set(LIBFABRIC_LIB_DIR "${DEPS_DIR}/ofi/lib/")
+    else()
+        set(LIBFABRIC_INCLUDE_DIR "${LIBFABRIC_DIR}/include/")
+        set(LIBFABRIC_LIB_DIR "${LIBFABRIC_DIR}/lib")
+    endif()
+    message(STATUS "LIBFABRIC_LIB_DIR: ${LIBFABRIC_LIB_DIR}")
+    message(STATUS "LIBFABRIC_INCLUDE_DIR: ${LIBFABRIC_INCLUDE_DIR}")
+
+    add_library(PkgConfig::LIBFABRIC INTERFACE IMPORTED)
+    set_target_properties(PkgConfig::LIBFABRIC PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${LIBFABRIC_INCLUDE_DIR}"
+    )
+
+    set(HWLOC_INCLUDE_DIR "${DEPS_DIR}/hwloc/include/")
+    set(HWLOC_LIB_DIR "${DEPS_DIR}/hwloc/lib/")
+    message(STATUS "HWLOC_INCLUDE_DIR: ${HWLOC_INCLUDE_DIR}")
+    message(STATUS "HWLOC_LIB_DIR: ${HWLOC_LIB_DIR}")
+
+    add_library(PkgConfig::HWLOC STATIC IMPORTED)
+    set_target_properties(PkgConfig::HWLOC PROPERTIES
+        IMPORTED_LOCATION "${HWLOC_LIB_DIR}/libhwloc.a"
+        INTERFACE_INCLUDE_DIRECTORIES "${HWLOC_INCLUDE_DIR}"
+    )
+
+    set(ITT_INCLUDE_DIR "${DEPS_DIR}/itt/include")
+    set(ITT_LIB_DIR "${DEPS_DIR}/itt/lib64")
+    message(STATUS "ITT_INCLUDE_DIR: ${ITT_INCLUDE_DIR}")
+    message(STATUS "ITT_LIB_DIR: ${ITT_LIB_DIR}")
+
+    set(LEVEL_ZERO_INCLUDE_DIR "${DEPS_DIR}/level_zero/include/")
+    message(STATUS "LEVEL_ZERO_INCLUDE_DIR: ${LEVEL_ZERO_INCLUDE_DIR}")
+
+    message(STATUS "DRM_INCLUDE_DIR: ${DRM_INCLUDE_DIR}")
+
+    if (ENABLE_PMIX)
+        set(PMIX_INCLUDE_DIR "${DEPS_DIR}/pmix/include/")
+        message(STATUS "PMIX_INCLUDE_DIR: ${PMIX_INCLUDE_DIR}")
+
+        add_library(PkgConfig::PMIX INTERFACE IMPORTED)
+        set_target_properties(PkgConfig::PMIX PROPERTIES
+	    INTERFACE_INCLUDE_DIRECTORIES "${PMIX_INCLUDE_DIR}"
+        )
+    endif()
+
+    if (ENABLE_UMF)
+        set(UMF_INCLUDE_DIR "${DEPS_DIR}/umf/include/")
+        message(STATUS "UMF_INCLUDE_DIR: ${UMF_INCLUDE_DIR}")
+
+        add_library(umf::umf_headers INTERFACE IMPORTED)
+        set_target_properties(umf::umf_headers PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${UMF_INCLUDE_DIR}"
+        )
+    endif()
 endif()
-message(STATUS "MPI_INCLUDE_DIR: ${MPI_INCLUDE_DIR}")
-message(STATUS "MPI_LIB_DIR: ${MPI_LIB_DIR}")
-
-if ("${LIBFABRIC_DIR}" STREQUAL "")
-    set(LIBFABRIC_INCLUDE_DIR "${DEPS_DIR}/ofi/include")
-    set(LIBFABRIC_LIB_DIR "${DEPS_DIR}/ofi/lib/")
-else()
-    set(LIBFABRIC_INCLUDE_DIR "${LIBFABRIC_DIR}/include/")
-    set(LIBFABRIC_LIB_DIR "${LIBFABRIC_DIR}/lib")
-endif()
-message(STATUS "LIBFABRIC_LIB_DIR: ${LIBFABRIC_LIB_DIR}")
-message(STATUS "LIBFABRIC_INCLUDE_DIR: ${LIBFABRIC_INCLUDE_DIR}")
-
-set(HWLOC_INCLUDE_DIR "${DEPS_DIR}/hwloc/include/")
-set(HWLOC_LIB_DIR "${DEPS_DIR}/hwloc/lib/")
-message(STATUS "HWLOC_INCLUDE_DIR: ${HWLOC_INCLUDE_DIR}")
-message(STATUS "HWLOC_LIB_DIR: ${HWLOC_LIB_DIR}")
-
-set(ITT_INCLUDE_DIR "${DEPS_DIR}/itt/include")
-set(ITT_LIB_DIR "${DEPS_DIR}/itt/lib64")
-message(STATUS "ITT_INCLUDE_DIR: ${ITT_INCLUDE_DIR}")
-message(STATUS "ITT_LIB_DIR: ${ITT_LIB_DIR}")
-
-set(LEVEL_ZERO_INCLUDE_DIR "${DEPS_DIR}/level_zero/include/")
-message(STATUS "LEVEL_ZERO_INCLUDE_DIR: ${LEVEL_ZERO_INCLUDE_DIR}")
-
-message(STATUS "DRM_INCLUDE_DIR: ${DRM_INCLUDE_DIR}")
-
-set(PMIX_INCLUDE_DIR "${DEPS_DIR}/pmix/include/")
-message(STATUS "PMIX_INCLUDE_DIR: ${PMIX_INCLUDE_DIR}")
-
-set(UMF_INCLUDE_DIR "${DEPS_DIR}/umf/include/")
-message(STATUS "UMF_INCLUDE_DIR: ${UMF_INCLUDE_DIR}")
 
 set(CMAKE_SKIP_INSTALL_RPATH TRUE)
 set(CMAKE_SKIP_RPATH TRUE)
