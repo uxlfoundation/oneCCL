@@ -1,4 +1,4 @@
-# Copyright 2016-2025 Intel Corporation
+# Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,5 +36,5 @@ target_link_libraries(cpu PRIVATE Threads::Threads)
 if(${ONECCL_BUILD_TESTS})
     add_test(NAME example_cpu COMMAND mpiexec -n 2 ${PROJECT_SOURCE_DIR}/utils/debug_hook.sh $<TARGET_FILE:cpu> CONFIGURATIONS examples)
     set_property(TEST example_cpu PROPERTY ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:ccl_legacy_cpu>")
-    #set_tests_properties(example_cpu PROPERTIES TIMEOUT 30)
+    set_tests_properties(example_cpu PROPERTIES TIMEOUT 300)
 endif()

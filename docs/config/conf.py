@@ -1,3 +1,17 @@
+# Copyright 2016-2026 Intel Corporation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 
 # Configuration file for the Sphinx documentation builder.
@@ -19,8 +33,8 @@ import os
 
 # -- Project information -----------------------------------------------------
 
-project = "oneAPI Collective Communications Library (C API)"
-copyright = "2023-2025, Intel"
+project = "oneAPI Collective Communications Library"
+copyright = "2023-2026, Intel"
 author = "Intel"
 
 # The full version, including alpha/beta/rc tags
@@ -36,7 +50,7 @@ print(
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ["breathe", "sphinxcontrib.spelling", "myst_parser", "sphinxcontrib.mermaid"]
+extensions = ["breathe", "sphinxcontrib.spelling", "myst_parser"]
 
 spelling_show_suggestions = True
 spelling_word_list_filename = "spelling_exceptions.txt"

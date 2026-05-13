@@ -1,4 +1,4 @@
-# Copyright 2016-2025 Intel Corporation
+# Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,5 +41,5 @@ add_sycl_to_target(TARGET split SOURCES split.cpp)
 if(${ONECCL_BUILD_TESTS})
     add_test(NAME example_split COMMAND mpiexec -n 2 $<TARGET_FILE:split> CONFIGURATIONS examples_sycl)
     set_property(TEST example_split PROPERTY ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:ccl_legacy>")
-    set_tests_properties(example_split PROPERTIES TIMEOUT 120)
+    set_tests_properties(example_split PROPERTIES TIMEOUT 300)
 endif()

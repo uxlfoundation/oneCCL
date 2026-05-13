@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -83,6 +83,9 @@ TEST_F(NullPluginTest, CommExceptions) {
     onecclUniqueId uid{};
     onecclRedOp_t custom_op{};
     int custom_scalar = 1;
+    void *buffer = nullptr;
+    void *reg_handle = nullptr;
+    onecclWindow_t window_handle = nullptr;
 
     std::array<int, kCount> sendbuff{};
     std::array<int, kCount> recvbuff{};
@@ -99,6 +102,11 @@ TEST_F(NullPluginTest, CommExceptions) {
         onecclPluginException, onecclSuccess);
 
     test_with_exception(
+        ONECCL_BEFORE_MEM_ALLOC,
+        [&]() { return onecclMemAlloc(&buffer, kCount * sizeof(int)); },
+        onecclPluginException, onecclSuccess);
+
+    test_with_exception(
         ONECCL_BEFORE_INIT_COMM,
         [&]() { return onecclCommInitRank(&comm_xpu, 1, uid, 0); },
         onecclPluginException, onecclSuccess);
@@ -111,6 +119,23 @@ TEST_F(NullPluginTest, CommExceptions) {
     test_with_exception(
         ONECCL_BEFORE_GET_SIZE,
         [&]() { return onecclCommCount(comm_xpu, &size); },
+        onecclPluginException, onecclSuccess);
+
+    test_with_exception(
+        ONECCL_BEFORE_COMM_REGISTER,
+        [&]() {
+            return onecclCommRegister(comm_xpu, buffer, kCount * sizeof(int),
+                                      &reg_handle);
+        },
+        onecclPluginException, onecclSuccess);
+
+    test_with_exception(
+        ONECCL_BEFORE_COMM_WINDOW_REGISTER,
+        [&]() {
+            return onecclCommWindowRegister(
+                comm_xpu, buffer, kCount * sizeof(int), &window_handle,
+                ONECCL_WINDOW_COLL_SYMMETRIC);
+        },
         onecclPluginException, onecclSuccess);
 
     test_with_exception(
@@ -193,6 +218,20 @@ TEST_F(NullPluginTest, CommExceptions) {
         [&]() { return onecclRedOpDestroy(custom_op, comm_xpu); },
         onecclPluginException, onecclSuccess);
 
+    test_with_exception(
+        ONECCL_BEFORE_COMM_WINDOW_DEREGISTER,
+        [&]() { return onecclCommWindowDeregister(comm_xpu, window_handle); },
+        onecclPluginException, onecclSuccess);
+
+    test_with_exception(
+        ONECCL_BEFORE_COMM_DEREGISTER,
+        [&]() { return onecclCommDeregister(comm_xpu, reg_handle); },
+        onecclPluginException, onecclSuccess);
+
+    test_with_exception(
+        ONECCL_BEFORE_MEM_FREE, [&]() { return onecclMemFree(buffer); },
+        onecclPluginException, onecclSuccess);
+
     // test_with_exception(
     //     ONECCL_BEFORE_FINALIZE, [&]() { return onecclCommFinalize(comm_xpu);
     //     }, onecclPluginException, onecclSuccess);
@@ -225,7 +264,7 @@ TEST_F(NullPluginTest, AllGatherInvalidArgsLastError) {
     // substring
     std::string const err_msg(err_string);
     EXPECT_FALSE(err_msg.empty());
-    EXPECT_NE(err_msg.find("sendbuff cannot be nullptr"), std::string::npos);
+    EXPECT_NE(err_msg.find("comm cannot be nullptr"), std::string::npos);
 }
 
 TEST_F(NullPluginTest, CommunicatorWithConfigInitializer) {
@@ -258,8 +297,7 @@ TEST_F(NullPluginTest, MultiThreadedAllGatherInvalidArgsLastError) {
         std::string const err_msg(err_string);
         EXPECT_FALSE(err_msg.empty());
         bool const valid_error =
-            (err_msg.find("sendbuff cannot be nullptr") != std::string::npos) ||
-            (err_msg.find("recvbuff cannot be nullptr") != std::string::npos);
+            (err_msg.find("comm cannot be nullptr") != std::string::npos);
         EXPECT_TRUE(valid_error);
     };
 
@@ -280,7 +318,7 @@ TEST_F(NullPluginTest, MultiThreadedAllGatherInvalidArgsLastError) {
 
             const char *err_string = onecclGetLastError(comm);
 
-            std::lock_guard<std::mutex> const lock(print_mutex);
+            std::scoped_lock const lock(print_mutex);
             check_error_string(err_string);
         }
     };
@@ -301,7 +339,7 @@ TEST_F(NullPluginTest, MultiThreadedAllGatherInvalidArgsLastError) {
 
             const char *err_string = onecclGetLastError(comm);
 
-            std::lock_guard<std::mutex> const lock(print_mutex);
+            std::scoped_lock const lock(print_mutex);
             check_error_string(err_string);
         }
     };

@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -67,6 +67,17 @@ struct onecclComm {
     onecclResult_t (*get_size)(onecclComm_t comm, int *size);
     onecclResult_t (*get_local_size)(onecclComm_t comm, int *local_size);
     onecclResult_t (*get_device)(onecclComm_t comm, int *rank);
+    onecclResult_t (*mem_alloc)(void **ptr, size_t size);
+    onecclResult_t (*mem_free)(void *ptr);
+    onecclResult_t (*comm_register)(onecclComm_t comm, void *buff,
+                                    size_t size, void **handle);
+    onecclResult_t (*comm_deregister)(onecclComm_t comm, void *handle);
+    onecclResult_t (*comm_window_register)(onecclComm_t comm, void *buff,
+                                           size_t size,
+                                           onecclWindow_t *window,
+                                           onecclWindowFlags_t flags);
+    onecclResult_t (*comm_window_deregister)(onecclComm_t comm,
+                                             onecclWindow_t window);
     onecclResult_t (*create_pre_mul_sum)(onecclRedOp_t* redop, void* scalar,
                                          onecclDataType_t datatype,
                                          onecclScalarResidence_t residence,

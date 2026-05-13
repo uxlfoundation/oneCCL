@@ -1,6 +1,18 @@
+/*
+ Copyright 2016-2026 Intel Corporation
 
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
 
+     http://www.apache.org/licenses/LICENSE-2.0
 
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+*/
 
 /**
  * @file ccl.h
@@ -63,21 +75,21 @@ extern "C" {
  * @brief Major version of oneCCL
  * @ingroup Macros
  */
-#define ONECCL_MAJOR 2021
+#define ONECCL_MAJOR 2022
 
 /**
  * @def ONECCL_MINOR
  * @brief Minor version of oneCCL
  * @ingroup Macros
  */
-#define ONECCL_MINOR 17
+#define ONECCL_MINOR 0
 
 /**
  * @def ONECCL_PATCH
  * @brief Patch version of oneCCL
  * @ingroup Macros
  */
-#define ONECCL_PATCH 2
+#define ONECCL_PATCH 0
 
 /**
  * @def ONECCL_SUFFIX
@@ -331,6 +343,77 @@ onecclResult_t CCL_C_API onecclCommUserRank(const onecclComm_t comm, int *rank);
  * @ingroup CommunicatorCreation
  */
 onecclResult_t CCL_C_API onecclSetDevice(uint32_t index);
+
+/**
+ * @brief Allocates device memory suitable for oneCCL buffer registration
+ *
+ * @param[out] ptr Pointer to store the allocated device pointer
+ * @param[in] size Number of bytes to allocate
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclMemAlloc(void **ptr, size_t size);
+
+/**
+ * @brief Frees memory previously allocated by onecclMemAlloc
+ *
+ * @param[in] ptr Pointer returned by onecclMemAlloc
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclMemFree(void *ptr);
+
+/**
+ * @brief Registers a local buffer for communicator-based optimized transfers
+ *
+ * @param[in] comm Communicator
+ * @param[in] buff Buffer address to register
+ * @param[in] size Buffer size in bytes
+ * @param[out] handle Registration handle
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclCommRegister(onecclComm_t comm, void *buff,
+                                            size_t size,
+                                            void **handle);
+
+/**
+ * @brief Deregisters a buffer previously registered with onecclCommRegister
+ *
+ * @param[in] comm Communicator
+ * @param[in] handle Registration handle to deregister
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclCommDeregister(onecclComm_t comm,
+                                              void *handle);
+
+/**
+ * @brief Registers a buffer as a oneCCL communication window
+ *
+ * @param[in] comm Communicator
+ * @param[in] buff Buffer address to register
+ * @param[in] size Buffer size in bytes
+ * @param[out] window Window handle
+ * @param[in] flags Window registration flags
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclCommWindowRegister(onecclComm_t comm,
+                                                  void *buff, size_t size,
+                                                  onecclWindow_t *window,
+                                                  onecclWindowFlags_t flags);
+
+/**
+ * @brief Deregisters a window previously registered with onecclCommWindowRegister
+ *
+ * @param[in] comm Communicator
+ * @param[in] window Window handle
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclCommWindowDeregister(onecclComm_t comm,
+                                                    onecclWindow_t window);
 
 /**
  * @brief Function to check for errors of asynchronous oneCCL operations in the communicator

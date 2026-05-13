@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -34,7 +34,7 @@ class CollectiveTest
     static int rank;
     static int world_size;
     static int local_rank;
-    static int local_comm;
+    static MPI_Comm local_comm;
     static onecclComm_t comm;
 
     static void SetUpTestSuite() {
@@ -506,7 +506,7 @@ sycl::queue CollectiveTest::sycl_queue;
 int CollectiveTest::rank;
 int CollectiveTest::world_size;
 int CollectiveTest::local_rank;
-int CollectiveTest::local_comm;
+MPI_Comm CollectiveTest::local_comm;
 onecclComm_t CollectiveTest::comm;
 
 std::string to_string(onecclDataType_t datatype) {
@@ -1063,6 +1063,102 @@ TEST_P(SimpleCollectiveTest, BlockingComm) {
         std::for_each(validation_result.begin(), validation_result.end(),
                       [=](int result) { EXPECT_EQ(result, expected_value); });
     }
+}
+
+TEST_P(SimpleCollectiveTest, BufferRegistrationApi) {
+    constexpr size_t kBytes = 1ULL << 22;
+    constexpr size_t kOffset = 1ULL << 20;
+    constexpr size_t kCount = 1024;
+
+    void *buffer = nullptr;
+    void *sendbuff = nullptr;
+    void *recvbuff = nullptr;
+    void *reg_handle = nullptr;
+
+    auto result = onecclMemAlloc(&buffer, kBytes);
+    if (result == onecclNotImplemented) {
+        GTEST_SKIP_("onecclMemAlloc is not implemented for current backend");
+    }
+    ASSERT_EQ(result, onecclSuccess);
+    ASSERT_NE(buffer, nullptr);
+
+    result = onecclCommRegister(comm, buffer, kBytes, &reg_handle);
+    if (result == onecclNotImplemented) {
+        onecclMemFree(buffer);
+        GTEST_SKIP_(
+            "onecclCommRegister is not implemented for current backend");
+    }
+    ASSERT_EQ(result, onecclSuccess);
+
+    sendbuff = buffer;
+    recvbuff = static_cast<void *>(static_cast<uint8_t *>(buffer) + kOffset);
+
+    result = onecclAllReduce(sendbuff, recvbuff, kCount, onecclFloat, onecclSum,
+                             comm, &sycl_queue);
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclAllGather(sendbuff, recvbuff, kCount, onecclInt8, comm,
+                             &sycl_queue);
+    ASSERT_EQ(result, onecclSuccess);
+
+    sycl_queue.wait();
+
+    result = onecclCommDeregister(comm, reg_handle);
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclMemFree(buffer);
+    ASSERT_EQ(result, onecclSuccess);
+}
+
+TEST_P(SimpleCollectiveTest, WindowRegistrationApi) {
+    constexpr size_t kBytes = 1ULL << 22;
+
+    void *src = nullptr;
+    void *dst = nullptr;
+    onecclWindow_t src_win = nullptr;
+    onecclWindow_t dst_win = nullptr;
+
+    auto result = onecclMemAlloc(&src, kBytes);
+    if (result == onecclNotImplemented) {
+        GTEST_SKIP_("onecclMemAlloc is not implemented for current backend");
+    }
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclMemAlloc(&dst, kBytes);
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclCommWindowRegister(comm, src, kBytes, &src_win,
+                                      ONECCL_WINDOW_COLL_SYMMETRIC);
+    if (result == onecclNotImplemented) {
+        onecclMemFree(src);
+        onecclMemFree(dst);
+        GTEST_SKIP_("onecclCommWindowRegister is not implemented for current "
+                    "backend");
+    }
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclCommWindowRegister(comm, dst, kBytes, &dst_win,
+                                      ONECCL_WINDOW_COLL_SYMMETRIC);
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclAllGather(static_cast<uint8_t *>(src) + 0x1000,
+                             static_cast<uint8_t *>(dst) + 0x2000, 1,
+                             onecclInt8, comm, &sycl_queue);
+    ASSERT_EQ(result, onecclSuccess);
+
+    sycl_queue.wait();
+
+    result = onecclCommWindowDeregister(comm, src_win);
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclCommWindowDeregister(comm, dst_win);
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclMemFree(src);
+    ASSERT_EQ(result, onecclSuccess);
+
+    result = onecclMemFree(dst);
+    ASSERT_EQ(result, onecclSuccess);
 }
 
 int main(int argc, char **argv) {

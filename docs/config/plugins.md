@@ -1,33 +1,21 @@
-# New features of oneCCL with C API
+# Plugin architecture
 
 ```{eval-rst}
 .. note::
-    This document describes the new C API that closely follows the NVIDIA Collective Communications Library (NCCL)* API standard. Documentation for the legacy C++ API can be found `here <../index.html>`_.
+    In oneCCL version 2021.17 included with the 2025.3 oneAPI release, oneCCL has added support for a new **C API** that closely follows the NVIDIA Collective Communications Libary (NCCL)* API standard. Details about the new API, instructions on how to build, and run an example can be found `here <./index.html>`_.
+
+    The existing C++ API will remain the default API for the 2021.17 release and can be found `here <../index.html>`_.
 ```
 
-Alongside the new C API, oneCCL introduces a plugin system for dynamic backend selection. This design allows oneCCL to load the most suitable backend for the hardware platform at runtime.
+Alongside introduction of new API for oneCCL we introduced a concept of oneCCL plugins. The plugin interface was designed to provide dynamic selection of backends for different hardware platforms. Currently oneCCL provides two plugins - `onecclLegacy` and `onecclLegacyCpu`, which are based on `libccl.so.1.0` and provide the same functional capabilities. On startup oneCCL will load the most appropriate plugin unless user specifies [`CCL_PLUGIN`](project:./env.md#ccl-plugin) environment variable to override it.
 
-### Available Plugins
-* onecclLegacy
-  * Supports both CPU and GPU collectives.
-  * Selected by default if SYCL runtime is available.
-  * Backend selection depends on the type of buffer and the stream argument:
-    * For GPU buffers: stream must point to a SYCL queue.
-    * For host buffers:
-      * If stream is a SYCL queue, the collective is scheduled after previously submitted SYCL operations.
-      * If stream is NULL, the collective executes immediately in blocking mode.
-
-* onecclLegacyCPU
-  * Designed for CPU-only collectives.
-  * Ignores the stream argument (should be `NULL`).
-    
-```{hint}
-To inspect plugin selection, enable logging using `CCL_LOG_LEVEL=info`.
-```
-### How Plugin Selection Works
-
-* By default, oneCCL automatically loads the most appropriate plugin based on platform capabilities.
-* Users can override this behavior using the [`CCL_PLUGIN`](project:./env.md#ccl-plugin) environment variable:
-```c++
-export CCL_PLUGIN=ONECCL_LEGACY_CPU
+## Plugins and their features
+ * `onecclLegacy` - supports both CPU and GPU collectives, selected by default if `libsycl.so.8` is available on the platform. The plugin will select CPU or GPU backend on following conditions:
+   * Operations such as the `onecclAllreduce` collective take as argument a `void *stream`. When the collective uses GPU buffers, the `stream` should be a pointer to a SYCL queue. 
+   * If the collective uses a host buffer, the `stream` can be a pointer to a SYCL queue or `NULL`. When the `stream` is a SYCL queue, oneCCL will use the stream to submit the new collective after the operations previously submitted to the SYCL queue, even if the collective itself executes in the host. When the `stream` is `NULL`, the collective executes right away in a blocking mode. 
+ * `onecclLegacyCPU` - The `stream` argument should be `NULL`, but in any case, the implementation will ignore the value of the argument. 
+  
+```{eval-rst}
+.. hint::
+    You can inspect plugin selection process using environment variable CCL_LOG_LEVEL=info.
 ```

@@ -1,12 +1,12 @@
 /*
- Copyright 2016-2025 Intel Corporation
- 
+ Copyright 2016-2026 Intel Corporation
+
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
- 
+
      http://www.apache.org/licenses/LICENSE-2.0
- 
+
  Unless required by applicable law or agreed to in writing, software
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -112,7 +112,7 @@ void onecclDebugLog(onecclDebugLogLevel_t level, const char *filefunc, int line,
     va_end(vargs);
 
     if (level == ONECCL_LOG_WARN || level == ONECCL_LOG_ERROR) {
-        std::lock_guard<std::mutex> const lock(debug_lock);
+        std::scoped_lock const lock(debug_lock);
         last_error = message;
     }
 
@@ -165,7 +165,7 @@ void onecclDebugLog(onecclDebugLogLevel_t level, const char *filefunc, int line,
 }
 
 const char *onecclGetLastErrorString() {
-    std::lock_guard<std::mutex> const lock(debug_lock);
+    std::scoped_lock const lock(debug_lock);
 
     strncpy(last_error_buffer, last_error.c_str(), kErrorBufferLength);
     last_error_buffer[kErrorBufferLength - 1] = 0;

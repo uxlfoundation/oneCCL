@@ -1,4 +1,4 @@
-# Copyright 2016-2025 Intel Corporation
+# Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,9 +26,11 @@ find_package(IntelSYCL REQUIRED)
 # Add SYCL
 add_sycl_to_target(TARGET ccl_legacy SOURCES ccl_legacy.cpp)
 
-# Link pluginA with oneCCL2 shared library and also with oneCCL
-target_link_libraries(ccl_legacy PRIVATE oneCCL2 ccl)
-target_link_libraries(ccl_legacy PRIVATE ittnotify)
+# Link pluginA with oneCCL2 shared library and also with oneCCL and MPI libraries
+target_link_libraries(ccl_legacy PRIVATE oneCCL2 ccl MPI::MPI_CXX)
+if(ONECCL_ENABLE_ITT)
+  target_link_libraries(ccl_legacy PRIVATE ittnotify)
+endif()
 
 # Make sure the oneCCL2 headers and oneCCL, MPI headers can be included by the plugin
 target_include_directories(ccl_legacy PRIVATE "${PROJECT_SOURCE_DIR}/src")

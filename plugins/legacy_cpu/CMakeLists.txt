@@ -1,4 +1,4 @@
-# Copyright 2016-2025 Intel Corporation
+# Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ add_library(ccl_legacy_cpu SHARED ccl_legacy_cpu.cpp)
 target_link_libraries(ccl_legacy_cpu PUBLIC oneCCL2)
 
 # Add itt
-target_link_libraries(ccl_legacy_cpu PRIVATE ittnotify)
+if(ONECCL_ENABLE_ITT)
+  target_link_libraries(ccl_legacy_cpu PRIVATE ittnotify)
+endif()
 
 # Make sure the oneCCL2 headers can be included by the plugin
 target_include_directories(ccl_legacy_cpu PRIVATE "${PROJECT_SOURCE_DIR}/include")
