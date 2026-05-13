@@ -87,7 +87,7 @@ index 41470783e..1b215bb6e 100755
  }
  
 -html_theme_options["logo"] = {"text": "oneCCL Documentation 2021.16.2"}
-+html_theme_options["logo"] = {"text": "oneCCL Documentation 2021.17.0"}
++html_theme_options["logo"] = {"text": "oneCCL Documentation 2022.0.0"}
  
 diff --git a/doc/rst/source/env-variables.rst b/doc/rst/source/env-variables.rst
 index 6219e0bd6..65c471bcd 100644

@@ -34,7 +34,7 @@ import os
 # -- Project information -----------------------------------------------------
 
 project = "oneAPI Collective Communications Library"
-copyright = "2023-2025, Intel"
+copyright = "2023-2026, Intel"
 author = "Intel"
 
 # The full version, including alpha/beta/rc tags
