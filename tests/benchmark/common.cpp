@@ -61,6 +61,9 @@ static int report_cputime = 0;
 static int average = 1;
 static int run_inplace = 1;
 
+// Forward declaration for header printing used in timeTest
+static void print_benchmark_headers(int run_inplace);
+
 // Global current engine (will be set by each executable)
 struct testEngine *currentTestEngine = nullptr;
 
@@ -667,6 +670,8 @@ static void oneccl_setup_args(size_t size, onecclDataType_t type,
 testResult_t timeTest(struct threadArgs *args, onecclDataType_t type,
                       const char *typeName, onecclRedOp_t operation,
                       const char *opName, int root) {
+    static bool header_printed = false;
+
     barrier(args);
 
     // Warm-up
@@ -675,6 +680,11 @@ testResult_t timeTest(struct threadArgs *args, onecclDataType_t type,
         TESTCHECK(oneccl_start_coll(args, type, operation, root, 0, iter));
     }
     TESTCHECK(oneccl_complete_coll(args));
+
+    if (!header_printed) {
+        print_benchmark_headers(run_inplace);
+        header_printed = true;
+    }
 
     // Benchmark
     for (size_t size = args->minbytes; size <= args->maxbytes;
@@ -1020,8 +1030,6 @@ static testResult_t oneccl_run() {
     memset(errors, 0, sizeof(int) * n_threads);
     memset(bandwidth, 0, sizeof(double) * n_threads);
     memset(bw_count, 0, sizeof(int) * n_threads);
-
-    print_benchmark_headers(run_inplace);
 
     struct testThread threads[n_threads];
     memset(threads, 0, sizeof(struct testThread) * n_threads);

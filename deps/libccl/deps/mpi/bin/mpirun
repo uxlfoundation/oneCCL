@@ -1,0 +1,113 @@
+#!/bin/sh
+#
+# Copyright Intel Corporation.
+# 
+# This software and the related documents are Intel copyrighted materials, and
+# your use of them is governed by the express license under which they were
+# provided to you (License). Unless the License provides otherwise, you may
+# not use, modify, copy, publish, distribute, disclose or transmit this
+# software or the related documents without Intel's prior written permission.
+# 
+# This software and the related documents are provided as is, with no express
+# or implied warranties, other than those that are expressly stated in the
+# License.
+#
+
+tempdir="/tmp"
+if [ -n "$TMPDIR" ]; then
+    tempdir="$TMPDIR"
+fi
+if [ -n "$I_MPI_TMPDIR" ]; then
+    tempdir="$I_MPI_TMPDIR"
+fi
+
+np_boot=
+username=$(whoami)
+rc=0
+
+if [ -z "$I_MPI_ROOT" -a -z "$(uname -m | grep 1om)" ] ; then
+    if [ -f ${0%/*}/mpivars.sh ]; then
+        . ${0%/*}/mpivars.sh ""
+    elif [ -f ${0%/*}/../env/vars.sh ]; then
+        . ${0%/*}/../env/vars.sh ""
+    elif [ -f ${0%/*}/../setvars.sh ]; then
+        . ${0%/*}/../setvars.sh ""
+    fi # else it can be a runtime package without any scripts to source
+fi
+
+##### mpirun detection #####
+export I_MPI_MPIRUN="mpirun"
+############################
+
+#############################################
+#######  Job Scheduler autodetection  #######
+#############################################
+# PBS
+if [ -n "$PBS_ENVIRONMENT" ] && [ -z "$I_MPI_HYDRA_RMK" ] ; then
+    export I_MPI_HYDRA_RMK=pbs
+elif [ -n "$LSB_JOBID" ] && [ -z "$I_MPI_HYDRA_RMK" ]; then
+    export I_MPI_HYDRA_RMK=lsf
+fi
+if [ -z "$I_MPI_HYDRA_BOOTSTRAP" ] && [ -z "$I_MPI_HYDRA_BOOTSTRAP_EXEC" ]; then 
+    # SLURM
+    if [ -n "$SLURM_JOBID" ]; then
+        export I_MPI_HYDRA_BOOTSTRAP=slurm
+    # LoadLeveler
+    elif [ -n "$LOADL_HOSTFILE" ]; then
+        export I_MPI_HYDRA_BOOTSTRAP=ll
+    # SGE
+    elif [ -n "$PE_HOSTFILE" ]; then
+        export I_MPI_HYDRA_BOOTSTRAP=sge
+    # Fujitsu NQS (Network Queuing System)
+    elif [ -n "$ENVIRONMENT" ] && [ -n "$QSUB_REQID" ] && [ -n "$QSUB_NODEINF" ] ; then
+        if [ -z "$I_MPI_HYDRA_HOST_FILE" ]; then
+            export I_MPI_HYDRA_HOST_FILE=$QSUB_NODEINF
+        fi
+        if [ -x /usr/bin/plesh ] ; then
+            export I_MPI_HYDRA_BOOTSTRAP=rsh
+            export I_MPI_HYDRA_BOOTSTRAP_EXEC=/usr/bin/plesh
+        fi
+    # TORQUE
+    elif [ -n "${PBS_NODEFILE}" ]; then
+        export I_MPI_HYDRA_BOOTSTRAP=pbs
+    fi
+fi
+
+# Slurm, LoadLeveler, LSF, SGE
+if [ -n "$LOADL_HOSTFILE" ] || [ -n "$PE_HOSTFILE" ]; then
+    # Create a host file
+    if [ -n "$LOADL_HOSTFILE" ]; then
+        mpiexec.hydra "$@" <&0
+        rc=$?
+    elif [ -n "$PE_HOSTFILE" ]; then
+        machinefile="${tempdir}/sge_machinefile_$username.$$"
+        > $machinefile
+            while read line; do
+            if [ -n "$line" ]; then
+                host_name=$(echo $line | sed -e "s/ .*//")
+                num_of_processes=$(expr match "$line" '.* \([0-9]\+\) .*')
+                echo "$host_name:$num_of_processes" >> $machinefile
+                np_boot=$(( np_boot + 1 ))
+            fi
+        done < $PE_HOSTFILE
+        mpiexec.hydra -machinefile $machinefile "$@" <&0
+        rc=$?
+        rm -rf $machinefile
+    fi
+# YARN cluster
+elif [ "x$I_MPI_YARN" = "xyes" -o "x$I_MPI_YARN" = "xenable" -o "x$I_MPI_YARN" = "xon" -o "x$I_MPI_YARN" = "x1" ]; then
+    llamaMPIClient.py "$@" <&0
+    rc=$?
+# Netbatch
+elif [ -n "$NB_PARALLEL_JOB_HOSTS" ]; then
+    hosts_opt=$(echo $NB_PARALLEL_JOB_HOSTS | tr ' ' ',')
+    hosts_opt="-hosts $(hostname -s),$hosts_opt"
+    mpiexec.hydra $hosts_opt "$@" <&0
+    rc=$?
+# PBS or ordinary job
+else
+    mpiexec.hydra "$@" <&0
+    rc=$?
+fi
+
+exit $rc

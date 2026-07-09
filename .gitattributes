@@ -1,0 +1,9 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Force LF for shell scripts
+*.sh text eol=lf
+
+# Force LF for workflow files
+.github/workflows/* text eol=lf
+.github/scripts/* text eol=lf

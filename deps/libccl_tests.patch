@@ -1,0 +1,326 @@
+diff --git a/examples/run.sh b/examples/run.sh
+index 07f6ad7b1..7515ba975 100755
+--- a/examples/run.sh
++++ b/examples/run.sh
+@@ -7,6 +7,9 @@ exec | tee ./main_output.txt
+ BASENAME=`basename $0 .sh`
+ SCRIPT_DIR=`cd $(dirname "$BASH_SOURCE") && pwd -P`
+ JSON_REPORT="test_cases.json"
++JUNIT_REPORT="summary.junit.xml"
++
++echo "<testsuites><testsuite name=\"example_tests\" tests=\"0\" failures=\"0\" skipped=\"0\">" > "${SCRIPT_DIR}/${JUNIT_REPORT}"
+ 
+ unsupported_platforms="dg2 ats-m ats-m1 ats-m3 gen12"
+ 
+@@ -49,6 +52,7 @@ CheckCommandExitCode()
+ declare -i total_fails=0
+ declare -i total_skipped=0
+ declare -i log_idx=0
++declare -i total_tests=0
+ 
+ check_test()
+ {
+@@ -72,6 +76,7 @@ check_test()
+     test_failed=`grep -E -i "${failed_pattern}" ${test_log} | grep -Evc "${exclude_pattern}"`
+     test_skipped=`grep -E -c -i "${skipped_pattern}" ${test_log}`
+ 
++    total_tests=$((total_tests + 1))
+     result=""
+     if ([ ${test_passed} -eq 0 ] || [ ${test_skipped} -eq 0 ]) && [ ${test_failed} -ne 0 ]
+     then
+@@ -79,14 +84,31 @@ check_test()
+         echo "See log ${test_log} for details"
+         total_fails=${total_fails}+1
+         result="failed"
++        cat <<EOT >> "${SCRIPT_DIR}/${JUNIT_REPORT}"
++    <testcase name="${test}">
++      <failure type="TestFailed" message="Test ${test_file} failed">
++        <![CDATA[
++$(tail -30 "${test_log}")
++        ]]>
++      </failure>
++    </testcase>
++EOT
++
+     elif [ ${test_skipped} -ne 0 ]
+     then
+         echo "Test $test_file has been skipped."
+         echo "See log ${test_log} for details"
+         total_skipped=${total_skipped}+1
+         result="skipped"
++        cat <<EOT >> "${SCRIPT_DIR}/${JUNIT_REPORT}"
++    <testcase name="${test}">
++      <skipped type="TestSkipped" message="Test skipped" />
++    </testcase>
++EOT
++
+     else
+         result="passed"
++        echo "    <testcase name=\"${test}\" />" >> "${SCRIPT_DIR}/${JUNIT_REPORT}"
+     fi
+ 
+ cat <<EOT >> "${SCRIPT_DIR}/${JSON_REPORT}.tmp"
+@@ -696,6 +718,10 @@ $(sed '$d'  "${SCRIPT_DIR}/${JSON_REPORT}.tmp")
+ ]
+ EOT
+ 
++    # Finalize JUnit XML
++    sed -i "s/tests=\"0\"/tests=\"${total_tests}\"/; s/failures=\"0\"/failures=\"${total_fails}\"/; s/skipped=\"0\"/skipped=\"${total_skipped}\"/" "${SCRIPT_DIR}/${JUNIT_REPORT}"
++    echo "  </testsuite></testsuites>" >> "${SCRIPT_DIR}/${JUNIT_REPORT}"
++
+     if [ ${total_fails} != 0 ]
+     then
+         echo "There are ${total_fails} failed tests"
+diff --git a/tests/reg_tests/run.sh b/tests/reg_tests/run.sh
+index 947e625ac..3e75672e7 100755
+--- a/tests/reg_tests/run.sh
++++ b/tests/reg_tests/run.sh
+@@ -352,7 +352,8 @@ EOT
+                 local delta_t=$(echo "$t2 $t1" | awk '{print $1-$2}')
+                 if [[ $err -ne 0 ]]
+                 then
+-                    cat ./${name}.log
++                    # cat ./${name}.log
++                    echo "${name} failed"
+                     failed_test+=(${test})
+                     cat <<EOT >> "${SCRIPT_DIR}/${JUNIT_REPORT}.tmp"
+     <testcase name="$((tests_count-1)) - ${test}" time="${delta_t}">
+diff --git a/tests/reg_tests/run_scaleout.sh b/tests/reg_tests/run_scaleout.sh
+index 3b3bd832c..fa3d9f581 100755
+--- a/tests/reg_tests/run_scaleout.sh
++++ b/tests/reg_tests/run_scaleout.sh
+@@ -428,6 +428,7 @@ EOT
+             done
+         else
+             echo "All tests passed"
++            exit 0
+         fi
+     fi
+ }
+diff --git a/tests/reg_tests/sycl/allreduce_events_inorder.sh b/tests/reg_tests/sycl/allreduce_events_inorder.sh
+index 9a4a186a8..24a7ac48c 100755
+--- a/tests/reg_tests/sycl/allreduce_events_inorder.sh
++++ b/tests/reg_tests/sycl/allreduce_events_inorder.sh
+@@ -125,7 +125,7 @@ function test_run() {
+ 
+     check_log ${TEST_LOG}
+ 
+-    rm -f ${BINFILE} ${TEST_LOG}
++    rm -f ${TEST_LOG}
+     echo "Pass"
+ }
+ 
+diff --git a/tests/reg_tests/sycl/inference/examples/run.sh b/tests/reg_tests/sycl/inference/examples/run.sh
+index 5e524ec90..d28c35642 100755
+--- a/tests/reg_tests/sycl/inference/examples/run.sh
++++ b/tests/reg_tests/sycl/inference/examples/run.sh
+@@ -4,9 +4,14 @@ SCRIPT_DIR=$(cd $(dirname "${BASH_SOURCE}") && pwd -P)
+ ROOT_DIR="$(dirname "${SCRIPT_DIR}")/../../"
+ BASENAME="$(basename $0 .sh)"
+ TEST_LOG="${BASENAME}.log"
++JUNIT_REPORT_NAME="summary-inference.junit.xml"
++JUNIT_REPORT=$(realpath ./$JUNIT_REPORT_NAME)
+ 
+ # Added global counter for failures
+ FAIL_COUNT=0
++TEST_COUNT=0
++
++echo "<testsuite name=\"reg_tests_inference\" tests=\"0\" failures=\"0\">" > ${JUNIT_REPORT}
+ 
+ function run_script_no_exit() {
+     local script_path="$1"
+@@ -21,10 +26,14 @@ function run_script_no_exit() {
+ 
+     # 2) If the pt2pt script exits with non-zero, also count as failure
+     # (In case the script *does* return a proper error code.)
++    TEST_COUNT=$((TEST_COUNT + 1))
+ 
+     if [ $rc -ne 0 ]; then
+         echo "Script ${script_path} exited with code ${rc}"
+         FAIL_COUNT=$((FAIL_COUNT + 1))
++        echo "  <testcase name=\"${script_path}\"><failure type=\"exit code\">Script exited with code ${rc}</failure></testcase>" >> ${JUNIT_REPORT}
++    else
++        echo "  <testcase name=\"${script_path}\" />" >> ${JUNIT_REPORT}
+     fi
+ }
+ 
+@@ -40,15 +49,42 @@ source ${ROOT_DIR}/utils.sh
+ get_bench ${SCRIPT_DIR} ${TEST_LOG} "sycl"
+ cd ${SCRIPT_DIR}
+ 
+-function run_cmd_no_exit() {
+-    cmd="${1}"
+-    # echo "run_cmd: ${cmd}"
+-    eval ${cmd}
+-    rc=$?
+-    if [ ${rc} -ne 0 ]
+-    then
+-        echo "run_cmd: ${cmd}"
+-        echo "Fail"
++function run_and_check_log() {
++    local cmd="$1"
++    local log_path="$2"
++    local test_name=$(basename "$log_path")
++
++    # Run the command and redirect output to log
++    echo "Executing: ${cmd}"
++    eval ${cmd} > "${log_path}" 2>&1
++    local rc=$?
++
++    # Patterns for checking log content
++    local passed_pattern="iteration|passed|# all done"
++    local failed_pattern="abort|^bad$|corrupt|fail|^fault$|[^-W]invalid"
++    failed_pattern+="|kill|runtime_error|terminate|timed|unexpected"
++    failed_pattern+="|[^-W]error|exception|connection refused"
++    failed_pattern+="|job ending due to application timeout"
++    local exclude_pattern="\-\-abort\-signal|CCL_ABORT_ON_THROW"
++    exclude_pattern+="|fi_strerror|MPI_Error_string|fake-path"
++    exclude_pattern+="|MPI startup\(\): Set ptracer for parent pid \(.*\) failed"
++
++    # Check log for passed/failed patterns
++    local passed_count=$(grep -E -c -i "${passed_pattern}" "${log_path}")
++    local failed_strings=$(grep -E -i "${failed_pattern}" "${log_path}" | grep -Ev "${exclude_pattern}")
++
++    TEST_COUNT=$((TEST_COUNT + 1))
++
++    if [ ${rc} -ne 0 ] || [ ${passed_count} -eq 0 ] || [ "${failed_strings}" != "" ]; then
++        echo "Error in ${test_name}: Command failed with exit code ${rc} or log indicates failure."
++        FAIL_COUNT=$((FAIL_COUNT+1))
++        local failure_msg="Exit Code: ${rc}\n${failed_strings}"
++        echo "  <testcase name=\"${test_name}\"><failure>${failure_msg}" >> ${JUNIT_REPORT}
++        echo "  ${failure_msg}" >> ${JUNIT_REPORT}
++        echo "  </failure></testcase>" >> ${JUNIT_REPORT}
++        cat "${log_path}"
++    else
++        echo "  <testcase name=\"${test_name}\" />" >> ${JUNIT_REPORT}
+     fi
+ }
+ 
+@@ -135,8 +171,9 @@ do
+                             fi
+                             cmd+=" CCL_SYCL_SINGLE_NODE_ALGORITHM=$single_node_algo mpiexec.hydra -n $N -ppn $N -l ./$exec_name gpu device --queue_type in_order --count $size > ${TEST_LOG} 2>&1"
+                             echo "${cmd}"
+-                            run_cmd_no_exit "${cmd}"
+-                            check_log_and_print ${TEST_LOG}
++                            run_and_check_log "${cmd}" ${TEST_LOG}
++                            # run_cmd_no_exit "${cmd}"
++                            # check_log_and_print ${TEST_LOG}
+                             test $? -eq 1 && cat ${TEST_LOG}
+                         done
+                     done
+@@ -165,8 +202,9 @@ do
+                     cmd+=" --check last --backend sycl --coll $colls -y $counts --buf_count 1"
+                     cmd+=" --iters 8 --sycl_mem_type usm --sycl_usm_type device -e in_order -d $dtypes -q $place > ${TEST_LOG} 2>&1"
+                     echo "${cmd}"
+-                    run_cmd_no_exit "${cmd}"
+-                    check_log_and_print ${TEST_LOG}
++                    run_and_check_log "${cmd}" ${TEST_LOG}
++                    # run_cmd_no_exit "${cmd}"
++                    # check_log_and_print ${TEST_LOG}
+                     test $? -eq 1 && cat ${TEST_LOG}
+                 done
+             done
+@@ -199,8 +237,9 @@ do
+                 fi
+                 cmd+="mpiexec.hydra -n 4 -l ./${exec_name} gpu device in_order ${size} ${use_case} > ${TEST_LOG} 2>&1"
+                 echo "${cmd}"
+-                run_cmd_no_exit "${cmd}"
+-                check_log_and_print "${TEST_LOG}"
++                run_and_check_log "${cmd}" ${TEST_LOG}
++                # run_cmd_no_exit "${cmd}"
++                # check_log_and_print "${TEST_LOG}"
+                 test $? -eq 1 && cat "${TEST_LOG}"
+             done
+         done
+@@ -215,8 +254,9 @@ for num_rank in $num_ranks; do
+     cmd+=" --check last --backend sycl --coll allgather,allgatherv,allreduce,reduce_scatter -y 1024 --buf_count 1"
+     cmd+=" --iters 8 --sycl_mem_type usm --sycl_usm_type device -e in_order -d bfloat16,float32 > ${TEST_LOG} 2>&1"
+     echo "${cmd}"
+-    run_cmd_no_exit "${cmd}"
+-    check_log_and_print ${TEST_LOG}
++    run_and_check_log "${cmd}" ${TEST_LOG}
++    # run_cmd_no_exit "${cmd}"
++    # check_log_and_print ${TEST_LOG}
+     test $? -eq 1 && cat ${TEST_LOG}
+ done
+ 
+@@ -232,8 +272,9 @@ for mt_exec_name in "${test_names[@]}"; do
+                 TEST_LOG="test_${mt_exec_name}_${task_name}_${mt_count}_${num_thread}.log"
+                 cmd="mpiexec -n 1 ./${mt_exec_name} --buffer-count=${mt_count} --threads=${num_thread} --debug=0 --task=${task_name} > ${TEST_LOG} 2>&1"
+                 echo "${cmd}"
+-                run_cmd_no_exit "${cmd}"
+-                check_log_and_print ${TEST_LOG}
++                run_and_check_log "${cmd}" ${TEST_LOG}
++                # run_cmd_no_exit "${cmd}"
++                # check_log_and_print ${TEST_LOG}
+                 test $? -eq 1 && cat "${TEST_LOG}"
+             done
+         done
+@@ -250,8 +291,9 @@ for mt_exec_name in "${test_names[@]}"; do
+             TEST_LOG="test_${mt_exec_name}_${mt_count}_${num_thread}.log"
+             cmd="mpiexec -n 1 ./${mt_exec_name} --buffer-count=${mt_count} --threads=${num_thread} --iters=20 > ${TEST_LOG} 2>&1"
+             echo "${cmd}"
+-            run_cmd_no_exit "${cmd}"
+-            check_log_and_print ${TEST_LOG}
++            run_and_check_log "${cmd}" ${TEST_LOG}
++            # run_cmd_no_exit "${cmd}"
++            # check_log_and_print ${TEST_LOG}
+             test $? -eq 1 && cat "${TEST_LOG}"
+         done
+     done
+@@ -265,8 +307,9 @@ for exec_name in "${test_names[@]}"; do
+         TEST_LOG="test_${exec_name}_${n_rank}.log"
+         cmd="mpiexec -n ${n_rank} ./${exec_name} > ${TEST_LOG} 2>&1"
+         echo "${cmd}"
+-        run_cmd_no_exit "${cmd}"
+-        check_log_and_print ${TEST_LOG}
++        run_and_check_log "${cmd}" ${TEST_LOG}
++        # run_cmd_no_exit "${cmd}"
++        # check_log_and_print ${TEST_LOG}
+         test $? -eq 1 && cat "${TEST_LOG}"
+     done
+ done
+@@ -294,8 +337,9 @@ for threshold in "${thresholds[@]}"; do
+                 TEST_LOG="test_${algo}_${ppn}_${threshold}_${exec_name}.log"
+                 cmd="NEOReadDebugKeys=1 RenderCompressedBuffersEnabled=0 CCL_SYCL_ALLREDUCE_LL_THRESHOLD=${threshold} CCL_SYCL_ALLREDUCE_LL=${algo} CCL_SYCL_ALLREDUCE_ARC=0 CCL_TOPO_P2P_ACCESS=1 mpiexec -n ${ppn} ./${exec_name} > ${TEST_LOG} 2>&1"
+                 echo "${cmd}"
+-                run_cmd_no_exit "${cmd}"
+-                check_log_and_print ${TEST_LOG}
++                run_and_check_log "${cmd}" ${TEST_LOG}
++                # run_cmd_no_exit "${cmd}"
++                # check_log_and_print ${TEST_LOG}
+                 test $? -eq 1 && cat "${TEST_LOG}"
+             done
+         done
+@@ -303,6 +347,12 @@ for threshold in "${thresholds[@]}"; do
+ done
+ popd
+ 
++sed -i "s/tests=\"0\"/tests=\"${TEST_COUNT}\"/; s/failures=\"0\"/failures=\"${FAIL_COUNT}\"/" ${JUNIT_REPORT}
++
++# Finish the report by closing the testcase XML
++echo "</testsuite>" >> ${JUNIT_REPORT}
++
++
+ # Final pass/fail report
+ if [ ${FAIL_COUNT} -gt 0 ]; then
+     echo "Some tests failed. Total failures: ${FAIL_COUNT}"
+diff --git a/tests/reg_tests/sycl/topo_affinity.sh b/tests/reg_tests/sycl/topo_affinity.sh
+index 14a9d6f97..9ce7a8943 100755
+--- a/tests/reg_tests/sycl/topo_affinity.sh
++++ b/tests/reg_tests/sycl/topo_affinity.sh
+@@ -112,10 +112,10 @@ run_case() {
+                 #when OFI is used.
+                 cnt=$( cat "${TEST_LOG}" | grep "no ports detected" | wc -l )
+ 
+-		#it seems like GPUs on orpre-smc compute nodes don't have 
+-		#that inconsistency problem. In that case the check should
+-		#use the regular pattern
+-		smc_host=$( hostname | grep "ss[1-2]" | wc -l )
++                #it seems like GPUs on orpre-smc and anbhscsr compute nodes don't have
++                #that inconsistency problem. In that case the check should
++                #use the regular pattern
++                smc_host=$( hostname | grep -E "ss[1-2]|^anpvcx" | wc -l )
+                 if [ $cnt -eq 0 ] && [ $smc_host -eq 0 ]
+                 then
+                     inter_colors="0 1 1 0"

@@ -1,0 +1,23 @@
+# <test name> platform=<exclude_pattern> transport=<exclude_pattern>
+# exclude pattern = comma-separated list or * (exclude all)
+
+# common
+mpich_checker platform=* transport=impi
+pkgconfig_support_checker platform=* transport=mpich
+shell_support_check platform=* transport=*
+
+# cpu
+
+# sycl
+allgatherv_vector platform=* transport=*
+allreduce_events platform=gen transport=*
+allreduce_events_inorder platform=gen transport=*
+# TODO: after fixing IMPI-3210 make mpi transport valid for ats
+hmem_ofi platform=* transport=*
+# add MLSL-1835
+scaleout platform=* transport=*
+# verbs prov doesn't tested with mpich
+# no gtool support in MPICH
+process_launcher platform=* transport=mpich
+scaleout platform=ats transport=*
+sub_sub_device platform=* transport=*

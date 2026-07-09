@@ -1,0 +1,63 @@
+diff --git a/cmake/Dependencies.cmake b/cmake/Dependencies.cmake
+index dac0d1f41c3..c94975232f9 100644
+--- a/cmake/Dependencies.cmake
++++ b/cmake/Dependencies.cmake
+@@ -203,7 +203,7 @@ elseif(BLAS STREQUAL "MKL")
+   if(BLAS_SET_BY_USER)
+     find_package(MKL REQUIRED)
+   else()
+-    find_package(MKL QUIET)
++    find_package(MKL REQUIRED)
+   endif()
+   include(${CMAKE_CURRENT_LIST_DIR}/public/mkl.cmake)
+   if(MKL_FOUND)
+diff --git a/cmake/Modules/FindMKL.cmake b/cmake/Modules/FindMKL.cmake
+index 7c4647f3746..6652ce31169 100644
+--- a/cmake/Modules/FindMKL.cmake
++++ b/cmake/Modules/FindMKL.cmake
+@@ -62,11 +62,11 @@ ELSE (WIN32)
+ ENDIF (WIN32)
+ 
+ # Intel Compiler Suite
+-SET(INTEL_COMPILER_DIR "${DEFAULT_INTEL_COMPILER_DIR}" CACHE STRING
++SET(INTEL_COMPILER_DIR "$ENV{CONDA_PREFIX}" CACHE STRING
+   "Root directory of the Intel Compiler Suite (contains ipp, mkl, etc.)")
+-SET(INTEL_MKL_DIR "${DEFAULT_INTEL_MKL_DIR}" CACHE STRING
++SET(INTEL_MKL_DIR "$ENV{CONDA_PREFIX}" CACHE STRING
+   "Root directory of the Intel MKL (standalone)")
+-SET(INTEL_OMP_DIR "${DEFAULT_INTEL_MKL_DIR}" CACHE STRING
++SET(INTEL_OMP_DIR "$ENV{CONDA_PREFIX}" CACHE STRING
+   "Root directory of the Intel OpenMP (standalone)")
+ SET(MKL_THREADING "OMP" CACHE STRING "MKL flavor: SEQ, TBB or OMP (default)")
+ 
+@@ -139,10 +139,10 @@ SET(saved_CMAKE_INCLUDE_PATH ${CMAKE_INCLUDE_PATH})
+ IF (EXISTS ${INTEL_COMPILER_DIR})
+   # TODO: diagnostic if dir does not exist
+   SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+-    "${INTEL_COMPILER_DIR}/lib/${iccvers}")
++    "${INTEL_COMPILER_DIR}/lib/")
+   IF(MSVC)
+     SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+-      "${INTEL_COMPILER_DIR}/compiler/lib/${iccvers}")
++      "${INTEL_COMPILER_DIR}/compiler/lib/")
+   ENDIF()
+   IF (APPLE)
+     SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+@@ -157,7 +157,7 @@ IF (EXISTS ${INTEL_MKL_DIR})
+   SET(CMAKE_INCLUDE_PATH ${CMAKE_INCLUDE_PATH}
+     "${INTEL_MKL_DIR}/include")
+   SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+-    "${INTEL_MKL_DIR}/lib/${mklvers}")
++    "${INTEL_MKL_DIR}/lib/")
+   IF (MSVC)
+     SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+       "${INTEL_MKL_DIR}/lib/${iccvers}")
+@@ -177,7 +177,7 @@ IF (EXISTS ${INTEL_OMP_DIR})
+   SET(CMAKE_INCLUDE_PATH ${CMAKE_INCLUDE_PATH}
+     "${INTEL_OMP_DIR}/include")
+   SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+-    "${INTEL_OMP_DIR}/lib/${mklvers}")
++    "${INTEL_OMP_DIR}/lib/")
+   IF (MSVC)
+     SET(CMAKE_LIBRARY_PATH ${CMAKE_LIBRARY_PATH}
+       "${INTEL_OMP_DIR}/lib/${iccvers}")

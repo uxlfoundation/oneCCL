@@ -152,11 +152,13 @@ int main() {
         }
         auto event_optional = ccl_queue.ext_oneapi_get_last_event();
 
-#if __INTEL_LLVM_COMPILER >= 20250200
+#if defined(__INTEL_LLVM_COMPILER) && (__INTEL_LLVM_COMPILER < 20250200)
+        // Older Intel compiler returns event directly
+        auto allreduce_event = event_optional;
+#else
+        // Newer Intel or open-source compilers return optional<event>
         sycl::event allreduce_event =
             event_optional.has_value() ? event_optional.value() : sycl::event();
-#else
-        auto allreduce_event = event_optional;
 #endif
 
         // Third compute kernel will run after the second kernel and Allreduce

@@ -1,0 +1,44 @@
+#pragma once
+
+#define CCL_FORCEINLINE   inline __attribute__((always_inline))
+#define CCL_FORCENOINLINE __attribute__((noinline))
+
+#if (__GNUC__ >= 6) || defined(__clang__)
+#   define CCL_DEPRECATED_ENUM_FIELD __attribute__((deprecated))
+#else
+#   define CCL_DEPRECATED_ENUM_FIELD
+#endif
+
+#if defined(__GNUC__)
+#   define CCL_DEPRECATED __attribute__((deprecated))
+#else
+#   define CCL_DEPRECATED
+#endif
+
+/* All symbols shall be internal unless marked as CCL_API */
+#ifdef __linux__
+#   if __GNUC__ >= 4
+#       define CCL_HELPER_DLL_EXPORT __attribute__ ((visibility ("default")))
+#   else
+#       define CCL_HELPER_DLL_EXPORT
+#   endif
+#else
+#error "unexpected OS"
+#endif
+
+#define CCL_API CCL_HELPER_DLL_EXPORT
+
+#define ONECCL_SPEC_VERSION "1.0"
+
+#define CCL_MAJOR_VERSION           @CCL_MAJOR_VERSION@
+#define CCL_MINOR_VERSION           @CCL_MINOR_VERSION@
+#define CCL_UPDATE_VERSION          @CCL_UPDATE_VERSION@
+#cmakedefine CCL_PRODUCT_STATUS     "@CCL_PRODUCT_STATUS@"
+#cmakedefine CCL_PRODUCT_BUILD_DATE "@CCL_PRODUCT_BUILD_DATE@"
+#cmakedefine CCL_PRODUCT_FULL       "@CCL_PRODUCT_FULL@"
+
+// Enable SYCL for any compiler that supports SYCL (Intel or open-source)
+#if defined(SYCL_LANGUAGE_VERSION)
+#define CCL_ENABLE_SYCL
+#define CCL_ENABLE_ZE
+#endif

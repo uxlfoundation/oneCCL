@@ -1,0 +1,10 @@
+#PV specific
+#common
+mpich_checker platform=* transport=*
+pkgconfig_support_checker platform=* transport=*
+shell_support_check platform=* transport=*
+size_checker platform=* transport=*
+
+#cpu
+
+#sycl

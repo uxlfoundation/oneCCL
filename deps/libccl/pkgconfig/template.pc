@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/../../
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib/
+includedir=${prefix}/include/
+
+Name: oneAPI Collective Communications Library (oneCCL)
+Description: oneCCL provides an efficient implementation of communication patterns used in deep learning.
+URL: https://github.com/oneapi-src/oneCCL
+Version: CCL_SUBSTITUTE_OFFICIAL_VERSION
+Requires: impi
+Libs: -L${libdir} -lccl -lsycl
+Cflags: -I${includedir}

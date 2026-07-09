@@ -1,0 +1,1 @@
+../../../../../examples/sycl/sycl_reduce_scatter_usm_test.cpp

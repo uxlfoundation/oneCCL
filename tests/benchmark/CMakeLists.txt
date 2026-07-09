@@ -1,17 +1,3 @@
-# Copyright 2016-2026 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 # Define the executable target for AllReduce benchmark
 add_executable(allreduce_perf
     all_reduce.cpp
@@ -36,6 +22,13 @@ add_executable(allgather_perf
 # Define the executable target for ReduceScatter benchmark
 add_executable(reduce_scatter_perf
     reduce_scatter.cpp
+    common.cpp
+    timer.cpp
+)
+
+# Define the executable target for AllToAll benchmark
+add_executable(alltoall_perf
+    alltoall.cpp
     common.cpp
     timer.cpp
 )
@@ -70,6 +63,10 @@ target_include_directories(reduce_scatter_perf PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
 
+target_include_directories(alltoall_perf PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
+)
+
 target_include_directories(p2p_perf PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
@@ -94,6 +91,12 @@ target_link_libraries(allgather_perf PRIVATE
 )
 
 target_link_libraries(reduce_scatter_perf PRIVATE
+    oneCCL2
+    MPI::MPI_CXX
+    Threads::Threads
+)
+
+target_link_libraries(alltoall_perf PRIVATE
     oneCCL2
     MPI::MPI_CXX
     Threads::Threads
@@ -127,6 +130,12 @@ add_sycl_to_target(TARGET allgather_perf SOURCES
 
 add_sycl_to_target(TARGET reduce_scatter_perf SOURCES
     reduce_scatter.cpp
+    common.cpp
+    timer.cpp
+)
+
+add_sycl_to_target(TARGET alltoall_perf SOURCES
+    alltoall.cpp
     common.cpp
     timer.cpp
 )
@@ -172,6 +181,15 @@ if(${ONECCL_BUILD_TESTS})
         CONFIGURATIONS benchmarks
     )
     set_tests_properties(reduce_scatter_perf_test PROPERTIES
+        TIMEOUT 600
+    )
+
+    add_test(
+        NAME alltoall_perf_test
+        COMMAND mpiexec -n 2 $<TARGET_FILE:alltoall_perf> -b 1K -e 1M -g 1
+        CONFIGURATIONS benchmarks
+    )
+    set_tests_properties(alltoall_perf_test PROPERTIES
         TIMEOUT 600
     )
     add_test(
