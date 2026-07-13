@@ -7,14 +7,14 @@ man/         @maciekpac @jbrosenz @pmeltsin @moshe-roden
 third-party*    @Maria1Petrova @maciekpac @jbrosenz @pmeltsin @moshe-roden
 
 # Tests & examples
-tests/    @jbrosenz @maciekpac @Maria1Petrova @pmeltsin @moshe-roden
-examples/    @jbrosenz @maciekpac @Maria1Petrova @pmeltsin @moshe-roden
+tests/    @jbrosenz @maciekpac @Maria1Petrova @pmeltsin @moshe-roden @shaykz
+examples/    @jbrosenz @maciekpac @Maria1Petrova @pmeltsin @moshe-roden @shaykz
 
 # Infrastructure and tools
-.github/    @jbrosenz @maciekpac @Maria1Petrova @zhenggb72 @pmeltsin @moshe-roden
+.github/    @jbrosenz @maciekpac @Maria1Petrova @zhenggb72 @pmeltsin @moshe-roden @shaykz
 
 # Build & dev infrastructure
-cmake/    @zhenggb72 @jbrosenz @maciekpac @pmeltsin @moshe-roden
+cmake/    @zhenggb72 @jbrosenz @maciekpac @pmeltsin @moshe-roden @shaykz
 
 # C++ code
-src/    @zhenggb72 @jbrosenz @maciekpac @pmeltsin @moshe-roden
+src/    @zhenggb72 @jbrosenz @maciekpac @pmeltsin @moshe-roden @shaykz
