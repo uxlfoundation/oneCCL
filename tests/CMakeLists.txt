@@ -1,17 +1,3 @@
-# Copyright 2016-2026 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 include(CMakeParseArguments)
 
 function(add_test_internal)
@@ -48,7 +34,9 @@ function(add_test_internal)
     find_package(Threads REQUIRED)
 
     # Find the MPI package
-    find_package(MPI REQUIRED)
+    if(ONECCL_ENABLE_MPI)
+        find_package(MPI REQUIRED)
+    endif()
 
     # Link necessary libraries
     set(LIBRARIES_TO_LINK
@@ -56,9 +44,12 @@ function(add_test_internal)
         ccl_null
         gtest
         gtest_main
-        MPI::MPI_CXX
         Threads::Threads
     )
+
+    if(ONECCL_ENABLE_MPI)
+        list(APPEND LIBRARIES_TO_LINK MPI::MPI_CXX)
+    endif()
 
     if(ONECCL_ENABLE_ITT)
         list(APPEND LIBRARIES_TO_LINK ittnotify)
@@ -122,33 +113,91 @@ add_test_internal(
 )
 
 # Temporarly disenable valgrind checks for the test
-add_test_internal(
-    TARGET null_concurrent
-    SRCS concurrent_execution.cpp
-    PLUGIN_TARGETS "ccl_null"
-    VALUATIONS OFF
-    EXEC_PREFIX "mpiexec -n 2"
-    TIMEOUT 30
-)
-
-if(IntelSYCL_FOUND)
+if(ONECCL_ENABLE_MPI)
     add_test_internal(
-        TARGET acceptance_sycl
-        SRCS acceptance_sycl.cpp
-        PLUGIN_TARGETS "ccl_legacy"
-        VALUATIONS ON
+        TARGET null_concurrent
+        SRCS concurrent_execution.cpp
+        PLUGIN_TARGETS "ccl_null"
+        VALUATIONS OFF
         EXEC_PREFIX "mpiexec -n 2"
-        TIMEOUT 1200
+        TIMEOUT 30
+    )
+endif()
+
+if(COMPILER_SUPPORTS_SYCL AND ONECCL_ENABLE_MPI)
+    # Build the acceptance_sycl binary once
+    add_executable(acceptance_sycl acceptance_sycl.cpp)
+
+    set(LIBRARIES_TO_LINK
+        oneCCL2
+        ccl_null
+        gtest
+        gtest_main
+        MPI::MPI_CXX
+        Threads::Threads
     )
 
-    if(TARGET acceptance_sycl)
-        # acceptance_sycl could be set up correctly
-        add_sycl_to_target(TARGET acceptance_sycl SOURCES acceptance_sycl.cpp)
-
-        get_property(ENV_MODIFICATION TEST acceptance_sycl PROPERTY ENVIRONMENT_MODIFICATION)
-        set(ENV_MODIFICATION "${ENV_MODIFICATION}CCL_KERNEL_PATH=set:${PROJECT_SOURCE_DIR}/deps/libccl/src/kernels/;")
-        set_property(TEST acceptance_sycl PROPERTY ENVIRONMENT_MODIFICATION "${ENV_MODIFICATION}")
+    if(ONECCL_ENABLE_ITT)
+        list(APPEND LIBRARIES_TO_LINK ittnotify)
     endif()
+
+    target_link_libraries(acceptance_sycl PRIVATE ${LIBRARIES_TO_LINK})
+    target_include_directories(acceptance_sycl PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_compile_options(acceptance_sycl PRIVATE "${COVERAGE_CXX_FLAGS}" "${COMMON_CXX_FLAGS}")
+    target_link_libraries(acceptance_sycl PRIVATE "${COVERAGE_CXX_FLAGS}")
+    add_sycl_to_target(TARGET acceptance_sycl SOURCES acceptance_sycl.cpp)
+
+    # Prepare environment for all acceptance_sycl tests
+    if(TARGET ccl_legacy)
+        set(ACCEPTANCE_ENV "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:ccl_legacy>;")
+        set(ACCEPTANCE_ENV "${ACCEPTANCE_ENV}CCL_KERNEL_PATH=set:${PROJECT_SOURCE_DIR}/deps/libccl/src/kernels/;")
+        set(ACCEPTANCE_ENV "${ACCEPTANCE_ENV}CCL_PLUGIN=set:ONECCL_LEGACY;")
+    endif()
+
+    # Split into separate tests by collective operation
+    set(COLLECTIVE_TESTS
+        AllReduceOperation
+        ReduceOperation
+        BroadcastOperation
+        AllGatherOperation
+        AllToAllOperation
+        ReduceScatterOperation
+        SendRecvOperation
+        SendRecvGroupOperation
+    )
+
+    set(SIMPLE_TESTS
+        CustomRedopAllReduceOperation
+        SplitOperation
+        BlockingComm
+        BufferRegistrationApi
+        WindowRegistrationApi
+        FinalizeAfterCollectives
+        FinalizeWithGroupAPI
+        FinalizeWithGroupSendRecv
+        GraphWithManualSync
+        FinalizeAfterGraphRecording
+        FinalizeMultipleQueuesInOrder
+        FinalizeDuringGroupThrows
+    )
+
+    # Add test for each collective operation
+    foreach(test_name ${COLLECTIVE_TESTS})
+        set(full_test_name "acceptance_sycl_${test_name}")
+        set(test_command mpiexec -n 2 ${PROJECT_SOURCE_DIR}/utils/debug_hook.sh $<TARGET_FILE:acceptance_sycl> --gtest_filter=*CollectiveTest.${test_name}*)
+        add_test(NAME ${full_test_name} COMMAND ${test_command} CONFIGURATIONS unit_tests)
+        set_property(TEST ${full_test_name} PROPERTY ENVIRONMENT_MODIFICATION "${ACCEPTANCE_ENV}")
+        set_tests_properties(${full_test_name} PROPERTIES TIMEOUT 600)
+    endforeach()
+
+    # Add test for each simple collective operation
+    foreach(test_name ${SIMPLE_TESTS})
+        set(full_test_name "acceptance_sycl_${test_name}")
+        set(test_command mpiexec -n 2 ${PROJECT_SOURCE_DIR}/utils/debug_hook.sh $<TARGET_FILE:acceptance_sycl> --gtest_filter=*SimpleCollectiveTest.${test_name}*)
+        add_test(NAME ${full_test_name} COMMAND ${test_command} CONFIGURATIONS unit_tests)
+        set_property(TEST ${full_test_name} PROPERTY ENVIRONMENT_MODIFICATION "${ACCEPTANCE_ENV}")
+        set_tests_properties(${full_test_name} PROPERTIES TIMEOUT 300)
+    endforeach()
 
     add_test_internal(
         TARGET acceptance_thread_sycl
@@ -177,6 +226,6 @@ if(NOT ${ONECCL_USE_SYSTEM_LIBCCL})
     set_property(TEST both_apis PROPERTY ENVIRONMENT_MODIFICATION "${ENV_MODIFICATION}")
 endif()
 
-if(COMPILER_SUPPORTS_SYCL)
+if(COMPILER_SUPPORTS_SYCL AND ONECCL_ENABLE_MPI)
     add_subdirectory(benchmark)
 endif()

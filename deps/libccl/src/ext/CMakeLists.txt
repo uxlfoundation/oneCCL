@@ -1,0 +1,6 @@
+if (ENABLE_OMP)
+    find_package(OpenMP)
+    if (OPENMP_FOUND)
+        add_subdirectory(openmp)
+    endif()
+endif (ENABLE_OMP)

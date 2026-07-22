@@ -52,6 +52,12 @@ class CommunicatorLegacyCpu {
         : comm(std::move(comm)) {}
 };
 
+onecclResult_t oneccl_finalize_communicator_impl(onecclComm_t comm) {
+    auto *comm_legacy = static_cast<CommunicatorLegacyCpu *>(comm->pExt);
+    comm_legacy->comm.finalize();
+    return onecclSuccess;
+}
+
 // Implementation of onecclCommunicatorDestroy function
 onecclResult_t oneccl_destroy_communicator_impl(onecclComm_t comm) {
     auto *comm_legacy = static_cast<CommunicatorLegacyCpu *>(comm->pExt);
@@ -424,6 +430,7 @@ oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
         rank, static_cast<int>(nranks), legacy_id->address);
 
     (*comm)->pExt = comm_legacy;
+    (*comm)->finalize = oneccl_finalize_communicator_impl;
     (*comm)->destroy = oneccl_destroy_communicator_impl;
     (*comm)->allreduce = oneccl_allreduce_impl;
     (*comm)->allgather = oneccl_allgather_impl;

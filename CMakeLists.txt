@@ -1,17 +1,3 @@
-# Copyright 2016-2026 Intel Corporation
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 cmake_minimum_required(VERSION 3.24)
 
 # Define the project
@@ -32,6 +18,17 @@ option(ONECCL_VALGRIND_TESTING "Run tests through valgrind --tool=memcheck" OFF)
 option(ONECCL_ENABLE_COVERAGE "Compile with coverage enabled" OFF)
 option(ONECCL_USE_SYSTEM_LIBCCL "Use system-installed libccl instead of subdirectory" OFF)
 option(ONECCL_BUILD_TESTS "Build tests for oneCCL" ON)
+option(ONECCL_LIBCCL_BUILD_FT         "Build libccl functional tests"   ON)
+option(ONECCL_LIBCCL_BUILD_EXAMPLES   "Build libccl examples"            ON)
+option(ONECCL_LIBCCL_BUILD_REG_TESTS  "Build libccl regression tests"    ON)
+option(ONECCL_BUILD_CPU_PLUGIN        "Build CPU-only libccl + ccl_legacy_cpu plugin" ON)
+set(ONECCL_LIBCCL_SYCL_DEVICE_CODE_SPLIT "" CACHE STRING
+    "SYCL device-code-split mode for libccl: per_kernel | per_source | off (empty = use the historical default: per_kernel in Release, driver default otherwise)")
+set_property(CACHE ONECCL_LIBCCL_SYCL_DEVICE_CODE_SPLIT
+             PROPERTY STRINGS "" per_kernel per_source off)
+option(ONECCL_LIBCCL_EXTERN_TEMPLATE_INST
+       "Emit extern template declarations + per-dtype inst files in libccl (Release iteration win, Debug link-phase cost)" ON)
+option(ONECCL_ENABLE_MPI "Enable MPI support" ON)
 option(CCL_ENABLE_ARCA "Enable ARCA for embedded libccl builds" OFF)
 option(CCL_ENABLE_ARCB "Enable ARCB for embedded libccl builds" OFF)
 
@@ -61,8 +58,8 @@ set(ONECCL_SECURITY_COMPILE_DEFINITIONS "")
 string(TOUPPER "${CMAKE_BUILD_TYPE}" ONECCL_BUILD_TYPE_UPPER)
 set(ONECCL_IS_RELEASE_BUILD OFF)
 if(ONECCL_BUILD_TYPE_UPPER STREQUAL "RELEASE" OR
-   ONECCL_BUILD_TYPE_UPPER STREQUAL "RELWITHDEBINFO" OR
-   ONECCL_BUILD_TYPE_UPPER STREQUAL "MINSIZEREL")
+    ONECCL_BUILD_TYPE_UPPER STREQUAL "RELWITHDEBINFO" OR
+    ONECCL_BUILD_TYPE_UPPER STREQUAL "MINSIZEREL")
     set(ONECCL_IS_RELEASE_BUILD ON)
 endif()
 
@@ -140,11 +137,17 @@ endif()
 
 find_package(IntelSYCL QUIET)
 
-# Check if the compiler requires -static-intel for CPU only targets
-check_linker_flag(CXX "-static-intel" COMPILER_SUPPORTS_STATIC_INTEL_LIB)
-
 # Check if compiler support SYCL
 check_cxx_compiler_flag("-fsycl" COMPILER_SUPPORTS_SYCL)
+
+# Fallback for open-source SYCL compilers that support -fsycl but don't provide IntelSYCL package
+if(NOT COMMAND add_sycl_to_target AND COMPILER_SUPPORTS_SYCL)
+    message(STATUS "add_sycl_to_target not found, using fallback for -fsycl support")
+    include(${CMAKE_SOURCE_DIR}/cmake/IntelSYCLFallback.cmake)
+endif()
+
+# Check if the compiler requires -static-intel for CPU only targets
+check_linker_flag(CXX "-static-intel" COMPILER_SUPPORTS_STATIC_INTEL_LIB)
 
 # Check if we can disable stdlib
 check_linker_flag(CXX "-nostdlib++" COMPILER_SUPPORTS_NOSTDLIBXX)
@@ -168,14 +171,14 @@ if(ONECCL_BUILD_LIBS)
     # Build libccl.so.2
     add_subdirectory(src)
 
-if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
-    message(STATUS "Using specified libstdc++: ${ONECCL_LIBSTDCXX_PATH}")
-    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
-else()
-    if(NOT COMPILER_SUPPORTS_NOSTDLIBXX)
-        message(WARNING "Cannot use custom libstdc++ because -nostdlib++ is not supported by the compiler.")
+    if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
+        message(STATUS "Using specified libstdc++: ${ONECCL_LIBSTDCXX_PATH}")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
+    else()
+        if(NOT COMPILER_SUPPORTS_NOSTDLIBXX)
+            message(WARNING "Cannot use custom libstdc++ because -nostdlib++ is not supported by the compiler.")
+        endif()
     endif()
-endif()
 
     # Setup legacy libccl
     if(NOT WIN32)
@@ -215,54 +218,60 @@ endif()
             include(ProcessorCount)
 
             ProcessorCount(NPROC)
+            if(NPROC GREATER 16)
+                set(SYCL_LINK_JOBS 16)
+            else()
+                set(SYCL_LINK_JOBS ${NPROC})
+            endif()
 
             # Find directory of libccl.so.2 needed to provide joint API
             # inside libccl.so.1
             set(ONECCL2_LIB_DIR "$<PATH:GET_PARENT_PATH,$<TARGET_FILE:oneCCL2>>")
 
-        # Use the local subdirectory version of `libccl`
-        if(COMPILER_SUPPORTS_SYCL)
-            set(LIBCCL_CMAKE_ARGS
-                "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
-                "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-                "-DCOMPUTE_BACKEND=dpcpp"
-                "-DBUILD_EXAMPLES=OFF"
-                "-DBUILD_FT=OFF"
-                "-DBUILD_REG_TESTS=OFF"
-		"-DENABLE_ITT=${ONECCL_ENABLE_ITT}"
-            )
-            set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2")
+            # Use the local subdirectory version of `libccl`
+            if(COMPILER_SUPPORTS_SYCL)
+                set(LIBCCL_CMAKE_ARGS
+                    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+                    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+                    "-DCOMPUTE_BACKEND=dpcpp"
+                    "-DBUILD_EXAMPLES=${ONECCL_LIBCCL_BUILD_EXAMPLES}"
+                    "-DBUILD_FT=${ONECCL_LIBCCL_BUILD_FT}"
+                    "-DBUILD_REG_TESTS=${ONECCL_LIBCCL_BUILD_REG_TESTS}"
+                    "-DSYCL_DEVICE_CODE_SPLIT=${ONECCL_LIBCCL_SYCL_DEVICE_CODE_SPLIT}"
+                    "-DENABLE_EXTERN_TEMPLATE_INST=${ONECCL_LIBCCL_EXTERN_TEMPLATE_INST}"
+                    "-DENABLE_ITT=${ONECCL_ENABLE_ITT}"
+                    "-DONECCL_ENABLE_MPI=${ONECCL_ENABLE_MPI}"
+                )
+                set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2 -fsycl-max-parallel-link-jobs=${SYCL_LINK_JOBS}")
 
-            if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
-                set(SHARED_LINKER_FLAGS "${SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
-            endif()
-            if(CCL_ENABLE_ARCA)
-                list(APPEND LIBCCL_CMAKE_ARGS "-DCCL_ENABLE_ARCA=ON")
-            endif()
-            if(CCL_ENABLE_ARCB)
-                list(APPEND LIBCCL_CMAKE_ARGS "-DCCL_ENABLE_ARCB=ON")
-            endif()
-            list(APPEND LIBCCL_CMAKE_ARGS "-DCMAKE_SHARED_LINKER_FLAGS=${SHARED_LINKER_FLAGS}")
+                if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
+                    set(SHARED_LINKER_FLAGS "${SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
+                endif()
+                if(CCL_ENABLE_ARCA)
+                    list(APPEND LIBCCL_CMAKE_ARGS "-DCCL_ENABLE_ARCA=ON")
+                endif()
+                if(CCL_ENABLE_ARCB)
+                    list(APPEND LIBCCL_CMAKE_ARGS "-DCCL_ENABLE_ARCB=ON")
+                endif()
+                list(APPEND LIBCCL_CMAKE_ARGS "-DCMAKE_SHARED_LINKER_FLAGS=${SHARED_LINKER_FLAGS}")
 
-            if (DEFINED CMAKE_C_COMPILER)
-                list(APPEND LIBCCL_CMAKE_ARGS "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
-            endif()
-            list(JOIN LIBCCL_CMAKE_ARGS ";" LIBCCL_CMAKE_ARGS_LIST)
+                if(DEFINED CMAKE_C_COMPILER)
+                    list(APPEND LIBCCL_CMAKE_ARGS "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
+                endif()
+                list(JOIN LIBCCL_CMAKE_ARGS ";" LIBCCL_CMAKE_ARGS_LIST)
 
-                ExternalProject_Add(
+                externalproject_add(
                     oneCCL
                     PREFIX ${CMAKE_BINARY_DIR}/libccl
                     SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/libccl
                     BINARY_DIR ${CMAKE_BINARY_DIR}/libccl
                     INSTALL_DIR ${CMAKE_INSTALL_PREFIX}
                     CMAKE_ARGS ${LIBCCL_CMAKE_ARGS_LIST}
-                    BUILD_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl --parallel=${NPROC}
-                    INSTALL_COMMAND ${CMAKE_MAKE_PROGRAM} -j -C ${CMAKE_BINARY_DIR}/libccl install
-                    BUILD_BYPRODUCTS ${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1.0
+                    BUILD_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl --parallel=${NPROC} --verbose
+                    INSTALL_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl --target install --verbose
+                    BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/libccl/_install/lib/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1.0
                     BUILD_ALWAYS 1
                     LOG_OUTPUT_ON_FAILURE TRUE
-                    LOG_BUILD ON
-                    LOG_INSTALL ON
                 )
 
                 add_library(ccl SHARED IMPORTED)
@@ -271,7 +280,7 @@ endif()
                 add_dependencies(ccl oneCCL)
                 set_target_properties(ccl PROPERTIES
                     IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/libccl/_install/lib/libccl.so"
-                    
+
                 )
                 target_include_directories(ccl BEFORE INTERFACE "${CMAKE_SOURCE_DIR}/deps/libccl/include")
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl/_install/lib/" DESTINATION "${DEST_LIB_DIR}" USE_SOURCE_PERMISSIONS)
@@ -280,67 +289,70 @@ endif()
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl/_install/share/" DESTINATION "${DEST_SHARE_DIR}" USE_SOURCE_PERMISSIONS OPTIONAL)
             endif()
 
-            # Link intel libs statically
-            if(COMPILER_SUPPORTS_STATIC_INTEL_LIB)
-                set(STATIC_INTEL_FLAG -static-intel)
-            endif()
+            if(ONECCL_BUILD_CPU_PLUGIN)
+                # Link intel libs statically
+                if(COMPILER_SUPPORTS_STATIC_INTEL_LIB)
+                    set(STATIC_INTEL_FLAG -static-intel)
+                endif()
 
-        set(LIBCCL_CPU_CMAKE_ARGS
-            "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
-            "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-            "-DBUILD_EXAMPLES=OFF"
-            "-DBUILD_FT=OFF"
-            "-DBUILD_REG_TESTS=OFF"
-	    "-DENABLE_ITT=${ONECCL_ENABLE_ITT}"
-        )
-        set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2 ${STATIC_INTEL_FLAG}")
+                set(LIBCCL_CPU_CMAKE_ARGS
+                    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+                    "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+                    "-DCOMPUTE_BACKEND="
+                    "-DBUILD_EXAMPLES=${ONECCL_LIBCCL_BUILD_EXAMPLES}"
+                    "-DBUILD_FT=${ONECCL_LIBCCL_BUILD_FT}"
+                    "-DBUILD_REG_TESTS=${ONECCL_LIBCCL_BUILD_REG_TESTS}"
+                    "-DENABLE_EXTERN_TEMPLATE_INST=${ONECCL_LIBCCL_EXTERN_TEMPLATE_INST}"
+                    "-DENABLE_ITT=${ONECCL_ENABLE_ITT}"
+                    "-DONECCL_ENABLE_MPI=${ONECCL_ENABLE_MPI}"
+                )
+                set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2 ${STATIC_INTEL_FLAG}")
 
-        if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
-            set(SHARED_LINKER_FLAGS "${SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
-        endif()
+                if(NOT "${ONECCL_LIBSTDCXX_PATH}" STREQUAL "" AND COMPILER_SUPPORTS_NOSTDLIBXX)
+                    set(SHARED_LINKER_FLAGS "${SHARED_LINKER_FLAGS} -nostdlib++ -l:${ONECCL_LIBSTDCXX_PATH}")
+                endif()
 
-        if(CCL_ENABLE_ARCA)
-            list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCCL_ENABLE_ARCA=ON")
-        endif()
+                if(CCL_ENABLE_ARCA)
+                    list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCCL_ENABLE_ARCA=ON")
+                endif()
 
-        if(CCL_ENABLE_ARCB)
-            list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCCL_ENABLE_ARCB=ON")
-        endif()
+                if(CCL_ENABLE_ARCB)
+                    list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCCL_ENABLE_ARCB=ON")
+                endif()
 
-        list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCMAKE_SHARED_LINKER_FLAGS=${SHARED_LINKER_FLAGS}")
+                list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCMAKE_SHARED_LINKER_FLAGS=${SHARED_LINKER_FLAGS}")
 
-        if (DEFINED CMAKE_C_COMPILER)
-            list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
-        endif()
-        list(JOIN LIBCCL_CPU_CMAKE_ARGS ";" LIBCCL_CPU_CMAKE_ARGS_LIST)
+                if(DEFINED CMAKE_C_COMPILER)
+                    list(APPEND LIBCCL_CPU_CMAKE_ARGS "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}")
+                endif()
+                list(JOIN LIBCCL_CPU_CMAKE_ARGS ";" LIBCCL_CPU_CMAKE_ARGS_LIST)
 
-            ExternalProject_Add(
-                oneCCLCPU
-                PREFIX ${CMAKE_BINARY_DIR}/libccl_cpu
-                SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/libccl
-                BINARY_DIR ${CMAKE_BINARY_DIR}/libccl_cpu
-                INSTALL_DIR ${CMAKE_INSTALL_PREFIX}
-                CMAKE_ARGS ${LIBCCL_CPU_CMAKE_ARGS_LIST}
-                BUILD_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl_cpu --parallel=${NPROC}
-                INSTALL_COMMAND ${CMAKE_MAKE_PROGRAM} -j -C ${CMAKE_BINARY_DIR}/libccl_cpu install
-                BUILD_BYPRODUCTS ${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1.0
-                BUILD_ALWAYS 1
-                LOG_OUTPUT_ON_FAILURE TRUE
-                LOG_BUILD ON
-                LOG_INSTALL ON
-            )
+                externalproject_add(
+                    oneCCLCPU
+                    PREFIX ${CMAKE_BINARY_DIR}/libccl_cpu
+                    SOURCE_DIR ${CMAKE_SOURCE_DIR}/deps/libccl
+                    BINARY_DIR ${CMAKE_BINARY_DIR}/libccl_cpu
+                    INSTALL_DIR ${CMAKE_INSTALL_PREFIX}
+                    CMAKE_ARGS ${LIBCCL_CPU_CMAKE_ARGS_LIST}
+                    BUILD_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl_cpu --parallel=${NPROC} --verbose
+                    INSTALL_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl_cpu --target install --verbose
+                    BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1.0
+                    BUILD_ALWAYS 1
+                    LOG_OUTPUT_ON_FAILURE TRUE
+                )
 
-            add_library(ccl_cpu SHARED IMPORTED)
-            set_target_properties(ccl_cpu PROPERTIES IMPORTED_NO_SYSTEM ON)
-            add_dependencies(ccl_cpu oneCCLCPU)
-            set_target_properties(ccl_cpu PROPERTIES
-                IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/libccl.so"
-            )
-            target_include_directories(ccl_cpu BEFORE INTERFACE "${CMAKE_SOURCE_DIR}/deps/libccl/include")
-            install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/" DESTINATION "${DEST_LIB_DIR}/ccl/cpu/lib/" USE_SOURCE_PERMISSIONS)
-            install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/env/" DESTINATION "${DEST_ENV_DIR}" USE_SOURCE_PERMISSIONS)
-            install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/opt/" DESTINATION "${DEST_OPT_DIR}" USE_SOURCE_PERMISSIONS OPTIONAL)
-            install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/share/" DESTINATION "${DEST_SHARE_DIR}" USE_SOURCE_PERMISSIONS OPTIONAL)
+                add_library(ccl_cpu SHARED IMPORTED)
+                set_target_properties(ccl_cpu PROPERTIES IMPORTED_NO_SYSTEM ON)
+                add_dependencies(ccl_cpu oneCCLCPU)
+                set_target_properties(ccl_cpu PROPERTIES
+                    IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/libccl.so"
+                )
+                target_include_directories(ccl_cpu BEFORE INTERFACE "${CMAKE_SOURCE_DIR}/deps/libccl/include")
+                install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/" DESTINATION "${DEST_LIB_DIR}/ccl/cpu/lib/" USE_SOURCE_PERMISSIONS)
+                install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/env/" DESTINATION "${DEST_ENV_DIR}" USE_SOURCE_PERMISSIONS)
+                install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/opt/" DESTINATION "${DEST_OPT_DIR}" USE_SOURCE_PERMISSIONS OPTIONAL)
+                install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/share/" DESTINATION "${DEST_SHARE_DIR}" USE_SOURCE_PERMISSIONS OPTIONAL)
+            endif() # ONECCL_BUILD_CPU_PLUGIN
         endif()
     endif() # NOT WIN32
 else() # Don't build libccl.so.1 and libccl.so.2, require presence of CCL_ROOT
@@ -375,6 +387,8 @@ enable_testing()
 add_subdirectory(plugins)
 add_subdirectory(examples)
 add_subdirectory(tests)
+add_subdirectory(utils)
+add_subdirectory(benchmarks)
 
 # Install public headers
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
@@ -409,9 +423,6 @@ foreach(var IN ITEMS
     ONECCL_ENABLE_TESTS
     ONECCL_ENABLE_BENCHMARKS
     ONECCL_FORTIFY_SOURCE
-    ONECCL_VALGRIND_TESTING
-    ONECCL_ENABLE_TESTS
-    ONECCL_ENABLE_BENCHMARKS
     ONECCL_ENABLE_ITT
 )
     if(DEFINED ${var})

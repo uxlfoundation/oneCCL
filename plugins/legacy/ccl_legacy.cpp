@@ -79,6 +79,12 @@ class CommunicatorLegacy {
         : rank(comm.rank()), size(comm.size()), comm(std::move(comm)) {}
 };
 
+onecclResult_t oneccl_finalize_communicator_impl(onecclComm_t comm) {
+    auto *comm_legacy = static_cast<CommunicatorLegacy *>(comm->pExt);
+    comm_legacy->comm.finalize();
+    return onecclSuccess;
+}
+
 onecclResult_t oneccl_destroy_communicator_impl(onecclComm_t comm) {
     auto *comm_legacy = static_cast<CommunicatorLegacy *>(comm->pExt);
     delete comm_legacy;
@@ -511,10 +517,12 @@ onecclResult_t oneccl_set_device_impl(uint32_t index) {
     // Create a queue from the device on the Level-Zero platform
     selected_device_index = index;
     selected_device = l0_platform.get_devices()[index];
-#if __INTEL_LLVM_COMPILER >= 20250200
-    selected_context = l0_platform.khr_get_default_context();
-#else
+#if defined(__INTEL_LLVM_COMPILER) && (__INTEL_LLVM_COMPILER < 20250200)
+    // Older Intel compiler uses ext_oneapi prefix
     selected_context = l0_platform.ext_oneapi_get_default_context();
+#else
+    // Newer Intel or open-source compilers use khr prefix
+    selected_context = l0_platform.khr_get_default_context();
 #endif
 
     auto default_queue = sycl::queue(*selected_context, *selected_device,
@@ -706,6 +714,7 @@ onecclResult_t oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
     }
 
     (*comm)->pExt = comm_legacy;
+    (*comm)->finalize = oneccl_finalize_communicator_impl;
     (*comm)->destroy = oneccl_destroy_communicator_impl;
     (*comm)->allreduce = oneccl_allreduce_impl;
     (*comm)->allgather = oneccl_allgather_impl;

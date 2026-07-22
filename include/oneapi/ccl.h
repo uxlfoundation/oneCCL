@@ -82,7 +82,7 @@ extern "C" {
  * @brief Minor version of oneCCL
  * @ingroup Macros
  */
-#define ONECCL_MINOR 0
+#define ONECCL_MINOR 1
 
 /**
  * @def ONECCL_PATCH
@@ -213,13 +213,19 @@ onecclResult_t CCL_C_API CCL_C_NOT_IMPLEMENTED onecclCommInitAll(onecclComm_t *c
 /**
  * @brief Function to flush all communication inside the communicator
  *
- * This API is not implemented yet.
+ * This function waits for all outstanding collective operations on the communicator
+ * to complete. It should be called before destroying the communicator to ensure all
+ * operations have finished.
+ *
+ * Note: If the communicator was used during graph recording, this function will
+ * log a warning and do nothing. Users must manually synchronize graph submissions
+ * before calling finalize in that case.
  *
  * @param[in] comm Communicator to finalize
  * @return Result of the operation
  * @ingroup CommunicatorCreation
  */
-onecclResult_t CCL_C_API CCL_C_NOT_IMPLEMENTED onecclCommFinalize(onecclComm_t comm);
+onecclResult_t CCL_C_API onecclCommFinalize(onecclComm_t comm);
 
 /**
  * @brief Function to destroy a communicator

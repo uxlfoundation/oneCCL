@@ -1,0 +1,42 @@
+#!/bin/bash
+#
+# Copyright Intel Corporation.
+# 
+# This software and the related documents are Intel copyrighted materials, and
+# your use of them is governed by the express license under which they were
+# provided to you (License). Unless the License provides otherwise, you may
+# not use, modify, copy, publish, distribute, disclose or transmit this
+# software or the related documents without Intel's prior written permission.
+# 
+# This software and the related documents are provided as is, with no express
+# or implied warranties, other than those that are expressly stated in the
+# License.
+#
+
+COMPILER="icc"
+TARGET_WRAPPER="mpiicx"
+user_set_compiler=0
+
+if [ -z "$1" ] ; then
+    ${TARGET_WRAPPER} -help
+    exit 0
+fi
+
+for arg in "$@" ; do
+    case $arg in 
+        -cc=*)
+            COMPILER=$(echo $arg | sed -e 's/-cc=//g')
+            user_set_compiler=1
+        ;;
+    esac
+done
+
+if [ -n "$I_MPI_CC" ] || [ -n "$MPICH_CC" ]; then
+    user_set_compiler=1
+fi
+
+if [ $user_set_compiler -eq 1 ] ; then 
+    ${TARGET_WRAPPER} "$@"
+else
+    ${TARGET_WRAPPER} -cc="${COMPILER}" "$@"
+fi

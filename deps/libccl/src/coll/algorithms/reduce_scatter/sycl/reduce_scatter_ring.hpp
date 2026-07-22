@@ -1,0 +1,427 @@
+/*
+ Copyright 2016-2026 Intel Corporation
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+*/
+
+#pragma once
+
+#include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/utils/sycl_selection.hpp"
+#include "coll/algorithms/utils/sycl_reductions.hpp"
+#include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.hpp"
+#include "coll/coll_util.hpp"
+
+namespace ccl {
+namespace v1 {
+
+//#define PRINT_TIMING
+
+// blocking algorithm calls MPI GPU pipelining directly
+template <typename T>
+inline sycl::event reduce_scatter_ring_blocking_impl(sycl::queue &q,
+                                                     const void *send_buf,
+                                                     void *recv_buf,
+                                                     size_t count,
+                                                     datatype dtype,
+                                                     reduction reduction,
+                                                     ccl_comm *comm,
+                                                     const vector_class<event> &deps,
+                                                     bool &done) {
+    sycl::event sycl_e;
+    int world = comm->size();
+    int rank = comm->rank();
+
+    done = true;
+
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+
+    // prepare ring block counts/sizes
+    size_t main_block_count = count / world;
+    size_t last_block_count = main_block_count + count % world;
+    size_t main_block_size = main_block_count * ccl_dtype.size();
+    size_t last_block_size = last_block_count * ccl_dtype.size();
+
+    bool in_place =
+        ccl::is_reduce_scatter_inplace(send_buf, recv_buf, main_block_count, ccl_dtype.size(), rank, world);
+
+    // to make sure that buffer con hold the larges possible block
+    size_t buf_size = last_block_size;
+    // align an allocation size up to 4 bytes, to have a better vector reduction
+    size_t aligned_buf_size = (buf_size + 3) / 4 * 4;
+    void *buffers[2] = { NULL };
+    int to_free = 0;
+    if (world > 2 || in_place) {
+        if (aligned_buf_size <= comm->get_scaleout_device_buf_size() / 2) {
+            buffers[0] = comm->get_scaleout_device_buf(q);
+        }
+        else {
+            buffers[0] = sycl::malloc_device(aligned_buf_size * 2, q);
+            to_free = 1;
+        }
+        buffers[1] = (char *)buffers[0] + aligned_buf_size;
+    }
+
+    // blocking
+    q.wait();
+
+    // left and right neighbour
+    const int right = (rank + 1) % world;
+    const int left = (rank - 1 + world) % world;
+
+    // starting indexes
+    int s = (rank - 1 + world) % world;
+    int r = (s - 1 + world) % world;
+
+    // send/recv pointers
+    void *send_ptr, *recv_ptr, *out_ptr;
+    size_t send_block_count, recv_block_count;
+    size_t send_block_size, recv_block_size;
+
+    // tag creation
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    ccl_sched_id_t pt2pt_sched_id = atl_comm->tag_creator->get_pt2pt_sched_id();
+    int64_t tag = atl_comm->tag_creator->create(0 /* rank */, comm->get_comm_id(), pt2pt_sched_id, 0);
+
+    int ep_idx = 0;
+    int iter = 0;
+    int index = 0;
+    while (iter < world - 1) {
+        send_block_count = (s == (world - 1)) ? last_block_count : main_block_count;
+        recv_block_count = (r == (world - 1)) ? last_block_count : main_block_count;
+        send_block_size = send_block_count * ccl_dtype.size();
+        recv_block_size = recv_block_count * ccl_dtype.size();
+
+        // recv -> reduce -> send
+        if (iter == 0)
+            send_ptr = (char *)send_buf + s * main_block_size;
+        // for the last iteration, reduce directly to the recv_buf
+        if (iter == world - 2) {
+            recv_ptr = !in_place ? recv_buf : buffers[index];
+            out_ptr = recv_buf;
+        }
+        else {
+            recv_ptr = buffers[index];
+            out_ptr = recv_ptr;
+        }
+
+#ifdef PRINT_TIMING
+        cpu_timer<1> ctimer;
+        ctimer.start(0);
+#endif // PRINT_TIMING
+
+        atl_req_t send_req, recv_req;
+        ATL_CALL_THROW_IF_ERROR(atl_comm->recv(ep_idx, recv_ptr, recv_block_size, left, tag, recv_req));
+        ATL_CALL_THROW_IF_ERROR(atl_comm->send(ep_idx, send_ptr, send_block_size, right, tag, send_req));
+        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
+
+#ifdef PRINT_TIMING
+        ctimer.stop(0);
+        printf("[%d] sendrecv takes: iter: %d size: %ld  takes: %f us\n",
+               rank,
+               iter,
+               recv_block_size,
+               ctimer.get_us(0));
+        // do reduce on recv_ptr and send_buf + r
+        // sycl kernel or MPI_Reduce_local
+        ctimer.start(0);
+#endif // PRINT_TIMING
+
+        char *send_offset_ptr = (char *)send_buf + r * main_block_size;
+        bool use_full_vector =
+            can_use_full_vector(send_offset_ptr, recv_ptr, recv_block_count, ccl_dtype.size()) &&
+            (uintptr_t)out_ptr % 4 == 0;
+        if (use_full_vector) {
+            constexpr int vec_size = get_num_elements<T, 8, true>();
+            sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                q, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, {});
+        }
+        else {
+            constexpr int vec_size = get_num_elements<T, 8, false>();
+            sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                q, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, {});
+        }
+        sycl_e.wait();
+
+#ifdef PRINT_TIMING
+        ctimer.stop(0);
+        printf("[%d] Reduce_local iter: %d recv_block_count: %ld takes: %f us\n",
+               rank,
+               iter,
+               recv_block_count,
+               ctimer.get_us(0));
+#endif // PRINT_TIMING
+
+        // wait for send to finish is not time critical
+        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, send_req));
+
+        // shift buffers
+        send_ptr = recv_ptr;
+        index = index ^ 1;
+
+        // next iteration
+        s = r;
+        r = (r - 1 + world) % world;
+        iter++;
+    }
+
+    if (world > 2 || in_place) {
+        if (to_free) {
+            sycl::free(buffers[0], q);
+        }
+        else {
+            comm->put_scaleout_device_buf(buffers[0]);
+        }
+    }
+
+    return sycl_e;
+}
+
+// blocking algorithm calls MPI GPU pipelining directly
+template <typename T>
+inline sycl::event reduce_scatter_ring_blocking(sycl::queue &q,
+                                                const void *send_buf,
+                                                void *recv_buf,
+                                                size_t recv_count,
+                                                datatype dtype,
+                                                reduction reduction,
+                                                ccl_comm *comm,
+                                                const vector_class<event> &deps,
+                                                bool &done) {
+    size_t total_count = recv_count * comm->size();
+    return reduce_scatter_ring_blocking_impl<T>(
+        q, send_buf, recv_buf, total_count, dtype, reduction, comm, deps, done);
+}
+
+template <typename T>
+inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
+                                                        const void *send_buf,
+                                                        void *recv_buf,
+                                                        size_t count,
+                                                        datatype dtype,
+                                                        reduction reduction,
+                                                        ccl_comm *comm,
+                                                        const vector_class<event> &deps,
+                                                        bool original_deps,
+                                                        sycl_reduce_scatter_tune_attr tune_attr,
+                                                        bool &done) {
+    sycl::event sycl_e;
+    int world = comm->size();
+    int rank = comm->rank();
+
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+
+    // tuning parameters
+    size_t pipeline_chunk_size = tune_attr.pipeline_chunk_size;
+
+    // prepare ring block counts/sizes, the last block handles the remainder
+    size_t main_block_count = count / world;
+    size_t last_block_count = main_block_count + count % world;
+    size_t main_block_size = main_block_count * ccl_dtype.size();
+    size_t last_block_size = last_block_count * ccl_dtype.size();
+
+    bool in_place =
+        ccl::is_reduce_scatter_inplace(send_buf, recv_buf, main_block_count, ccl_dtype.size(), rank, world);
+
+    // to make sure that buffer con hold the larges possible block
+    size_t buf_size = last_block_size;
+    // align an allocation size up to 4 bytes, to have a better vector reduction
+    int typesize = std::max(4, (int)ccl_dtype.size());
+    size_t aligned_buf_size = (buf_size + typesize - 1) / typesize * typesize;
+    void *buffers[2] = { NULL };
+    int to_free = 0;
+    if (world > 2 || in_place) {
+        if (aligned_buf_size <= comm->get_scaleout_device_buf_size() / 2) {
+            buffers[0] = comm->get_scaleout_device_buf(q);
+        }
+        else {
+            buffers[0] = sycl::malloc_device(aligned_buf_size * 2, q);
+            to_free = 1;
+            LOG_WARN("reduce_scatter_ring_nonblocking device buffer not big enough");
+        }
+        buffers[1] = (char *)buffers[0] + aligned_buf_size;
+    }
+
+    std::vector<sycl::event> dep_events = get_sycl_events(deps);
+    // in case deps is from user, set up wait event for the out of order queue
+    if (original_deps) {
+        sycl_e = submit_wait_on_events(q, dep_events);
+        dep_events.clear();
+        dep_events.push_back(std::move(sycl_e));
+    }
+
+    // use an out-of-order queue
+    sycl::queue q_worker(q.get_context(), q.get_device());
+
+    // left and right neighbour
+    int right = (rank + 1) % world;
+    int left = (rank - 1 + world) % world;
+
+    // start indexes
+    int s = (rank - 1 + world) % world;
+    int r = (s - 1 + world) % world;
+
+    // send/recv pointers
+    void *send_ptr, *recv_ptr, *out_ptr;
+    size_t send_block_count, recv_block_count;
+    size_t send_block_size, recv_block_size;
+
+    // tag creation
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    ccl_sched_id_t sched_id = comm->get_sched_id(true, false);
+    int64_t tag = atl_comm->tag_creator->create(0 /* rank */, comm->get_comm_id(), sched_id, 101);
+
+    // calculate the number of chunks required for pipeline
+    size_t nchunks;
+    pipe_prep(main_block_count, last_block_count, ccl_dtype.size(), pipeline_chunk_size, nchunks);
+    LOG_DEBUG("Reduce_scatter ring block_count: ",
+              main_block_count,
+              " nchunks: ",
+              nchunks,
+              " chunk_size: ",
+              pipeline_chunk_size);
+
+    int index = 0;
+    int iter = 0;
+    sycl::event sendrecv_e;
+    while (iter < world - 1) {
+        // find the right send/recv block size
+        send_block_count = (s == (world - 1)) ? last_block_count : main_block_count;
+        recv_block_count = (r == (world - 1)) ? last_block_count : main_block_count;
+        send_block_size = send_block_count * ccl_dtype.size();
+        recv_block_size = recv_block_count * ccl_dtype.size();
+
+        // recv -> reduce -> send
+        if (iter == 0) {
+            send_ptr = (char *)send_buf + s * main_block_size;
+        }
+        // for the last iteration, reduce directly to the recv_buf
+        if (iter == world - 2) {
+            recv_ptr = !in_place ? recv_buf : buffers[index];
+            out_ptr = recv_buf;
+        }
+        else {
+            recv_ptr = buffers[index];
+            out_ptr = recv_ptr;
+        }
+
+        sendrecv_e = pipe_sendrecv(q_worker,
+                                   send_ptr,
+                                   send_block_count,
+                                   right,
+                                   tag,
+                                   recv_ptr,
+                                   recv_block_count,
+                                   left,
+                                   tag,
+                                   dtype,
+                                   nchunks,
+                                   comm,
+                                   dep_events,
+                                   ccl::global_data::env().sycl_enable_pipeline_gpu_rdma); // GPU RDMA
+
+        // sycl kernel or MPI_Reduce_local
+        char *send_offset_ptr = (char *)send_buf + r * main_block_size;
+        bool use_full_vector =
+            can_use_full_vector(send_offset_ptr, recv_ptr, recv_block_count, ccl_dtype.size()) &&
+            (uintptr_t)out_ptr % 4 == 0;
+        if (use_full_vector) {
+            constexpr int vec_size = get_num_elements<T, 8, true>();
+            sycl_e = reduce_pair_invoke<T, vec_size, 16>(
+                q_worker, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, { sendrecv_e });
+        }
+        else {
+            constexpr int vec_size = get_num_elements<T, 8, false>();
+            sycl_e = reduce_pair_invoke<T, vec_size, 64>(
+                q_worker, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, { sendrecv_e });
+        }
+
+        dep_events.clear();
+        dep_events.push_back(std::move(sycl_e));
+
+        // shift buffers
+        send_ptr = recv_ptr;
+        index = index ^ 1;
+
+        // next iteration
+        s = r;
+        r = (r - 1 + world) % world;
+        iter++;
+    }
+
+    // submit to in-order queue
+    sycl_e = submit_wait_on_events(q, dep_events);
+
+    if (world > 2 || in_place) {
+        if (to_free) {
+            sycl_e = q.submit([=](sycl::handler &h) {
+                h.depends_on(sycl_e);
+                h.host_task([=]() {
+                    sycl::free(buffers[0], q);
+                });
+            });
+        }
+        else {
+            comm->put_scaleout_device_buf(buffers[0]);
+        }
+    }
+
+    done = true;
+    return sycl_e;
+}
+
+template <typename T>
+inline sycl::event reduce_scatter_ring_nonblocking(sycl::queue &q,
+                                                   const void *send_buf,
+                                                   void *recv_buf,
+                                                   size_t recv_count,
+                                                   datatype dtype,
+                                                   reduction reduction,
+                                                   ccl_comm *comm,
+                                                   const vector_class<event> &deps,
+                                                   bool original_deps,
+                                                   sycl_reduce_scatter_tune_attr &tune_attr,
+                                                   bool &done) {
+    size_t total_count = recv_count * comm->size();
+
+    return reduce_scatter_ring_nonblocking_impl<T>(
+        q, send_buf, recv_buf, total_count, dtype, reduction, comm, deps, original_deps, tune_attr, done);
+}
+
+inline sycl::event reduce_scatter_ring(sycl::queue &q,
+                                       const void *send_buf,
+                                       void *recv_buf,
+                                       size_t recv_count,
+                                       datatype dtype,
+                                       reduction reduction,
+                                       ccl_comm *comm,
+                                       const vector_class<event> &deps,
+                                       bool original_deps,
+                                       sycl_reduce_scatter_tune_attr &tune_attr,
+                                       bool &done) {
+    auto lambda = [&]<typename T>() {
+        if (ccl::global_data::env().enable_op_sync && transport_rdma_enabled()) {
+            return reduce_scatter_ring_blocking<T>(
+                q, send_buf, recv_buf, recv_count, dtype, reduction, comm, deps, done);
+        }
+        return reduce_scatter_ring_nonblocking<T>(
+            q, send_buf, recv_buf, recv_count, dtype, reduction, comm, deps, original_deps, tune_attr, done);
+    };
+
+    return invoke_scaleout_collective(lambda, dtype);
+}
+
+} // namespace v1
+} // namespace ccl

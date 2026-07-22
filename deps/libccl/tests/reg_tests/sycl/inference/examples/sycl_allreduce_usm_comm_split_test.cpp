@@ -1,0 +1,1 @@
+../../../../../examples/sycl/sycl_allreduce_usm_comm_split.cpp
