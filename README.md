@@ -9,7 +9,7 @@ oneCCL is integrated into:
 * [Horovod\*](https://github.com/horovod/horovod) (distributed training framework). Refer to [Horovod with oneCCL](https://github.com/horovod/horovod/blob/master/docs/oneccl.rst) for details.
 * [PyTorch\*](https://github.com/pytorch/pytorch) (machine learning framework). Refer to [PyTorch bindings for oneCCL](https://github.com/intel/torch-ccl) for details.
 
-oneCCL is governed by the [UXL Foundation](http://www.uxlfoundation.org) and is an implementation of the [oneAPI specification](https://spec.oneapi.io).
+oneCCL is governed by the [UXL Foundation](http://www.uxlfoundation.org) and is an implementation of the [oneAPI specification](https://uxlfoundation.org/specifications/oneapi/technical-overview/). The oneCCL specification is published with this project's [documentation](https://uxlfoundation.github.io/oneCCL/spec/index.html).
 
 ## Table of Contents <!-- omit in toc -->
 

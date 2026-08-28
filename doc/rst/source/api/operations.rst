@@ -1,9 +1,8 @@
-.. _`communication operations`: https://spec.oneapi.com/versions/latest/elements/oneCCL/source/spec/operations.html
-
 Communication Operations
 ========================
 
-Refer to |product_short| specification for more details about `communication operations`.
+Refer to |product_short| specification for more details about
+:doc:`communication operations </spec/collective_operations>`.
 
 .. toctree::
    :maxdepth: 2

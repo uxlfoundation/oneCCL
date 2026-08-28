@@ -2243,6 +2243,8 @@ Fusion
 The group of environment variables to control fusion of collective operations.
 
 
+.. _CCL_FUSION:
+
 CCL_FUSION
 **********
 
