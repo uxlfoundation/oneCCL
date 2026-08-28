@@ -34,6 +34,7 @@ rst_prolog = """
 .. |base_tk| replace:: Intel\ |reg|\  oneAPI Base Toolkit 
 .. |c_api| replace:: C API
 .. |cpp_api| replace:: C++ API
+.. |ccl_full_name| replace:: oneAPI Collective Communications Library
 """
 
 # -- General configuration ---------------------------------------------------
@@ -102,6 +103,11 @@ breathe_default_project = "oneccl"
 #    "doxygenStripFromPath":  "..",
 #    "fullApiSubSectionTitle": 'Full API'
 #}
+
+# The specification and the developer reference document the same concepts
+# (Device, Communicator, Allreduce, ...), so section labels are qualified by
+# document to keep cross-references unambiguous.
+autosectionlabel_prefix_document = True
 
 # Tell sphinx what the primary language being documented is.
 primary_domain = 'cpp'
