@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+prefix=${pcfiledir}/../../
 exec_prefix=${prefix}
 libdir=${exec_prefix}/lib/
 includedir=${prefix}/include/

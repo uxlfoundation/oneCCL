@@ -1,3 +1,4 @@
+#!/bin/sh
 # Copyright 2016-2026 Intel Corporation
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
