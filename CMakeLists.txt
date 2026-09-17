@@ -387,8 +387,13 @@ enable_testing()
 add_subdirectory(plugins)
 add_subdirectory(examples)
 add_subdirectory(tests)
-add_subdirectory(utils)
-add_subdirectory(benchmarks)
+# Optional: not part of the source distribution
+if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils)
+    add_subdirectory(utils)
+endif()
+if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
+    add_subdirectory(benchmarks)
+endif()
 
 # Install public headers
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
