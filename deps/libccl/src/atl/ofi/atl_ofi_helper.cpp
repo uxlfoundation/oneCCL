@@ -260,14 +260,14 @@ atl_status_t atl_ofi_get_local_proc_coord(atl_proc_coord_t& coord,
 
     if (ccl::global_data::env().enable_init_hostname_sharing) {
         for (i = 0; i < coord.global_count; i++) {
-            if (!strncmp(my_hostname,
-                         all_hostnames + i * ATL_MAX_HOSTNAME_LEN,
-                         my_hostname_len + 1 /* including "-" at the end */)) {
+            const char* peer_hostname = all_hostnames + i * ATL_MAX_HOSTNAME_LEN;
+            const char* rank_separator = strrchr(peer_hostname, '-');
+            if (rank_separator &&
+                static_cast<size_t>(rank_separator - peer_hostname) == my_hostname_len &&
+                !strncmp(my_hostname, peer_hostname, my_hostname_len)) {
                 local_count++;
                 int peer_global_proc_idx;
-                sscanf(all_hostnames + i * ATL_MAX_HOSTNAME_LEN + my_hostname_len + 1,
-                       "%d",
-                       &peer_global_proc_idx);
+                sscanf(rank_separator + 1, "%d", &peer_global_proc_idx);
                 // Mark the global ids of local node ranks as valid
                 coord.global2local_map[peer_global_proc_idx] = 1;
                 if (my_global_proc_idx > peer_global_proc_idx)
