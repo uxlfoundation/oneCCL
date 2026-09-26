@@ -58,6 +58,16 @@ void group_impl::start() {
     }
 }
 
+#ifdef CCL_ENABLE_SYCL
+namespace {
+
+bool is_command_graph_wait_error(const sycl::exception& e) {
+    return std::string(e.what()).find("command graph") != std::string::npos;
+}
+
+} // namespace
+#endif // CCL_ENABLE_SYCL
+
 void group_impl::end() {
     bool is_multi_thread_instance = true;
     if (ccl::global_data::get().shared_data) {
@@ -103,7 +113,35 @@ void group_impl::end() {
     // wait() is needed to avoid oneCCL destruction prior to device tasks completion
     // wait() can be remove when finalize() is implemented for oneCCL. At that point
     // we need ensure that group execution is not being overlapped between groups
+#ifdef CCL_ENABLE_SYCL
+    try {
+        event.wait();
+    }
+    catch (const sycl::exception& e) {
+        // A SYCL command-graph recording (e.g. a CUDA/XPU-graph style capture)
+        // forbids a host-blocking wait on an event tied to the graph being
+        // recorded; the DPC++ runtime throws "wait method cannot be used for
+        // an event associated with a command graph" here. Previously this
+        // exception propagated out of onecclGroupEnd() uncaught by any layer
+        // that checks its return value (torch-xpu-ops' ProcessGroupXCCL
+        // discards the plugin dispatcher's onecclResult_t), so the group
+        // silently failed to complete and the caller hung waiting on a
+        // collective that never finished. During capture no device work has
+        // actually executed yet -- capture only records commands -- so the
+        // device-task-completion guarantee this wait() exists for is moot at
+        // record time; the graph's own dependency chain (via queues
+        // registered with the active capture session) preserves ordering on
+        // replay. Skipping the wait is therefore safe. Re-throw anything
+        // else so a genuine failure is not masked.
+        if (!is_command_graph_wait_error(e)) {
+            throw;
+        }
+        LOG_DEBUG("group_impl::end: skipping event.wait(), "
+                  "event belongs to an active SYCL command-graph recording");
+    }
+#else // CCL_ENABLE_SYCL
     event.wait();
+#endif // CCL_ENABLE_SYCL
     if (is_multi_thread_instance) {
         LOG_DEBUG("group: Phase 2 completed");
     }
