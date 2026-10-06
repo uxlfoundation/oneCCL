@@ -1,6 +1,3 @@
-.. _`error handling`: https://oneapi-spec.uxlfoundation.org/specifications/oneapi/latest/elements/oneccl/source/spec/error_handling
-.. _`generic workflow`: https://oneapi-spec.uxlfoundation.org/specifications/oneapi/latest/elements/oneccl/source/spec/generic_workflow
-
 oneCCL API
 ===========
 
@@ -15,9 +12,9 @@ oneCCL API
 Generic workflow
 ****************
 
-Refer to |product_short| specification for more details about `generic workflow`_ with |product_short| API.
+Refer to |product_short| specification for more details about :doc:`generic workflow </spec/generic_workflow>` with |product_short| API.
 
 Error Handling
 **************
 
-Refer to |product_short| specification for more details about `error handling`_.
+Refer to |product_short| specification for more details about :doc:`error handling </spec/error_handling>`.

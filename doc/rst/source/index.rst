@@ -43,6 +43,12 @@
    benchmark-guide/benchmark-point-to-point.rst
 
 .. toctree::
+   :maxdepth: 2
+   :caption: Specification
+
+   spec/index.rst
+
+.. toctree::
    :hidden: 
    :caption: Notices and Disclaimers
 

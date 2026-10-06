@@ -1,5 +1,3 @@
-.. _`Communicator`: https://oneapi-spec.uxlfoundation.org/specifications/oneapi/latest/elements/oneccl/source/spec/main_objects#communicator
-
 ====================
 Device Communication
 ====================
@@ -139,5 +137,5 @@ If you encounter an error, make sure the oneCCL environment is configured correc
 Additional Resources
 ====================
 
-- `OneCCL Communicator <https://uxlfoundation.github.io/oneAPI-spec/spec/elements/oneCCL/source/spec/main_objects.html#communicator>`_
-- `OneCCL ALLREDUCE communication pattern <https://uxlfoundation.github.io/oneAPI-spec/spec/elements/oneCCL/source/spec/collective_operations.html#allreduce>`_
+- :ref:`oneCCL Communicator <Communicator>` in the specification
+- :ref:`oneCCL Allreduce communication pattern <Allreduce>` in the specification
