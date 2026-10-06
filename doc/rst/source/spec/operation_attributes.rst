@@ -10,8 +10,10 @@ oneCCL specification defines communication operation attributes that serve as mo
 
 oneCCL specification defines the following operation attribute classes:
 
+- ``allgather_attr``
 - ``allgatherv_attr``
 - ``allreduce_attr``
+- ``alltoall_attr``
 - ``alltoallv_attr``
 - ``barrier_attr``
 - ``broadcast_attr``

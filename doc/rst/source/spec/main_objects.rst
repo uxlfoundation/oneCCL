@@ -146,7 +146,7 @@ oneCCL specification defines ``kvs`` class as a built-in KVS provided by oneCCL.
 .. code:: cpp
 
     class kvs : public kvs_interface {
-    
+
     public:
 
     static constexpr size_t address_max_size = 256;
@@ -298,29 +298,29 @@ return ``context``
 Split-Communicator
 ******************
 
-The communicator provides methods to create one or more new communicators from an existing communicator. The new sub-communicators are created based on user-supplied color and key. Each newly formed sub-communicator includes only the ranks that provided the same color. Within each sub-communicator, ranks are reordered by the ascending key. This call is collective over all ranks in the communicator. 
+The communicator provides methods to create one or more new communicators from an existing communicator. The new sub-communicators are created based on user-supplied color and key. Each newly formed sub-communicator includes only the ranks that provided the same color. Within each sub-communicator, ranks are reordered by the ascending key. This call is collective over all ranks in the communicator.
 
 .. code:: cpp
 
-    communicator split_communicator(const communicator& comm, int color, int key); 
+    communicator split_communicator(const communicator& comm, int color, int key);
 
 ``comm``
    An existing communicator handle.
 
 ``color``
-    A value that defines which ranks will belong to the new sub-communicator. Ranks providing the same color are part of the same sub-communicator.  
+    A value that defines which ranks will belong to the new sub-communicator. Ranks providing the same color are part of the same sub-communicator.
 
 ``key``
-    Used to order the ranks within each sub-communicator. Ranks in the resulting communicator are sorted by the ascending key. 
+    Used to order the ranks within each sub-communicator. Ranks in the resulting communicator are sorted by the ascending key.
 
- 
 
-Return Value 
+
+Return Value
 
 ``communicator``
-    The handle to the new sub-communicator  
+    The handle to the new sub-communicator
 
- 
+
 
 
 

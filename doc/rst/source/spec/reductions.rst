@@ -16,7 +16,7 @@ oneCCL specification defines the following reduction operations for :ref:`Allred
         prod   = /* unspecified */,
         min    = /* unspecified */,
         max    = /* unspecified */,
-        avg    = /* unspecified */,  
+        avg    = /* unspecified */,
         custom = /* unspecified */
     };
 

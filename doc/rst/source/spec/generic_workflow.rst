@@ -61,9 +61,11 @@ using an out-of-band communication mechanism and be used to create key-value sto
     }
 
     map<int, ccl::device> r2d_map;
-    for (auto& dev : ccl_devices) {
+    map<int, size_t> rank_to_stream_idx;
+    for (size_t idx = 0; idx < ccl_devices.size(); idx++) {
         int rank = /* generate a globally unique rank for a specific device */
-        r2d_map[rank] = dev;
+        r2d_map[rank] = ccl_devices[idx];
+        rank_to_stream_idx[rank] = idx;
     }
 
     /* create ccl::stream objects from sycl::queue objects */
@@ -89,7 +91,9 @@ using an out-of-band communication mechanism and be used to create key-value sto
     /* SYCL devices communications */
     vector<ccl::event> events;
     for (auto& comm : comms) {
-        events.push_back(allreduce(..., comm, ccl_streams[comm.rank()]));
+        /* comm.rank() is a global rank, ccl_streams is indexed locally */
+        size_t stream_idx = rank_to_stream_idx.at(comm.rank());
+        events.push_back(allreduce(..., comm, ccl_streams[stream_idx]));
     }
 
     for (auto& e : events) {
