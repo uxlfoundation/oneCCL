@@ -173,14 +173,24 @@ global_data_desc::global_data_desc() {
                 ze_device_properties_t ze_dev_props = ccl::ze::default_device_props;
                 ZE_CALL(zeDeviceGetProperties, (devs[idx], &ze_dev_props));
 
-                if (i < zes_drivers.size()) {
+                if (!zes_drivers.empty()) {
                     zes_uuid_t uuid = {};
                     ze_bool_t on_subdevice = false;
                     uint32_t subdevice_id = -1;
                     std::memcpy(&uuid.id, &ze_dev_props.uuid, ZE_MAX_DEVICE_UUID_SIZE);
 
-                    ZE_CALL(zesDriverGetDeviceByUuidExp,
-                            (zes_drivers.at(i), uuid, &zes_dev, &on_subdevice, &subdevice_id));
+                    // Sysman drivers are not guaranteed to be in the same order as
+                    // the core drivers (e.g. with an NPU driver installed, which
+                    // zeInit(ZE_INIT_FLAG_GPU_ONLY) skips), so look in all of them.
+                    for (auto zes_driver : zes_drivers) {
+                        if (zesDriverGetDeviceByUuidExp(
+                                zes_driver, uuid, &zes_dev, &on_subdevice, &subdevice_id) ==
+                                ZE_RESULT_SUCCESS &&
+                            zes_dev != nullptr) {
+                            break;
+                        }
+                        zes_dev = nullptr;
+                    }
                     if (zes_dev != nullptr) {
                         matched_by_uuid = true;
                     }
@@ -198,15 +208,27 @@ global_data_desc::global_data_desc() {
                     }
                 }
 
-                if (!matched_by_uuid) {
+                if (!matched_by_uuid && idx < zes_devs.size()) {
                     // We could not match device by uuid, very unlikely.
                     // We can try matching by using the same index in ze devices array
-                    // in zes devices array
-                    zes_dev = idx < zes_devs.size() ? zes_devs[idx] : nullptr;
+                    // in zes devices array, as long as it is the same device
+                    zes_device_properties_t zes_dev_props = {
+                        .stype = ZES_STRUCTURE_TYPE_DEVICE_PROPERTIES
+                    };
+                    zes_dev_props.core = ccl::ze::default_device_props;
+                    if (zesDeviceGetProperties(zes_devs[idx], &zes_dev_props) ==
+                            ZE_RESULT_SUCCESS &&
+                        ccl::ze::is_same_dev_uuid(zes_dev_props.core.uuid, ze_dev_props.uuid)) {
+                        zes_dev = zes_devs[idx];
+                    }
                 }
 
                 if (zes_dev == nullptr) {
-                    LOG_WARN("root device has nullptr zes_device"
+                    // No sysman driver from zesInit knows this device. Its driver was
+                    // probably initialized with the legacy ZES_ENABLE_SYSMAN flag (e.g. by
+                    // the SYCL runtime) while zesInit succeeded for another driver, such as
+                    // the NPU's, so fall back to legacy behavior for this device.
+                    LOG_WARN("root device has no matching zes_device"
                              ", driver_idx ",
                              i,
                              ", root_idx ",
@@ -218,7 +240,9 @@ global_data_desc::global_data_desc() {
                              ", zes_devs_size ",
                              zes_devs.size(),
                              ", matched_by_uuid ",
-                             matched_by_uuid);
+                             matched_by_uuid,
+                             ", will cast ze_device to zes_device");
+                    zes_dev = (zes_device_handle_t)devs[idx];
                 }
             }
             else {
