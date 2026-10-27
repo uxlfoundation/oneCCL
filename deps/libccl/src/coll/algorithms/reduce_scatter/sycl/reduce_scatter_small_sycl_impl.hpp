@@ -158,9 +158,6 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
                                                                                        reduction_op,
                                                                                        count,
                                                                                        it);
-                                if (is_recording && it.get_global_linear_id() == 0) {
-                                    *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
-                                }
                             });
                     },
                     comm_size);
@@ -200,13 +197,14 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
                                     copy_count,
                                     reduce_count,
                                     it);
-                                if (is_recording && it.get_global_linear_id() == 0) {
-                                    *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
-                                }
                             });
                     },
                     comm_size);
             });
+        }
+        if (is_recording) {
+            local_event = advance_tmp_buf_idx(
+                q, local_event, tmp_buf_idx, nullptr, ccl_tmp_bufs::buf_count);
         }
         return local_event;
     };

@@ -378,12 +378,12 @@ ccl::event scatter_small_impl(const void* send_buf,
                                                        skip_recv_root,
                                                        count,
                                                        it);
-                        if (is_recording && it.get_global_linear_id() == 0) {
-                            *tmp_buf_secondary_idx = *tmp_buf_idx;
-                            *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
-                        }
                     });
             });
+            if (is_recording) {
+                local_event = advance_tmp_buf_idx(
+                    q, local_event, tmp_buf_idx, tmp_buf_secondary_idx, ccl_tmp_bufs::buf_count);
+            }
             return local_event;
         };
 
@@ -428,12 +428,12 @@ ccl::event scatter_small_impl(const void* send_buf,
                                                   skip_recv_root,
                                                   total_bytes,
                                                   it);
-                    if (is_recording && it.get_global_linear_id() == 0) {
-                        *tmp_buf_secondary_idx = *tmp_buf_idx;
-                        *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
-                    }
                 });
         });
+        if (is_recording) {
+            local_event = advance_tmp_buf_idx(
+                q, local_event, tmp_buf_idx, tmp_buf_secondary_idx, ccl_tmp_bufs::buf_count);
+        }
         return local_event;
     };
 

@@ -115,12 +115,12 @@ ccl::event broadcast_small_impl(const void* send_buf,
                         }
                     }
                     broadcast<T, VS, use_block>(send_buf, remote_ptrs_cpy, comm_size, count, it);
-                    if (is_recording && it.get_global_linear_id() == 0) {
-                        *tmp_buf_secondary_idx = *tmp_buf_idx;
-                        *tmp_buf_idx = (*tmp_buf_idx + 1) % ccl_tmp_bufs::buf_count;
-                    }
                 });
         });
+        if (is_recording) {
+            local_event = advance_tmp_buf_idx(
+                q, local_event, tmp_buf_idx, tmp_buf_secondary_idx, ccl_tmp_bufs::buf_count);
+        }
         return local_event;
     };
 
