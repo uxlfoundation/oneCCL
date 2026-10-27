@@ -169,6 +169,24 @@ inline void copy_2dst_wrap(void *dst_ptr1,
     }
 }
 
+class oneccl_advance_tmp_buf_idx {};
+
+static inline sycl::event advance_tmp_buf_idx(sycl::queue &q,
+                                              const sycl::event &dep_event,
+                                              int *tmp_buf_idx,
+                                              int *tmp_buf_secondary_idx,
+                                              int buf_count) {
+    return q.submit([=](sycl::handler &h) {
+        h.depends_on(dep_event);
+        h.single_task<oneccl_advance_tmp_buf_idx>([=]() {
+            if (tmp_buf_secondary_idx) {
+                *tmp_buf_secondary_idx = *tmp_buf_idx;
+            }
+            *tmp_buf_idx = (*tmp_buf_idx + 1) % buf_count;
+        });
+    });
+}
+
 // Kernel name templates for kernel_memcpy
 template <typename Type>
 class oneccl_kernel_memcpy_typed {};
