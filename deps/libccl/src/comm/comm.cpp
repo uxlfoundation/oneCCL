@@ -40,6 +40,10 @@
 #include "common/utils/sycl_utils.hpp"
 #endif // CCL_ENABLE_SYCL
 
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+#include "common/utils/ce_utils.hpp"
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
+
 // comm_barrier() used in invoke_barrier() below; comm.hpp no longer
 // pulls in sycl_barrier.hpp transitively, so include it here
 // explicitly. The SYCL barrier primitives are only compiled when
@@ -169,7 +173,8 @@ ccl_internal_comm::ccl_internal_comm(int comm_id,
 #ifdef CCL_ENABLE_SYCL
           ,
           m_barrier_data(rank, size),
-          m_flag_data(rank, size)
+          m_flag_data(rank, size),
+          m_pair_flag_data(rank, size)
 #endif // CCL_ENABLE_SYCL
 {
     atl_comm = atl_comm_manager::create_with_id(comm, comm_id);
@@ -193,7 +198,7 @@ void ccl_comm::init(int comm_id,
                     const std::shared_ptr<atl_base_comm>& atl_comm,
                     bool share_resources,
                     bool is_sub_communicator) {
-    if (group_impl::is_group_active) {
+    if (group_impl::is_group_active()) {
         LOG_WARN("Creating communicator inside group operation");
     }
 
@@ -228,6 +233,21 @@ void ccl_comm::init(int comm_id,
         // it initializes for every creation of comm in multi comms case
         CCL_ASSERT(node_comm, "no node_comm");
         init_ipc_exchange_mode(node_comm);
+        if (ccl::global_data::env().enable_ze_ce)
+        {
+            // init l0 resources for copy engines flow
+            if(device_ptr)
+            {
+                LOG_INFO("Found device ", device_ptr, " for comm_id ", comm_id, " getting L0 device");
+                ce_utils_t::enumerate_ze_devices(ze_device_manager);
+                auto dev = ce_utils_t::get_ze_device(device_ptr->get_native(), ze_device_manager.devices());
+                CCL_THROW_IF_NOT(dev, "no matching L0 device found for SYCL device ", device_ptr);
+                dev->set_context(sycl::get_native<sycl::backend::ext_oneapi_level_zero>(context_ptr->get_native()));
+                LOG_DEBUG("Creating L0 queue for L0 device: ", dev);
+                ce_queue = dev->create_queue(ze_engine_t::Copy);
+            }
+        }
+
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     }
     else {
@@ -314,8 +334,13 @@ ccl_comm::ccl_comm(const ccl_comm& src, int comm_id)
     node_comm = src.node_comm;
     numa_comm = src.numa_comm;
     numa_r2r_comm = src.numa_r2r_comm;
+    pcie_switch_comm = src.pcie_switch_comm;
+    pcie_switch_r2r_comm = src.pcie_switch_r2r_comm;
+    self_comm = src.self_comm;
+    self_r2r_comm = src.self_r2r_comm;
     even_comm = src.even_comm;
     pair_comm = src.pair_comm;
+    block_ordered_with_r2r = src.block_ordered_with_r2r;
 }
 
 std::shared_ptr<ikvs_wrapper> ccl_comm::get_kvs_wrapper(std::shared_ptr<ccl::kvs_interface> kvs) {
@@ -402,20 +427,169 @@ int ccl_comm::get_numa_node_for_gpu(std::shared_ptr<ccl_comm> node_comm,
 
     return my_numa_node;
 }
+
+ssize_t ccl_comm::get_pcie_switch_for_gpu(std::shared_ptr<ccl_comm> node_comm,
+                                          std::shared_ptr<ccl::device> device_ptr,
+                                          std::shared_ptr<ccl::context> context_ptr) {
+    if (!(device_ptr && context_ptr)) {
+        return -1;
+    }
+
+    ssize_t my_pcie_switch = -1;
+
+    if (ccl::global_data::env().sycl_gpus_per_switch > 0) {
+        int my_rank = this->get_global_rank(rank());
+        my_pcie_switch = my_rank / ccl::global_data::env().sycl_gpus_per_switch;
+        return my_pcie_switch;
+    }
+
+    auto& sycl_device = device_ptr->get_native();
+    if (sycl_device.get_backend() == ccl::utils::get_level_zero_backend()) {
+        ze_device_handle_t ze_device =
+            sycl::get_native<ccl::utils::get_level_zero_backend()>(sycl_device);
+
+#ifdef ZE_PCI_PROPERTIES_EXT_NAME
+        auto& devices = ccl::global_data::get().ze_data->devices;
+        for (const auto& dev_info : devices) {
+            if (dev_info.device == ze_device) {
+                if (ccl::global_data::get().hwloc_wrapper->is_initialized()) {
+                    my_pcie_switch = ccl::global_data::get().hwloc_wrapper->get_pcie_switch_by_pci(
+                        dev_info.pci.domain,
+                        dev_info.pci.bus,
+                        dev_info.pci.device,
+                        dev_info.pci.function);
+
+                    LOG_DEBUG("GPU PCIe switch: ",
+                              my_pcie_switch,
+                              " (PCI ",
+                              (int)dev_info.pci.domain,
+                              ":",
+                              (int)dev_info.pci.bus,
+                              ":",
+                              (int)dev_info.pci.device,
+                              ".",
+                              (int)dev_info.pci.function,
+                              ")");
+                }
+                break;
+            }
+        }
+#endif // ZE_PCI_PROPERTIES_EXT_NAME
+    }
+
+    return my_pcie_switch;
+}
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
-void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
-    r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(atl_comm->get_r2r_color()));
+// comm must be node_comm/numa_comm or pcie_switch_comm
+void ccl_comm::set_topo_info() {
+    if (topo_manager.has_same_ppn()) {
+        std::shared_ptr<ccl_comm> my_numa_comm = get_numa_comm();
+        for (int r = 0; r < this->size(); r++) {
+            int global_rank = this->get_global_rank(r);
+            if (!my_numa_comm->try_get_rank_from_global(global_rank)) {
+                m_is_cross_upi = true;
+                break;
+            }
+        }
+	std::shared_ptr<ccl_comm> my_pcie_switch_comm = get_pcie_switch_comm();
+        for (int r = 0; r < this->size(); r++) {
+            int global_rank = this->get_global_rank(r);
+            if (!my_pcie_switch_comm->try_get_rank_from_global(global_rank)) {
+                m_is_cross_switch = true;
+                break;
+            }
+        }
+    }
+}
 
-    ccl_comm* node_comm_ptr = create_subcomm(topo_manager.get_host_idx());
+namespace {
+
+// Check the two-dimensional rank layout used by domain-aware algorithms:
+//   p2p domain k contains global ranks
+//     [k * p2p_domain_size, ..., k * p2p_domain_size + p2p_domain_size - 1]
+//   r2r communicator r contains global ranks
+//     [r, p2p_domain_size + r, 2 * p2p_domain_size + r, ...]
+//
+// This runs once after the matching topology subcommunicators are created.
+// Their rank mappings do not change during the communicator's lifetime.
+bool has_block_ordered_p2p_layout(size_t global_size,
+                                  const std::shared_ptr<ccl_comm>& p2p_comm,
+                                  const std::shared_ptr<ccl_comm>& r2r_comm) {
+    const int p2p_domain_size = static_cast<int>(p2p_comm->size());
+    const int num_domains = static_cast<int>(r2r_comm->size());
+    if (p2p_domain_size <= 0 || num_domains <= 0 ||
+        global_size != static_cast<size_t>(p2p_domain_size * num_domains)) {
+        return false;
+    }
+
+    const int p2p_base = p2p_comm->get_global_rank(0);
+    if ((p2p_base % p2p_domain_size) != 0) {
+        return false;
+    }
+
+    for (int local_rank = 0; local_rank < p2p_domain_size; ++local_rank) {
+        if (p2p_comm->get_global_rank(local_rank) != p2p_base + local_rank) {
+            return false;
+        }
+    }
+
+    const int my_p2p_rank = p2p_comm->rank();
+    for (int domain_idx = 0; domain_idx < num_domains; ++domain_idx) {
+        const int expected_global_rank = domain_idx * p2p_domain_size + my_p2p_rank;
+        if (r2r_comm->get_global_rank(domain_idx) != expected_global_rank) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void cache_block_ordered_p2p_layout(size_t global_size,
+                                    const std::shared_ptr<ccl_comm>& p2p_comm,
+                                    const std::shared_ptr<ccl_comm>& r2r_comm) {
+    p2p_comm->set_block_ordered_with_r2r(
+        has_block_ordered_p2p_layout(global_size, p2p_comm, r2r_comm));
+}
+
+} // namespace
+
+void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
+    int my_global_rank = atl_comm->get_rank();
+    int world_size = atl_comm->get_size();
+    int my_host_idx = topo_manager.get_host_idx();
+    ccl_comm* node_comm_ptr = create_subcomm(my_host_idx);
     CCL_THROW_IF_NOT(node_comm_ptr, "Failed to create node communicator");
     node_comm = std::shared_ptr<ccl_comm>(node_comm_ptr);
 
+    int r2r_color = -1;
+    const auto host_info = topo_manager.get_host_info(my_host_idx);
+    int pos = 0;
+    for (int rank : host_info.ranks) {
+        if (rank == my_global_rank) {
+            r2r_color = pos;
+            break;
+        }
+        pos++;
+    }
+    r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(r2r_color));
+
+    cache_block_ordered_p2p_layout(size(), node_comm, r2r_comm);
+
+    LOG_INFO("node_comm color: ", my_host_idx, " size: ", node_comm->size(), " r2r_comm color: ", r2r_color, " size: ", r2r_comm->size(), " total: ", atl_comm->get_size());
+
     // Detect NUMA node for local GPU
     int my_numa_node = -1;
+    ssize_t my_pcie_switch = -1;
+
+    bool is_arc __attribute__((unused)) = false;
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    is_arc = ccl::ze::is_arc_card(ccl::global_data::get().ze_data->devices[0].family);
     my_numa_node = get_numa_node_for_gpu(node_comm, device_ptr, context_ptr);
+    if (is_arc) {
+        my_pcie_switch = get_pcie_switch_for_gpu(node_comm, device_ptr, context_ptr);
+    }
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     // Create numa_comm using host_idx * 1000 + numa_node as color
@@ -425,11 +599,11 @@ void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
     // numa, so we have to support configs where there's for example
     // one GPU on numa 0, and three GPUs on numa 1 etc.
     if (my_numa_node >= 0) {
-        int numa_color = topo_manager.get_host_idx() * 1000 + my_numa_node;
+        int numa_color = my_host_idx * 1000 + my_numa_node;
         LOG_INFO("numa comm color: ",
                  numa_color,
                  " (host_idx=",
-                 topo_manager.get_host_idx(),
+                 my_host_idx,
                  ", numa_node=",
                  my_numa_node,
                  ")");
@@ -438,7 +612,7 @@ void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
     }
     else {
         // NUMA detection not available: numa_comm == node_comm
-        numa_comm = std::shared_ptr<ccl_comm>(create_subcomm(topo_manager.get_host_idx()));
+        numa_comm = std::shared_ptr<ccl_comm>(create_subcomm(my_host_idx));
         LOG_INFO("NUMA detection unavailable, numa_comm same as node_comm, size: ",
                  numa_comm->size());
     }
@@ -464,10 +638,7 @@ void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
             int numa_node;
         };
 
-        int world_size = atl_comm->get_size();
-        int my_global_rank = atl_comm->get_rank();
-
-        numa_rank_info my_info{ topo_manager.get_host_idx(), my_numa_node };
+        numa_rank_info my_info{ my_host_idx, my_numa_node };
         std::vector<numa_rank_info> all_info(world_size);
 
         bool ok =
@@ -482,7 +653,7 @@ void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
         }
 
         // Find my position within my (host, numa) group
-        auto my_key = std::make_pair(topo_manager.get_host_idx(), my_numa_node);
+        auto my_key = std::make_pair(my_host_idx, my_numa_node);
         const auto& my_group = group_ranks[my_key];
         int my_position = -1;
         for (int i = 0; i < static_cast<int>(my_group.size()); i++) {
@@ -505,16 +676,174 @@ void ccl_comm::create_topo_subcomms(std::shared_ptr<atl_base_comm> atl_comm) {
         LOG_INFO("numa r2r comm size: ", numa_r2r_comm->size());
     }
     else {
-        numa_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(atl_comm->get_r2r_color()));
+        numa_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(r2r_color));
         LOG_INFO("NUMA detection unavailable, numa_r2r_comm uses r2r_color, size: ",
                  numa_r2r_comm->size());
     }
+    cache_block_ordered_p2p_layout(size(), numa_comm, numa_r2r_comm);
+
+    if (my_pcie_switch >= 0) {
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+        int switch_color = -1;
+
+        struct switch_rank_info {
+            int host_idx;
+            ssize_t pcie_switch;
+        };
+
+        switch_rank_info my_info{ my_host_idx, my_pcie_switch };
+        std::vector<switch_rank_info> all_info(world_size);
+
+        bool ok =
+            ccl::utils::allgather(atl_comm, &my_info, all_info.data(), sizeof(switch_rank_info));
+        CCL_THROW_IF_NOT(ok, "Failed to allgather pcie switch info for pcie_switch_r2r_comm");
+
+        // For each (host, switch) group, collect global ranks in order
+        std::map<std::pair<int, ssize_t>, int> group_ranks;
+
+        int seq = 0;
+        for (int r = 0; r < world_size; r++) {
+            auto key = std::make_pair(all_info[r].host_idx, all_info[r].pcie_switch);
+            if (group_ranks.find(key) == group_ranks.end()) {
+                group_ranks[key] = seq++;
+            }
+        }
+
+        auto my_key = std::make_pair(my_host_idx, my_pcie_switch);
+        switch_color = group_ranks[my_key];
+        LOG_INFO("pcie switch color: ",
+                 std::hex,
+                 switch_color,
+                 ", my_pcie_switch=",
+                 my_pcie_switch,
+                 std::dec,
+                 " (host_idx=",
+                 topo_manager.get_host_idx(),
+                 ")");
+        pcie_switch_comm = std::shared_ptr<ccl_comm>(create_subcomm(switch_color));
+        m_has_pcie_switch = true;
+        LOG_INFO("pcie switch comm size: ", pcie_switch_comm->size());
+
+        // create r2r switch
+        int switch_r2r_color = -1;
+        if (ccl::global_data::env().sycl_gpus_per_switch > 0) {
+            switch_r2r_color = my_global_rank % ccl::global_data::env().sycl_gpus_per_switch;
+        }
+        else {
+            // For each (host, switch) group, collect global ranks in order
+            std::map<std::pair<int, ssize_t>, std::vector<int>> r2r_group_ranks;
+            for (int r = 0; r < world_size; r++) {
+                auto key = std::make_pair(all_info[r].host_idx, all_info[r].pcie_switch);
+                r2r_group_ranks[key].push_back(r);
+            }
+
+            // Find my position within my (host, switch) group
+            auto my_key = std::make_pair(my_host_idx, my_pcie_switch);
+            const auto& my_group = r2r_group_ranks[my_key];
+            int my_position = -1;
+            for (int i = 0; i < static_cast<int>(my_group.size()); i++) {
+                if (my_group[i] == my_global_rank) {
+                    my_position = i;
+                    break;
+                }
+            }
+            CCL_THROW_IF_NOT(my_position >= 0, "rank not found in its own pcie switch group");
+
+            switch_r2r_color = my_position;
+        }
+        LOG_INFO("pcie switch r2r comm color: ",
+                 switch_r2r_color,
+                 " (pcie_switch=",
+                 my_pcie_switch,
+                 ")");
+        pcie_switch_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(switch_r2r_color));
+        LOG_INFO("pcie switch r2r comm size: ", pcie_switch_r2r_comm->size());
+#endif
+    }
+    else {
+        // pcie switch detection not available: pcie_switch_comm == node_comm
+        pcie_switch_comm = std::shared_ptr<ccl_comm>(create_subcomm(my_host_idx));
+        LOG_INFO("PCIe switch detection unavailable, pcie_switch_comm same as node_comm, size: ",
+                 pcie_switch_comm->size());
+
+        pcie_switch_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(r2r_color));
+        LOG_INFO("pcie switch detection unavailable, pcie_switch_r2r_comm uses r2r_color, size: ",
+                 pcie_switch_r2r_comm->size());
+    }
+    cache_block_ordered_p2p_layout(size(), pcie_switch_comm, pcie_switch_r2r_comm);
+
+    self_comm = std::shared_ptr<ccl_comm>(create_subcomm(atl_comm->get_rank()));
+    self_r2r_comm = std::shared_ptr<ccl_comm>(create_subcomm(0));
+    cache_block_ordered_p2p_layout(size(), self_comm, self_r2r_comm);
 
     even_comm = std::shared_ptr<ccl_comm>(
         create_subcomm(topo_manager.get_inter_card_color(atl_comm->get_rank())));
     pair_comm = std::shared_ptr<ccl_comm>(create_subcomm(
         topo_manager.get_intra_card_color(atl_comm->get_rank()),
         topo_manager.get_inter_card_color(atl_comm->get_rank()) % topo_manager.max_ranks_per_card));
+
+    // set cross-upi and cross-switch info
+    // no need to set switch comm
+    node_comm->set_topo_info();
+    if (my_numa_node >= 0) {
+        numa_comm->set_topo_info();
+    }
+    // check regular distribution
+    struct distribution_rank_info {
+        int node_comm_size;
+        int r2r_comm_size;
+	int numa_comm_size;
+	int numa_r2r_comm_size;
+	int pcie_switch_comm_size;
+	int pcie_switch_r2r_comm_size;
+    };
+    distribution_rank_info my_dist_info;
+    my_dist_info.node_comm_size = node_comm->size();
+    my_dist_info.r2r_comm_size = r2r_comm->size();
+    my_dist_info.numa_comm_size = numa_comm->size();
+    my_dist_info.numa_r2r_comm_size = numa_r2r_comm->size();
+    my_dist_info.pcie_switch_comm_size = pcie_switch_comm->size();
+    my_dist_info.pcie_switch_r2r_comm_size = pcie_switch_r2r_comm->size();
+
+    std::vector<distribution_rank_info> all_dist_info(world_size);
+
+    bool ok =
+        ccl::utils::allgather(atl_comm, &my_dist_info, all_dist_info.data(), sizeof(distribution_rank_info));
+    CCL_THROW_IF_NOT(ok, "Failed to allgather distribution info");
+    node_comm->is_uniform =
+        std::all_of(all_dist_info.begin(), all_dist_info.end(), [&](const distribution_rank_info& info) {
+            return all_dist_info.front().node_comm_size == info.node_comm_size;
+        });
+    r2r_comm->is_uniform =
+        std::all_of(all_dist_info.begin(), all_dist_info.end(), [&](const distribution_rank_info& info) {
+            return all_dist_info.front().r2r_comm_size == info.r2r_comm_size;
+        });
+    numa_comm->is_uniform =
+        std::all_of(all_dist_info.begin(), all_dist_info.end(), [&](const distribution_rank_info& info) {
+            return all_dist_info.front().numa_comm_size == info.numa_comm_size;
+        });
+    numa_r2r_comm->is_uniform =
+        std::all_of(all_dist_info.begin(), all_dist_info.end(), [&](const distribution_rank_info& info) {
+            return all_dist_info.front().numa_r2r_comm_size == info.numa_r2r_comm_size;
+        });
+    pcie_switch_comm->is_uniform =
+        std::all_of(all_dist_info.begin(), all_dist_info.end(), [&](const distribution_rank_info& info) {
+            return all_dist_info.front().pcie_switch_comm_size == info.pcie_switch_comm_size;
+        });
+    pcie_switch_r2r_comm->is_uniform =
+        std::all_of(all_dist_info.begin(), all_dist_info.end(), [&](const distribution_rank_info& info) {
+            return all_dist_info.front().pcie_switch_r2r_comm_size == info.pcie_switch_r2r_comm_size;
+        });
+    self_comm->is_uniform = self_r2r_comm->is_uniform = true;
+
+    LOG_DEBUG("rank distribution: node_comm: ", node_comm->is_uniform, " r2r_comm: ", r2r_comm->is_uniform, " numa_comm: ", numa_comm->is_uniform, " numa_r2r_comm: ", numa_r2r_comm->is_uniform, " pcie_switch_comm: ", pcie_switch_comm->is_uniform, " pcie_switch_r2r_comm: ", pcie_switch_r2r_comm->is_uniform);
+    if (node_comm->is_uniform && r2r_comm->is_uniform) {
+        CCL_THROW_IF_NOT(node_comm->size() * r2r_comm->size() == atl_comm->get_size(), "Invalid node_comm and r2r_comm");
+    }
+
+    LOG_DEBUG("global_comm: cross UPI: ", this->is_cross_upi(), " cross switch: ", this->is_cross_pcie_switch());
+    LOG_DEBUG("node_comm: cross UPI: ", node_comm->is_cross_upi(), " cross switch: ", node_comm->is_cross_pcie_switch());
+    LOG_DEBUG("numa_comm: cross UPI: ", numa_comm->is_cross_upi(), " cross switch: ", numa_comm->is_cross_pcie_switch());
 }
 
 ccl_comm* ccl_comm::create_subcomm(int color, int key) const {
@@ -645,11 +974,19 @@ ccl::comm_interface_ptr ccl_comm::split(int color, int key, bool split_external_
     }
 
     ccl_comm* new_comm = nullptr;
-    if (split_external_use) {
-        new_comm = create_subcomm_split_independent(color, key);
+
+    // MT mode detection - use shared memory coordination instead of ATL
+    if (enable_multi_thread_instance) {
+        new_comm = create_subcomm_split_mt(color, key);
     }
     else {
-        new_comm = create_subcomm(color, key);
+        // MPI mode - use ATL for network coordination
+        if (split_external_use) {
+            new_comm = create_subcomm_split_independent(color, key);
+        }
+        else {
+            new_comm = create_subcomm(color, key);
+        }
     }
 
     return std::shared_ptr<ccl_comm>(new_comm);
@@ -723,6 +1060,10 @@ std::string ccl_comm::to_string_ext() const {
     ss << "   node_comm: " << (node_comm ? node_comm->to_string() : "{}") << "\n";
     ss << "   numa_comm: " << (numa_comm ? numa_comm->to_string() : "{}") << "\n";
     ss << "   numa_r2r_comm: " << (numa_r2r_comm ? numa_r2r_comm->to_string() : "{}") << "\n";
+    ss << "   pcie_switch_comm: " << (pcie_switch_comm ? pcie_switch_comm->to_string() : "{}")
+       << "\n";
+    ss << "   pcie_switch_r2r_comm: "
+       << (pcie_switch_r2r_comm ? pcie_switch_r2r_comm->to_string() : "{}") << "\n";
     ss << "   even_comm: " << (even_comm ? even_comm->to_string() : "{}") << "\n";
     ss << "   pair_comm: " << (pair_comm ? pair_comm->to_string() : "{}") << "\n";
     ss << "   env: " << (env ? env->to_string() : "{}") << "\n";
@@ -856,7 +1197,9 @@ void* ccl_scaleout_host_bufs::get_scaleout_host_buf() {
                 // internally, CCL_MALLOC calls posix_memalign
                 host_bufs[index] = CCL_MALLOC(buf_size, "scaleout_host_buf");
                 break;
-            case ccl::utils::alloc_mode::malloc: host_bufs[index] = malloc(buf_size); break;
+            case ccl::utils::alloc_mode::malloc:
+                host_bufs[index] = malloc(buf_size);
+                break;
             default: CCL_THROW("unexpected alloc_mode");
         }
         CCL_THROW_IF_NOT(host_bufs[index] != nullptr, "Cannot allocate host buffer");
@@ -865,7 +1208,6 @@ void* ccl_scaleout_host_bufs::get_scaleout_host_buf() {
             global_data.ze_data->import_external_pointer(host_bufs[index], buf_size);
         }
     }
-
     auto old_index = index;
     index = (index + 1) % buf_count;
     return host_bufs[old_index];
@@ -1190,9 +1532,65 @@ ccl_scaleout_pipeline_bufs& ccl_scaleout_pipeline_bufs::operator=(
     return *this;
 }
 
+void ccl_tmp_bufs::inherit_pointers(ccl_comm *node_comm) {
+    for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
+        tmp_bufs[i] = node_comm->get_tmp_buf(i);
+        tmp_bufs_gpu[i] = node_comm->get_tmp_buf_gpu(i);
+    }
+    tmp_bufs_gpu_index = node_comm->get_tmp_buf_idx();
+    tmp_bufs_gpu_secondary_index = node_comm->get_tmp_buf_secondary_idx();
+    pattern_data_gpu = node_comm->get_pattern_data_gpu();
+}
+
 // future optimization: store a serialize stream per data it protects (separate for each tmp buffer)
 // this should avoid contention
-SerializedStream global_serialize_stream;
+//
+// Process-wide singleton keyed by a weak_ptr: the first ccl_comm to hit the
+// serialize path constructs it via SerializedStream::acquire(); subsequent
+// comms share the same instance. When the last comm dies, its shared_ptr
+// drops to 0 and the SerializedStream (with its L0-backed queue/event) is
+// destroyed while Level Zero is still up. If new comms are created after
+// that, a fresh SerializedStream is minted — semantically correct because
+// no prior comm can carry ordering dependencies into the new set.
+std::shared_ptr<SerializedStream> SerializedStream::acquire() {
+    static std::mutex mtx;
+    static std::weak_ptr<SerializedStream> weak;
+    std::lock_guard<std::mutex> lk(mtx);
+    auto sp = weak.lock();
+    if (!sp) {
+        sp = std::make_shared<SerializedStream>();
+        weak = sp;
+    }
+    return sp;
+}
+
+
+static void warn_on_recording_unsupported_cases(sycl::queue q,
+                                                SerializedStream& ss,
+                                                bool is_recording) {
+    bool is_main_q_recording =
+        ss.getMainQueue().ext_oneapi_get_state() ==
+        sycl::ext::oneapi::experimental::queue_state::recording;
+
+    if (!is_main_q_recording)
+    {
+        return;
+    }
+
+    if (!is_recording)
+    {
+        LOG_WARN("main queue is already in recording mode, means a previous recording is not finished yet, this case is not supported");
+        return;
+    }  
+    
+    // this define is because ext_oneapi_get_graph() and get_id() are not supported in old compiler versions
+    #if defined(__INTEL_LLVM_COMPILER) && (__INTEL_LLVM_COMPILER >= 20260200)
+    if ((q.ext_oneapi_get_graph().get_id() != ss.getMainQueue().ext_oneapi_get_graph().get_id()))
+    {
+        LOG_WARN("recording multiple different graphs at the same time is not supported");
+    }
+    #endif  
+}
 
 // after the function finishes:
 //
@@ -1202,12 +1600,35 @@ SerializedStream global_serialize_stream;
 // 3. main queue is behind user queue
 //
 // the points 2 and 3 above are equivalent statements
-void sync_user_to_main(
-    sycl::queue q,
-    SerializedStream &ss) {
+void sync_user_to_main_native_graph(sycl::queue q, SerializedStream& ss) {
+    bool native_disabled =
+        (ccl::global_data::env().overlapping_collectives != ccl_overlapping_collectives::enable_always);
+    if (native_disabled) {
+        LOG_TRACE("native overlapping disabled, early exit");
+        return;
+    }
+    bool is_recording = q.ext_oneapi_get_state() == sycl::ext::oneapi::experimental::queue_state::recording;
 
-  bool is_recording = q.ext_oneapi_get_state() ==
-                      sycl::ext::oneapi::experimental::queue_state::recording;
+    warn_on_recording_unsupported_cases(q, ss, is_recording);
+
+    LOG_DEBUG("syncs user to main");
+    if (is_recording) {
+        // Adding a dependency where the sync-queue awaits and event over the user-queue,
+        //  to start an implicit recording of the main-queue 
+        LOG_DEBUG("syncs user to main");
+        sycl::event q_last_event = q.ext_oneapi_submit_barrier();
+        ss.getMainQueue().ext_oneapi_submit_barrier({q_last_event});
+    }
+    // synchronize to main stream - put user queue "in front of" the main queue
+    sycl::event last_event = ss.getMainQueue().ext_oneapi_submit_barrier();
+    q.ext_oneapi_submit_barrier({last_event});
+
+    // end recording on main queue - supported right now only with sycl graph
+}
+
+void sync_user_to_main_sycl_graph(sycl::queue q, SerializedStream& ss) {
+    bool is_recording =
+        q.ext_oneapi_get_state() == sycl::ext::oneapi::experimental::queue_state::recording;
     LOG_DEBUG("syncs user to main");
     if (is_recording) {
         // start recording ops on main stream - sycl graph requires the sync as well
@@ -1215,10 +1636,65 @@ void sync_user_to_main(
     }
     // synchronize to main stream - put user queue "in front of" the main queue
     sycl::event last_event = ss.getMainQueue().ext_oneapi_submit_barrier();
-    q.ext_oneapi_set_external_event(last_event);
+    q.ext_oneapi_submit_barrier({last_event});
     if (is_recording) {
         // start recording ops on main stream - sycl graph requires the sync as well
         q.ext_oneapi_get_graph().end_recording(ss.getMainQueue());
+    }
+}
+
+// after the function finishes:
+//
+// 1. any future ops on user queue will happen after main queue completes its
+// current tasks
+// 2. user queue is "in front of" main queue
+// 3. main queue is behind user queue
+//
+// the points 2 and 3 above are equivalent statements
+void sync_user_to_main(sycl::queue q, SerializedStream& ss) {
+    auto sycl_graph_type = ccl::global_data::env().sycl_graph_type;
+    if (sycl_graph_type == graph_type::sycl ||
+        (sycl_graph_type == graph_type::auto_type
+         && !ccl::ze::is_arc_card(ccl::global_data::get().ze_data->devices[0].family))) {
+        sync_user_to_main_sycl_graph(q, ss);
+    }
+    else {
+        sync_user_to_main_native_graph(q, ss);
+    }
+}
+
+void sync_main_to_user_native_graph(sycl::queue q, SerializedStream& ss) {
+    bool native_disabled =
+        (ccl::global_data::env().overlapping_collectives != ccl_overlapping_collectives::enable_always);
+    if (native_disabled) {
+        LOG_TRACE("native overlapping disabled, early exit");
+        return;
+    }
+    LOG_DEBUG("syncs main to user");
+
+    bool is_recording = q.ext_oneapi_get_state() == sycl::ext::oneapi::experimental::queue_state::recording;
+    warn_on_recording_unsupported_cases(q, ss, is_recording);
+
+    sycl::event last_event = q.ext_oneapi_submit_barrier();
+    // transitions the main queue into recording mode - in case q is in recording mode
+    ss.getMainQueue().ext_oneapi_submit_barrier({last_event});
+}
+
+void sync_main_to_user_sycl_graph(sycl::queue q, SerializedStream& ss) {
+    bool is_recording =
+        q.ext_oneapi_get_state() == sycl::ext::oneapi::experimental::queue_state::recording;
+    LOG_TRACE("syncs main to user");
+    if (is_recording) {
+        // start recording ops on main stream - sycl graph requires the sync as well
+        q.ext_oneapi_get_graph().begin_recording(ss.getMainQueue());
+    }
+    // sync to main stream - put main queue "in front of" the user queue
+    sycl::event last_event = q.ext_oneapi_submit_barrier();
+    ss.getMainQueue().ext_oneapi_submit_barrier({last_event});
+
+    if (is_recording) {
+        // no more ops on main queue should be recorded
+        ss.getMainQueue().ext_oneapi_get_graph().end_recording(ss.getMainQueue());
     }
 }
 
@@ -1230,47 +1706,29 @@ void sync_user_to_main(
 // 3. user queue is behind main queue
 //
 // the points 2 and 3 above are equivalent statements
-void sync_main_to_user(
-    sycl::queue q,
-    SerializedStream &ss) {
-
-    bool is_recording = q.ext_oneapi_get_state() ==
-                      sycl::ext::oneapi::experimental::queue_state::recording;
-    LOG_DEBUG("syncs main to user");
-    if (is_recording) {
-        // start recording ops on main stream - sycl graph requires the sync as well
-        q.ext_oneapi_get_graph().begin_recording(ss.getMainQueue());
+void sync_main_to_user(sycl::queue q, SerializedStream& ss) {
+    auto sycl_graph_type = ccl::global_data::env().sycl_graph_type;
+    if (sycl_graph_type == graph_type::sycl ||
+        (sycl_graph_type == graph_type::auto_type
+         && !ccl::ze::is_arc_card(ccl::global_data::get().ze_data->devices[0].family))) {
+        sync_main_to_user_sycl_graph(q, ss);
     }
-    // sync to main stream - put main queue "in front of" the user queue
-    std::optional<sycl::event> opt_last_event = q.ext_oneapi_get_last_event();
-    if (!opt_last_event.has_value()) {
-        // no kernel was submitted, the coll is no-op
-        // sync is still required, submit a barrier
-        opt_last_event = std::optional(q.ext_oneapi_submit_barrier());
-    }
-    ss.getMainQueue().ext_oneapi_set_external_event(opt_last_event.value());
-    ss.getMainQueue().ext_oneapi_submit_barrier(); // this barrier seems to be required
-
-    if (is_recording) {
-        // no more ops on main queue should be recorded
-        ss.getMainQueue().ext_oneapi_get_graph().end_recording(ss.getMainQueue());
+    else {
+        sync_main_to_user_native_graph(q, ss);
     }
 }
 
 #endif // CCL_ENABLE_SYCL
-
-
 
 // different collectives running on same communicator even on different
 // streams are serialized
 void ccl_comm::pre_coll_serialize(const ccl::stream::impl_value_t& stream) {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     ccl_stream* op_stream = get_stream_ptr(stream);
-    if (op_stream != nullptr &&
-        op_stream->get_backend() == ccl::utils::get_level_zero_backend()) {
+    if (op_stream != nullptr && op_stream->get_backend() == ccl::utils::get_level_zero_backend()) {
         LOG_DEBUG("pre_coll called");
 
-        sync_user_to_main(op_stream->get_native_stream(), global_serialize_stream);
+        sync_user_to_main(op_stream->get_native_stream(), *serialize_stream);
     }
 #endif
 }
@@ -1279,20 +1737,21 @@ void ccl_comm::post_coll_serialize(const ccl::stream::impl_value_t& stream) {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     // collectives in group API can execute out of order
     ccl_stream* op_stream = get_stream_ptr(stream);
-    if (!group_impl::is_group_active && op_stream != nullptr &&
+    if (!group_impl::is_group_active() && op_stream != nullptr &&
         op_stream->get_backend() == ccl::utils::get_level_zero_backend()) {
-        LOG_DEBUG("post_coll called");
+        LOG_TRACE("post_coll called");
 
-        sync_main_to_user(op_stream->get_native_stream(), global_serialize_stream);
+        sync_main_to_user(op_stream->get_native_stream(), *serialize_stream);
     }
 #endif
 }
 
- // different collectives running on same communicator even on different
- // streams are serialized
-const ccl::vector_class<ccl::event>& ccl_comm::pre_coll_events(const ccl::stream::impl_value_t& stream,
-                                                               const ccl::vector_class<ccl::event>& deps,
-                                                               ccl::vector_class<ccl::event>& newdeps) {
+// different collectives running on same communicator even on different
+// streams are serialized
+const ccl::vector_class<ccl::event>& ccl_comm::pre_coll_events(
+    const ccl::stream::impl_value_t& stream,
+    const ccl::vector_class<ccl::event>& deps,
+    ccl::vector_class<ccl::event>& newdeps) {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     ccl_stream* op_stream = get_stream_ptr(stream);
     if (op_stream != nullptr && last_stream != nullptr && last_stream != op_stream &&
@@ -1316,15 +1775,15 @@ const ccl::vector_class<ccl::event>& ccl_comm::pre_coll_events(const ccl::stream
     }
 #endif
     return deps;
- }
+}
 
 void ccl_comm::post_coll_events(const ccl::stream::impl_value_t& stream, ccl::event& e) {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     // collectives in group API can execute out of order
     ccl_stream* op_stream = get_stream_ptr(stream);
-    if (!group_impl::is_group_active && op_stream != nullptr &&
+    if (!group_impl::is_group_active() && op_stream != nullptr &&
         op_stream->get_backend() == ccl::utils::get_level_zero_backend()) {
-        LOG_DEBUG("post_coll called");
+        LOG_TRACE("post_coll called");
         // host event may not have native event, catch exceptions and ignore
         try {
             last_event = e.get_native();
@@ -1340,40 +1799,13 @@ void ccl_comm::post_coll_events(const ccl::stream::impl_value_t& stream, ccl::ev
 void ccl_comm::post_coll_for_finalize(const ccl::stream::impl_value_t& stream, ccl::event& e) {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     // Skip tracking events during group operations - ccl::group_end() handles synchronization
-    if (group_impl::is_group_active) {
+    if (group_impl::is_group_active()) {
         LOG_DEBUG("post_coll_for_finalize skipped - group operation active");
-        return;
-    }
-
-    // If already detected graph recording usage, skip all further checks and tracking
-    if (used_in_graph_recording) {
         return;
     }
 
     ccl_stream* op_stream = get_stream_ptr(stream);
     if (op_stream != nullptr && op_stream->get_backend() == ccl::utils::get_level_zero_backend()) {
-        // Check if queue is in graph recording mode
-        bool is_recording = false;
-        try {
-            auto sycl_queue = op_stream->get_native_stream();
-            // Try to detect graph recording state
-            // Intel SYCL extension: ext_oneapi_get_state()
-#ifdef SYCL_EXT_ONEAPI_GRAPH
-            bool is_recording = sycl_queue.ext_oneapi_get_state() ==
-                                sycl::ext::oneapi::experimental::queue_state::recording;
-#endif
-        }
-        catch (...) {
-            // If we can't determine recording state, means
-            // that most likely the compiler does not support graphs
-            is_recording = false;
-        }
-
-        if (is_recording) {
-            used_in_graph_recording = true;
-            return;
-        }
-
         LOG_DEBUG("post_coll_for_finalize called for stream: ", op_stream);
         // Store or update the event for this stream
         std::optional<sycl::event> native_event;
@@ -1381,9 +1813,11 @@ void ccl_comm::post_coll_for_finalize(const ccl::stream::impl_value_t& stream, c
             native_event = e.get_native();
         }
         catch (...) {
+            LOG_TRACE("non-native event");
             // Host event - scheduler code for CPU path, no more processing
             return;
         }
+        LOG_TRACE("handling native event");
 
         // native event is valid
         finalize_events[op_stream] = native_event.value();
@@ -1433,12 +1867,19 @@ void ccl_comm::post_coll_for_finalize(const ccl::stream::impl_value_t& stream, c
 const ccl::vector_class<ccl::event>& ccl_comm::pre_coll(const ccl::stream::impl_value_t& stream,
                                                         const ccl::vector_class<ccl::event>& deps,
                                                         ccl::vector_class<ccl::event>& newdeps) {
+    bool overlapping_disabled =
+        (ccl::global_data::env().overlapping_collectives == ccl_overlapping_collectives::disable);
+    if (group_impl::is_group_active() || overlapping_disabled) {
+        return deps;
+    }
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     ccl_stream* cclstream = get_stream_ptr(stream);
-    if (cclstream != nullptr && cclstream->get_backend() == ccl::utils::get_level_zero_backend() && global_serialize_stream.update_check_ever_recorded(cclstream->get_native_stream())) {
+    if (cclstream != nullptr && cclstream->get_backend() == ccl::utils::get_level_zero_backend() &&
+        serialize_stream->update_check_ever_recorded(cclstream->get_native_stream())) {
         pre_coll_serialize(stream);
         return deps;
-    } else {
+    }
+    else {
         return pre_coll_events(stream, deps, newdeps);
     }
 #else
@@ -1447,15 +1888,22 @@ const ccl::vector_class<ccl::event>& ccl_comm::pre_coll(const ccl::stream::impl_
 }
 
 void ccl_comm::post_coll(const ccl::stream::impl_value_t& stream, ccl::event& e) {
+    bool overlapping_disabled =
+        (ccl::global_data::env().overlapping_collectives == ccl_overlapping_collectives::disable);
+    if (group_impl::is_group_active() || overlapping_disabled) {
+        return;
+    }
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     ccl_stream* cclstream = get_stream_ptr(stream);
-    if (cclstream != nullptr && cclstream->get_backend() == ccl::utils::get_level_zero_backend() && global_serialize_stream.update_check_ever_recorded(cclstream->get_native_stream())) {
+    if (cclstream != nullptr && cclstream->get_backend() == ccl::utils::get_level_zero_backend() &&
+        serialize_stream->update_check_ever_recorded(cclstream->get_native_stream())) {
         post_coll_serialize(stream);
-    } else {
-        post_coll_events(stream, e);
+        // no need to track events for finalize
     }
-    // Track event for finalize regardless of serialization path
-    post_coll_for_finalize(stream, e);
+    else {
+        post_coll_events(stream, e);
+        post_coll_for_finalize(stream, e);
+    }
 #else
     post_coll_events(stream, e);
 #endif
@@ -1488,15 +1936,8 @@ ccl::event ccl_comm::barrier_impl(const ccl::stream::impl_value_t& stream,
 void ccl_comm::finalize() {
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     // Cannot finalize while group operation is active
-    if (group_impl::is_group_active) {
+    if (group_impl::is_group_active()) {
         CCL_THROW("comm.finalize() called while group operation is active - call ccl::group_end() first");
-    }
-
-    // Check if communicator was used during graph recording
-    if (used_in_graph_recording) {
-        LOG_WARN("comm.finalize() called on communicator that was used during graph recording. "
-                 "Event tracking is incomplete - user must manually synchronize all graph submissions. ");
-        return;
     }
 
     LOG_DEBUG("finalize called on comm: ", std::hex, this, ", waiting on ", finalize_events.size(), " stream(s)");
@@ -1517,6 +1958,10 @@ void ccl_comm::finalize() {
 
     // Clear the finalize events map after waiting
     finalize_events.clear();
+    if (serialize_stream->hasMainQueue()) {
+        LOG_DEBUG("waiting on serialize_stream queue");
+        serialize_stream->getMainQueue().ext_oneapi_submit_barrier().wait();
+    }
     LOG_DEBUG("finalize completed on comm: ", std::hex, this);
 #else
     LOG_DEBUG("finalize called on comm: ", std::hex, this, " (no-op for non-SYCL builds)");
@@ -1848,6 +2293,29 @@ ccl::event ccl_comm::reduce_scatter_impl(const void* send_buf,
                                       this,
                                       get_stream_ptr(stream),
                                       use_deps);
+    post_coll(stream, e);
+    return e;
+}
+
+/* gather */
+ccl::event ccl_comm::gather_impl(const void* send_buf,
+                                 void* recv_buf,
+                                 size_t count,
+                                 ccl::datatype dtype,
+                                 int root,
+                                 const ccl::stream::impl_value_t& stream,
+                                 const ccl::gather_attr& attr,
+                                 const ccl::vector_class<ccl::event>& deps) {
+    LOG_DEBUG("gather_impl called on comm: ",
+              std::hex,
+              this,
+              " stream: ",
+              std::hex,
+              get_stream_ptr(stream));
+    ccl::vector_class<ccl::event> newdeps;
+    const ccl::vector_class<ccl::event>& use_deps = pre_coll(stream, deps, newdeps);
+    ccl::event e = ccl_gather(
+        send_buf, recv_buf, count, dtype, root, attr, this, get_stream_ptr(stream), use_deps);
     post_coll(stream, e);
     return e;
 }

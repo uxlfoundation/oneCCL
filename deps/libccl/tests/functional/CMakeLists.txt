@@ -85,7 +85,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CXX_COMPILER_FLAGS} -Wall -Wextra -Wno
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${CXX_COMPILER_FLAGS} -O0 -g -DENABLE_DEBUG")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} ${CXX_COMPILER_FLAGS} -O3")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} ${CXX_COMPILER_FLAGS} -O2 -g")
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (${CMAKE_C_COMPILER_ID} STREQUAL "Clang" AND ${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR(${CMAKE_CXX_COMPILER_ID} STREQUAL "IntelLLVM"))
@@ -179,7 +179,11 @@ foreach(proc_map ${PROC_MAPS})
             add_test (NAME reduce_scatter_${algo}_${N}_${ppn} CONFIGURATIONS reduce_scatter_${algo}_${N}_${ppn} COMMAND mpiexec.hydra -l -n ${N} -ppn ${ppn} ${CCL_INSTALL_TESTS}/reduce_scatter_test --gtest_output=xml:${CCL_INSTALL_TESTS}/reduce_scatter_${algo}_${N}_${ppn}_report.junit.xml)
         endforeach()
 
-        foreach(algo naive)
+        foreach(algo direct)
+            add_test (NAME gather_${algo}_${N}_${ppn} CONFIGURATIONS gather_${algo}_${N}_${ppn} COMMAND mpiexec.hydra -l -n ${N} -ppn ${ppn} ${CCL_INSTALL_TESTS}/gather_test --gtest_output=xml:${CCL_INSTALL_TESTS}/gather_${algo}_${N}_${ppn}_report.junit.xml)
+        endforeach()
+
+        foreach(algo naive; topo)
             add_test (NAME scatter_${algo}_${N}_${ppn} CONFIGURATIONS scatter_${algo}_${N}_${ppn} COMMAND mpiexec.hydra -l -n ${N} -ppn ${ppn} ${CCL_INSTALL_TESTS}/scatter_test --gtest_output=xml:${CCL_INSTALL_TESTS}/scatter_${algo}_${N}_${ppn}_report.junit.xml)
         endforeach()
 

@@ -16,6 +16,7 @@
 
 #include "oneapi/ccl.h"
 #include "oneapi/ccl/v2/types.h"
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <iostream>

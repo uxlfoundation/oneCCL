@@ -426,6 +426,12 @@ void ccl_sched_base::get_pre_post_copy_counts(std::vector<size_t>& d2h_counts,
             d2h_counts.push_back(param.get_send_count());
             h2d_counts.push_back(param.get_recv_count());
             break;
+        case ccl_coll_gather:
+            /* All ranks send count elements; root receives comm_size * count elements. */
+            d2h_counts.push_back(param.get_send_count());
+            if (param.comm->rank() == param.root)
+                h2d_counts.push_back(param.get_recv_count());
+            break;
         case ccl_coll_scatter:
             /* root: send_buf holds comm_size * count; non-root: no send_buf.
              * All ranks receive count elements. */

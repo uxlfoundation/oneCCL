@@ -57,6 +57,12 @@ occp_server_t::occp_server_t(const sockaddr_t& ipaddr,
                              uint32_t batch_size,
                              uint32_t op_timeout,
                              uint32_t ranks_per_send_thread) {
+    /* The OCCP bootstrap is disabled: CCL_KVS_MODE=occp is rejected by the env parser, so
+     * nothing should reach this constructor. Abort rather than bind a listening socket if
+     * anything does. */
+    OCCL_OUT("OCCP bootstrap is disabled in this build");
+    abort();
+
     // Initialize atomic counter
     cnt_ranks_.store(0);
 

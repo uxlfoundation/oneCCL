@@ -38,6 +38,18 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         common/utils/sycl_utils.cpp
         common/api_wrapper/ze_api_wrapper.cpp
 
+        common/ze/ze_cb_event.cpp
+        common/ze/ze_context.cpp
+        common/ze/ze_device.cpp
+        common/ze/ze_driver.cpp
+        common/ze/ze_errors.cpp
+        common/ze/ze_events.cpp
+        common/ze/ze_exp.cpp
+        common/ze/ze_fence.cpp
+        common/ze/ze_group.cpp
+        common/ze/ze_list.cpp
+        common/ze/ze_queue.cpp    
+        
         sched/ze/ze_event_manager.cpp
         sched/ze/ze_handle_manager.cpp
         sched/ze/ze_ipc_event_pool_manager.cpp
@@ -48,11 +60,18 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         coll/algorithms/allgatherv/sycl/allgatherv_large_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_scaleout_sycl.cpp
         coll/algorithms/allgatherv/sycl/allgatherv_pcie.cpp
+        coll/algorithms/allgatherv/sycl/allgather_large_ce.cpp
 
         coll/algorithms/alltoall/sycl/alltoall_sycl.cpp
         coll/algorithms/alltoall/sycl/alltoall_pcie.cpp
         coll/algorithms/alltoall/sycl/alltoall_large_sycl.cpp
+        coll/algorithms/alltoall/sycl/alltoall_large_ce.cpp
         coll/algorithms/alltoall/sycl/alltoall_scaleout_sycl.cpp
+
+        coll/algorithms/alltoallv/sycl/alltoallv_sycl.cpp
+        coll/algorithms/alltoallv/sycl/alltoallv_pcie.cpp
+        coll/algorithms/alltoallv/sycl/alltoallv_large_sycl.cpp
+        coll/algorithms/alltoallv/sycl/alltoallv_scaleout_sycl.cpp
 
         coll/algorithms/allreduce/sycl/allreduce_small_sycl.cpp
         coll/algorithms/allreduce/sycl/allreduce_large_sycl.cpp
@@ -67,27 +86,52 @@ if (CCL_ENABLE_SYCL AND CCL_ENABLE_ZE)
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_scaleout_sycl.cpp
         coll/algorithms/reduce_scatter/sycl/reduce_scatter_pcie.cpp
 
+        coll/algorithms/reduce/sycl/reduce_sycl.cpp
+        coll/algorithms/reduce/sycl/reduce_scaleout_sycl.cpp
+        coll/algorithms/reduce/sycl/reduce_pcie.cpp
+
         coll/algorithms/broadcast/sycl/broadcast_sycl.cpp
         coll/algorithms/broadcast/sycl/broadcast_small_sycl.cpp
         coll/algorithms/broadcast/sycl/broadcast_large_sycl.cpp
         coll/algorithms/broadcast/sycl/broadcast_scaleout_sycl.cpp
+        coll/algorithms/broadcast/sycl/broadcast_scaleout_scatter_allgather.cpp
         coll/algorithms/broadcast/sycl/broadcast_pcie.cpp
 
         coll/algorithms/scatter/sycl/scatter_sycl.cpp
+        coll/algorithms/scatter/sycl/scatter_small_sycl.cpp
+        coll/algorithms/scatter/sycl/scatter_large_sycl.cpp
+        coll/algorithms/scatter/sycl/scatter_scaleout_sycl.cpp
 
         coll/algorithms/barrier/sycl/barrier_sycl.cpp
 
         coll/algorithms/recv/sycl/recv_sycl.cpp
         coll/algorithms/recv/sycl/recv_pcie.cpp
+        coll/algorithms/recv/sycl/recv_simple.cpp
+        coll/algorithms/recv/sycl/recv_memcpy.cpp
         coll/algorithms/send/sycl/send_sycl.cpp
         coll/algorithms/send/sycl/send_pcie.cpp
+        coll/algorithms/send/sycl/send_simple.cpp
+        coll/algorithms/send/sycl/send_memcpy.cpp
 
+        coll/algorithms/utils/cb_events_data.cpp
         coll/algorithms/utils/sycl_coll_base.cpp
         coll/algorithms/utils/sycl_custom_preop.cpp
         coll/algorithms/utils/sycl_pipe_send.cpp
         coll/algorithms/utils/sycl_selection.cpp
+        coll/algorithms/utils/sycl_policy_resolver_scaleup.cpp
+        coll/algorithms/utils/sycl_policy_resolver_scaleout.cpp
+        coll/selection/policy/selection_engine.cpp
+        coll/algorithms/utils/p2p_domain.cpp
         coll/algorithms/utils/sycl_ll256.cpp
         coll/algorithms/utils/simple_ipc.cpp
+        coll/algorithms/utils/sycl_rate_limiter.cpp
+
+        common/utils/ce_utils.cpp
+
+        proxy/proxy.cpp
+        proxy/proxy_func.cpp
+        proxy/proxy_staging.cpp
+        proxy/host_initiated/cmd_persistent_kernel.cpp
     )
 
     # Per-dtype instantiation files matching the extern template
@@ -173,6 +217,7 @@ set(CCL_SRC
     coll/attr/ccl_alltoallv_op_attr.cpp
     coll/attr/ccl_barrier_op_attr.cpp
     coll/attr/ccl_bcast_op_attr.cpp
+    coll/attr/ccl_gather_op_attr.cpp
     coll/attr/ccl_pt2pt_op_attr.cpp
     coll/attr/ccl_reduce_op_attr.cpp
     coll/attr/ccl_reduce_scatter_op_attr.cpp
@@ -193,6 +238,7 @@ set(CCL_SRC
     coll/algorithms/recv/recv.cpp
     coll/algorithms/reduce.cpp
     coll/algorithms/reduce_scatter/reduce_scatter.cpp
+    coll/algorithms/gather/gather.cpp
     coll/algorithms/scatter/scatter.cpp
     coll/algorithms/send/send.cpp
     coll/coll.cpp
@@ -210,6 +256,7 @@ set(CCL_SRC
     coll/selection/selector_recv.cpp
     coll/selection/selector_reduce.cpp
     coll/selection/selector_reduce_scatter.cpp
+    coll/selection/selector_gather.cpp
     coll/selection/selector_scatter.cpp
     coll/selection/selector_send.cpp
 
@@ -311,8 +358,8 @@ set(CCL_SRC
     ccl_cpp_environment.cpp
     ccl_cpp_kvs.cpp
     ccl_cpp_stream.cpp
-    ccl_cpp_window.cpp
     ccl_cpp_utils.cpp
+    ccl_cpp_window.cpp
     ccl_empty_attr.cpp
     ccl_empty_coll_attr.cpp
     ccl_empty_comm_attr.cpp
@@ -320,9 +367,6 @@ set(CCL_SRC
     ccl_empty_init_attr.cpp
     ccl_empty_kvs_attr.cpp
     ccl_empty_stream.cpp
-
-    common/window/window_impl.cpp
-
     ${EXTENSIONS_SRC})
 
 if (ENABLE_STUB_BACKEND)
@@ -409,11 +453,11 @@ list(APPEND SRC_LINK_LIBS
      ${HWLOC_LIB_DIR}/libhwloc.a
      ${ITT_LIB_DIR}/libittnotify.a)
 
-if (ENABLE_MPI)
-    set(SRC_C_FLAGS "${SRC_C_FLAGS} -DCCL_ENABLE_MPI")
-    set(SRC_CXX_FLAGS "${SRC_CXX_FLAGS} -DCCL_ENABLE_MPI")
-    list(APPEND SRC_INCLUDE_DIRS ${MPI_INCLUDE_DIR})
-endif()
+# MPI transport is always built; libccl dlopens libmpi.so.12 at runtime
+# and is never linked against it. mpi.h comes from the vendored deps/mpi/include.
+set(SRC_C_FLAGS "${SRC_C_FLAGS} -DCCL_ENABLE_MPI")
+set(SRC_CXX_FLAGS "${SRC_CXX_FLAGS} -DCCL_ENABLE_MPI")
+list(APPEND SRC_INCLUDE_DIRS ${MPI_INCLUDE_DIR})
 
 link_directories(${SRC_LINK_DIRS})
 
@@ -478,7 +522,7 @@ if ("${LIBFABRIC_DIR}" STREQUAL "")
             DESTINATION ${CMAKE_INSTALL_PREFIX}/opt/mpi/libfabric/lib)
 endif()
 
-if (ENABLE_MPI)
+if (BUNDLE_MPI)
     file(GLOB mpi_bins "${DEPS_DIR}/mpi/bin/*")
     install(PROGRAMS ${mpi_bins}
             DESTINATION ${CMAKE_INSTALL_PREFIX}/opt/mpi/bin)

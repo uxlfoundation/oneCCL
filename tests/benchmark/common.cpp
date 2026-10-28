@@ -465,13 +465,15 @@ static void oneccl_allreduce(struct threadArgs *args, T *value, int average) {
 static testResult_t oneccl_check_correctness(struct threadArgs *args,
                                              onecclDataType_t type,
                                              onecclRedOp_t /*operation*/,
-                                             int /*root*/, int in_place,
+                                             int root, int in_place,
                                              int64_t *wrongElts) {
     size_t const count = args->expectedBytes / word_size(type);
 
     auto *wrong_per_gpu = new int64_t[args->nGpus];
     bool isReduceScatter =
         (args->collTest && strcmp(args->collTest->name, "ReduceScatter") == 0);
+    bool isScatter =
+        (args->collTest && strcmp(args->collTest->name, "Scatter") == 0);
     size_t recvcount = args->expectedBytes / word_size(type);
 
     for (int i = 0; i < args->nGpus; i++) {
@@ -488,6 +490,11 @@ static testResult_t oneccl_check_correctness(struct threadArgs *args,
             } else {
                 data = args->recvbuffs[i];
             }
+        } else if (isScatter && in_place && rank == root) {
+            // in-place scatter result for the root aliases into its own block
+            // of the send buffer (recv == send + root*count)
+            size_t offBytes = (size_t)root * recvcount * word_size(type);
+            data = (char *)args->sendbuffs[i] + offBytes;
         } else {
             // other collectives: existing semantics
             data = in_place ? (void *)args->recvbuffs[i] : args->recvbuffs[i];
@@ -536,6 +543,11 @@ static testResult_t oneccl_start_coll(struct threadArgs *args,
                                       int in_place, int /*iter*/) {
     size_t const count = args->nbytes / word_size(type);
 
+    if (args->collTest == nullptr) {
+        fprintf(stderr, "ERROR: args->collTest is null.\n");
+        return testInternalError;
+    }
+
     if (args->nGpus > 1) {
         fprintf(stderr, "ERROR: Multiple GPUs per process are not currently "
                         "supported. Please use nGpus=1.\n");
@@ -545,14 +557,21 @@ static testResult_t oneccl_start_coll(struct threadArgs *args,
     if (args->nGpus > 1) {
         ONECCLCHECK(onecclGroupStart());
     }
+    bool isScatter = (strcmp(args->collTest->name, "Scatter") == 0);
     for (int i = 0; i < args->nGpus; i++) {
         int rank =
             ((args->proc * args->nThreads + args->thread) * args->nGpus + i);
         void *recv_buff = args->recvbuffs[i];
         void *send_buff = args->sendbuffs[i];
-        TESTCHECK(args->collTest->runColl(
-            (in_place ? recv_buff : send_buff), recv_buff, count, type,
-            operation, root, rank, args->comms[i], args->queues[i]));
+        // Scatter's large buffer is the send side (count*nranks) and only the
+        // root is ever in-place, aliasing its recv into sendbuff. Every other
+        // collective models in-place as recv==send.
+        void *coll_send = (in_place && !isScatter) ? recv_buff : send_buff;
+        void *coll_recv =
+            (in_place && isScatter && rank == root) ? send_buff : recv_buff;
+        TESTCHECK(args->collTest->runColl(coll_send, coll_recv, count, type,
+                                          operation, root, rank, args->comms[i],
+                                          args->queues[i]));
     }
     if (args->nGpus > 1) {
         ONECCLCHECK(onecclGroupEnd());
@@ -679,7 +698,16 @@ testResult_t timeTest(struct threadArgs *args, onecclDataType_t type,
     for (int iter = 0; iter < warmup_iters; iter++) {
         TESTCHECK(oneccl_start_coll(args, type, operation, root, 0, iter));
     }
+    // Touch the in-place path once here so that any one-time library message it
+    // triggers (e.g. an in-place fallback warning) is emitted before the table
+    // rather than in the middle of a result row.
+    if (args->runInplace == 1) {
+        TESTCHECK(oneccl_start_coll(args, type, operation, root, 1, 0));
+    }
     TESTCHECK(oneccl_complete_coll(args));
+
+    // Make sure warm-up output from every rank is out before the table starts.
+    barrier(args);
 
     if (!header_printed) {
         print_benchmark_headers(run_inplace);
@@ -840,8 +868,8 @@ static testResult_t discover_sycl_platform(sycl::platform *backend_platform) {
 static void print_benchmark_headers(int run_inplace) {
     PRINT("#\n");
     if (run_inplace != 0) {
-        PRINT("# %10s  %12s  %8s  %6s  %6s                 out-of-place        "
-              "                         in-place         \n",
+        PRINT("# %10s  %12s  %8s  %6s  %6s                 out-of-place"
+              "                    in-place\n",
               "", "", "", "", "");
         PRINT("# %10s  %12s  %8s  %6s  %6s  %7s  %6s  %6s %6s  %7s  %6s  %6s "
               "%6s\n",

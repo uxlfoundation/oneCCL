@@ -36,6 +36,13 @@ enum class SplitType {
     EvenNoOverlap,
 };
 
+enum class TransmitColl {
+    Allreduce,
+    ReduceScatter,
+    Allgather,
+    Reduce,
+};
+
 template <typename message_t>
 struct WorkSizeData {
     constexpr static size_t MAX_RANKS = 16; // TODO take this number from central source

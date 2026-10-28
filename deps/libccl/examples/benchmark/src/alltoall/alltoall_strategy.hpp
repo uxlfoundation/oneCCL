@@ -16,9 +16,15 @@
 
 #pragma once
 
+#include "coll_type.hpp"
+
 struct alltoall_strategy_impl {
     static constexpr const char* class_name() {
         return "alltoall";
+    }
+
+    static constexpr coll_type class_id() {
+        return coll_type::alltoall;
     }
 
     size_t get_send_multiplier() {

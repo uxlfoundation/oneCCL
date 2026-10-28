@@ -37,6 +37,9 @@ typedef enum onecclPluginCall {
     ONECCL_PLUGIN_PLATFORM_SCORE,
     ONECCL_PLUGIN_MEM_ALLOC,
     ONECCL_PLUGIN_MEM_FREE,
+    ONECCL_PLUGIN_GET_PEER_DEVICE_POINTER,
+    ONECCL_PLUGIN_GET_LSA_DEVICE_POINTER,
+    ONECCL_PLUGIN_GET_LOCAL_DEVICE_POINTER,
 } onecclPluginCall_t;
 
 // Typedef for the only plugin entrypoint
@@ -54,6 +57,12 @@ typedef onecclResult_t (*onecclPluginCallGroupEnd_t)();
 typedef onecclResult_t (*onecclPluginCallPlatformScore_t)(int *score_ptr);
 typedef onecclResult_t (*onecclPluginCallMemAlloc_t)(void **ptr, size_t size);
 typedef onecclResult_t (*onecclPluginCallMemFree_t)(void *ptr);
+typedef onecclResult_t (*onecclPluginCallGetPeerDevicePointer_t)(
+    onecclWindow_t window, size_t offset, int peer, void **out_ptr);
+typedef onecclResult_t (*onecclPluginCallGetLsaDevicePointer_t)(
+    onecclWindow_t window, size_t offset, int lsa_peer, void **out_ptr);
+typedef onecclResult_t (*onecclPluginCallGetLocalDevicePointer_t)(
+    onecclWindow_t window, size_t offset, void **out_ptr);
 
 // Structure holding pointers to the plugin's implementation functions
 typedef struct onecclPlugin {

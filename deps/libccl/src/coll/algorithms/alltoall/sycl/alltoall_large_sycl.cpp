@@ -23,6 +23,7 @@ ccl::event alltoall_large(const void* send_buf,
                           std::vector<size_t>& offsets,
                           ccl::datatype dtype,
                           ccl_comm* comm,
+                          const std::shared_ptr<ccl_comm> p2p_comm,
                           ccl_stream* global_stream,
                           const ccl::vector_class<ccl::event>& deps) {
     LOG_DEBUG("invoking alltoall_large");
@@ -39,7 +40,8 @@ ccl::event alltoall_large(const void* send_buf,
     // no constraints on rank reordering - performance should not be affected
     // end-to-end transfers are performed
     if (comm->is_multi_thread_instance() == true) {
-        LOG_DEBUG("|MT|: invoking alltoall_large");
+        // LOG_DEBUG("|MT|: invoking alltoall_large");
+        CCL_THROW("simple protocol with SPMD is not supported");
     }
     else {
         LOG_DEBUG("invoking alltoall_large");
@@ -47,7 +49,7 @@ ccl::event alltoall_large(const void* send_buf,
 
     auto lambda = [&]<typename T>() {
         return alltoall_large_impl<T>(
-            send_buf, recv_buf, count, offsets, dtype, comm, global_stream, deps);
+            send_buf, recv_buf, count, offsets, dtype, comm, p2p_comm, global_stream, deps);
     };
     return invoke_collective(lambda, dtype);
 }

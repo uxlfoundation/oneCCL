@@ -53,6 +53,7 @@ public:
 
     bool is_dev_close_by_pci(int domain, int bus, int dev, int func);
     int get_numa_node_by_pci(int domain, int bus, int dev, int func);
+    ssize_t get_pcie_switch_by_pci(int domain, int bus, int dev, int func);
 
     void membind_thread(int numa_node);
     int get_numa_node_by_cpu(int cpu);
@@ -78,4 +79,7 @@ private:
     // maps from aligned ptr (which was returned to the user by alloc_memory)
     //      to <misaligned ptr (returned by hwloc_alloc_membind), len>
     std::map<void*, std::pair<void*, size_t>> allocated_memory_map;
+    int is_likely_pcie_switch(hwloc_obj_t obj);
+    // read device serial number
+    uint64_t read_dsn_from_config(hwloc_obj_t obj);
 };

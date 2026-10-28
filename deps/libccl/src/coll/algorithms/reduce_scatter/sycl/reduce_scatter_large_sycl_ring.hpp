@@ -18,51 +18,11 @@
 #include "oneapi/ccl.hpp"
 #include "common/global/global.hpp"
 #include "coll/algorithms/utils/sycl_barrier.hpp"
+#include "coll/algorithms/utils/sycl_copy.hpp"
 #include "coll/algorithms/utils/sycl_reductions.hpp"
 #include "coll/algorithms/utils/sycl_ptrs.hpp"
 //#include "coll/algorithms/utils/sycl_ll256.hpp"
 #include "coll/algorithms/utils/tvisa/include/gen_visa_templates.hpp"
-
-#define RS_USE_PARALLEL_FOR 1
-
-using message_t = sycl::vec<uint32_t, 4>;
-
-template <typename T>
-void inline copy_kernel(void *dst_ptr, void *src_ptr, size_t idx) {
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__) && defined(CCL_SYCL_ENABLE_ARCB)
-    message_t v;
-    if (sizeof(T) == 16) {
-        lscLoad<16, CacheCtrl::L1UC_L3C>(v, ((message_t *)src_ptr) + idx);
-        lscStore<16, CacheCtrl::L1WB_L3WB>(((message_t *)dst_ptr) + idx, v);
-    }
-    else {
-        ((T *)dst_ptr)[idx] = ((T *)src_ptr)[idx];
-    }
-#else
-    ((T *)dst_ptr)[idx] = ((T *)src_ptr)[idx];
-#endif
-}
-
-template <typename T, int vec_size>
-void inline copy(void *dst_ptr,
-                 void *src_ptr,
-                 const size_t count,
-                 const size_t offset,
-                 const sycl::nd_item<1> it) {
-    const size_t idx = it.get_global_linear_id() + offset;
-    const size_t packed_count = count / vec_size;
-
-    if (idx < packed_count) {
-        using AT = sycl::vec<T, vec_size>;
-        copy_kernel<AT>(dst_ptr, src_ptr, idx);
-    }
-    else {
-        const size_t new_idx = idx + (vec_size - 1) * packed_count;
-        if (new_idx < count) {
-            copy_kernel<T>(dst_ptr, src_ptr, new_idx);
-        }
-    }
-}
 
 #if 0
 template <typename T>
@@ -133,32 +93,8 @@ void inline reduce_copy(void *out1,
 }
 
 template <typename T, int full_vec_size, int partial_vec_size>
-#if !RS_USE_PARALLEL_FOR
-SYCL_EXT_ONEAPI_FUNCTION_PROPERTY((syclexp::nd_range_kernel<1>))
-#endif
-void inline copy_kernel_wrap(void *dst_ptr, void *src_ptr, const size_t count, int use_full_vector) {
-    const sycl::nd_item<1> it = syclext::this_work_item::get_nd_item<1>();
-    const size_t num_threads = it.get_global_range(0);
-    const int vec_size = use_full_vector ? full_vec_size : partial_vec_size;
-    const size_t req_threads = count / vec_size + count % vec_size;
-
-    if (use_full_vector) {
-#pragma unroll
-        for (size_t offset = 0; offset < req_threads; offset += num_threads) {
-            copy<T, full_vec_size>(dst_ptr, src_ptr, count, offset, it);
-        }
-    }
-    else {
-#pragma unroll
-        for (size_t offset = 0; offset < req_threads; offset += num_threads) {
-            copy<T, partial_vec_size>(dst_ptr, src_ptr, count, offset, it);
-        }
-    }
-}
-
-template <typename T, int full_vec_size, int partial_vec_size>
 struct CopyKernel {
-    CopyKernel(void *dst_ptr, void *src_ptr, const size_t count, ccl_comm *node_comm, int use_full_vector)
+    CopyKernel(void *dst_ptr, const void *src_ptr, const size_t count, ccl_comm *node_comm, int use_full_vector)
             : dst_ptr(dst_ptr),
               src_ptr(src_ptr),
               count(count),
@@ -175,7 +111,7 @@ struct CopyKernel {
     }
 
     void *dst_ptr;
-    void *src_ptr;
+    const void *src_ptr;
     size_t count;
     ccl_comm_flag_data flag_data;
     int use_full_vector;
@@ -297,6 +233,7 @@ sycl::event reduce_scatter_large_su_ring_multi_kernels(const void *send_buf,
                                                        ccl::datatype dtype,
                                                        ccl::reduction reduction,
                                                        ccl_comm *comm,
+                                                       std::shared_ptr<ccl_comm> p2p_comm,
                                                        ccl_stream *global_stream,
                                                        sycl_ptrs_type &sycl_ptrs,
                                                        const ccl::vector_class<ccl::event> &deps) {
@@ -305,9 +242,8 @@ sycl::event reduce_scatter_large_su_ring_multi_kernels(const void *send_buf,
     const size_t dsize = ccl_dtype.size();
     sycl::queue q = global_stream->get_native_stream();
 
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
-    const int N = node_comm->size();
-    const int rank = node_comm->rank();
+    const int N = p2p_comm->size();
+    const int rank = p2p_comm->rank();
     const int dest_rank = (rank + 1) % N;
 
     bool use_full_vector = can_use_full_vector(send_buf, recv_buf, recv_count, dsize);
@@ -333,7 +269,7 @@ sycl::event reduce_scatter_large_su_ring_multi_kernels(const void *send_buf,
 #endif
 
     const int pipeline_size = N;
-    const size_t chunk_size = ccl::global_data::env().sycl_tmp_buf_size / pipeline_size;
+    const size_t chunk_size = ccl::global_data::env().sycl_tmp_buf_size / pipeline_size / sizeof(message_t) * sizeof(message_t);
     const size_t chunk_count = chunk_size / dsize;
 
     LOG_DEBUG("simple ring multiple kernel: rank: ", rank, " comm size: ", N, " recv_count: ", recv_count);
@@ -344,8 +280,8 @@ sycl::event reduce_scatter_large_su_ring_multi_kernels(const void *send_buf,
 
     std::array<void *, ARC_MAX_NUM> work_bufs;
     std::array<void *, ARC_MAX_NUM> remote_work_bufs;
-    work_bufs[0] = get_tmp_buf(0, comm);
-    remote_work_bufs[0] = get_remote_node_tmp_buf(0, comm)[dest_rank];
+    work_bufs[0] = get_large_tmp_buf(0, comm);
+    remote_work_bufs[0] = get_remote_large_tmp_buf(0, p2p_comm.get())[dest_rank];
     for (int i = 1; i < pipeline_size; i++) {
         work_bufs[i] = (char *)work_bufs[i - 1] + chunk_size;
         remote_work_bufs[i] = (char *)remote_work_bufs[i - 1] + chunk_size;
@@ -354,7 +290,7 @@ sycl::event reduce_scatter_large_su_ring_multi_kernels(const void *send_buf,
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event work_event;
 
-    invoke_barrier(node_comm, q, dep_events, is_cpu_barrier);
+    invoke_barrier(p2p_comm, q, dep_events, is_cpu_barrier);
 
     const bool use_memcpy = ccl::global_data::env().sycl_copy_engine;
     size_t num_threads = ccl::global_data::env().sycl_num_threads;
@@ -410,7 +346,7 @@ sycl::event reduce_scatter_large_su_ring_multi_kernels(const void *send_buf,
             }
 
             // barrier
-            invoke_p2p_barrier(node_comm, q, {}, is_cpu_barrier);
+            invoke_p2p_barrier(p2p_comm, q, {}, is_cpu_barrier);
 
             // local reduce
             if (i < N - 2) {
@@ -455,7 +391,7 @@ sycl::event reduce_scatter_large_su_ring_multi_kernels(const void *send_buf,
     if (reduction == ccl::reduction::avg) {
         std::vector<sycl::event> evs;
         evs.push_back(work_event);
-        work_event = sycl_average(q, recv_buf, recv_count, comm->size(), dtype, evs);
+        work_event = sycl_average(q, recv_buf, recv_count, p2p_comm->size(), dtype, evs);
     }
     else {
         std::vector<sycl::event> evts;
@@ -475,7 +411,9 @@ struct reduce_scatter_coll_params {
 };
 
 template <typename T, int vec_size>
+#if !RS_USE_PARALLEL_FOR 
 SYCL_EXT_ONEAPI_FUNCTION_PROPERTY((syclexp::nd_range_kernel<1>))
+#endif
 void inline reduce_scatter_kernel_wrap(const void *send_buf,
                                        void *recv_buf,
                                        size_t recv_count,
@@ -583,6 +521,7 @@ sycl::event reduce_scatter_large_su_ring_single_kernel(const void *send_buf,
                                                        ccl::datatype dtype,
                                                        ccl::reduction reduction,
                                                        ccl_comm *comm,
+                                                       std::shared_ptr<ccl_comm> p2p_comm,
                                                        ccl_stream *global_stream,
                                                        sycl_ptrs_type &sycl_ptrs,
                                                        const ccl::vector_class<ccl::event> &deps) {
@@ -591,9 +530,8 @@ sycl::event reduce_scatter_large_su_ring_single_kernel(const void *send_buf,
     const size_t dsize = ccl_dtype.size();
     sycl::queue q = global_stream->get_native_stream();
 
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
-    const int N = node_comm->size();
-    const int rank = node_comm->rank();
+    const int N = p2p_comm->size();
+    const int rank = p2p_comm->rank();
     const int dest_rank = (rank + 1) % N;
 
     bool use_full_vector = can_use_full_vector(send_buf, recv_buf, recv_count, dsize);
@@ -609,8 +547,8 @@ sycl::event reduce_scatter_large_su_ring_single_kernel(const void *send_buf,
     std::array<void *, pipeline_size> work_bufs;
     std::array<void *, pipeline_size> remote_work_bufs;
     for (int i = 0; i < pipeline_size; i++) {
-        work_bufs[i] = get_tmp_buf(i, comm);
-        remote_work_bufs[i] = get_remote_node_tmp_buf(i, comm)[dest_rank];
+        work_bufs[i] = get_large_tmp_buf(i, comm);
+        remote_work_bufs[i] = get_remote_large_tmp_buf(i, p2p_comm.get())[dest_rank];
     }
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
@@ -638,8 +576,8 @@ sycl::event reduce_scatter_large_su_ring_single_kernel(const void *send_buf,
     ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     reduce_scatter_coll_params params;
-    params.flag = node_comm->flag_data();
-    params.barrier_data = node_comm->barrier_data();
+    params.flag = p2p_comm->flag_data();
+    params.barrier_data = p2p_comm->barrier_data();
     params.work_bufs = work_bufs;
     params.remote_work_bufs = remote_work_bufs;
     params.chunk_size = chunk_size;
@@ -673,6 +611,7 @@ sycl::event reduce_scatter_large_su_ring(const void *send_buf,
                                          ccl::datatype dtype,
                                          ccl::reduction reduction,
                                          ccl_comm *comm,
+                                         std::shared_ptr<ccl_comm> p2p_comm,
                                          ccl_stream *global_stream,
                                          sycl_ptrs_type &sycl_ptrs,
                                          const ccl::vector_class<ccl::event> &deps) {
@@ -681,11 +620,11 @@ sycl::event reduce_scatter_large_su_ring(const void *send_buf,
 
     if (use_memcpy || !use_single_kernel) {
         return reduce_scatter_large_su_ring_multi_kernels<T>(
-            send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, sycl_ptrs, deps);
+            send_buf, recv_buf, recv_count, dtype, reduction, comm, p2p_comm, global_stream, sycl_ptrs, deps);
     }
     else {
         return reduce_scatter_large_su_ring_single_kernel<T>(
-            send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, sycl_ptrs, deps);
+            send_buf, recv_buf, recv_count, dtype, reduction, comm, p2p_comm, global_stream, sycl_ptrs, deps);
     }
 }
 
@@ -700,6 +639,7 @@ sycl::event reduce_scatter_large_su_ring(const void *send_buf,
                                                           ccl::datatype dtype, \
                                                           ccl::reduction reduction, \
                                                           ccl_comm *comm, \
+                                                          std::shared_ptr<ccl_comm> p2p_comm, \
                                                           ccl_stream *global_stream, \
                                                           sycl_ptrs_type &sycl_ptrs, \
                                                           const ccl::vector_class<ccl::event> &deps)

@@ -182,6 +182,10 @@ case "$runtime" in
         broadcast_algos="ring double_tree naive"
         reduce_algos="rabenseifner ring tree"
         reduce_scatter_algos="ring"
+        if [[ ${hw} != "pvc" ]]
+        then
+            scatter_algos="naive"
+        fi
 
         if [ ${runtime} == "mpi_adjust" ]
         then
@@ -274,6 +278,12 @@ case "$runtime" in
                 do
                     reduce_scatter_exec_env=$(set_tests_option "CCL_REDUCE_SCATTER=${algo}" "${func_exec_env}")
                     run_test_cmd "${reduce_scatter_exec_env} ctest --output-junit ${TESTS_DIR}/junit/reduce_scatter_${algo}_${n}_${ppn}.junit.xml -V -C reduce_scatter_${algo}_${n}_${ppn}"
+                done
+
+                for algo in ${scatter_algos}
+                do
+                    scatter_exec_env=$(set_tests_option "CCL_SCATTER=${algo}" "${func_exec_env}")
+                    run_test_cmd "${scatter_exec_env} ctest --output-junit ${TESTS_DIR}/junit/scatter_${algo}_${n}_${ppn}.junit.xml -V -C scatter_${algo}_${n}_${ppn}"
                 done
             done
         done

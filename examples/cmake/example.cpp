@@ -129,7 +129,7 @@ int main() {
                 });
         });
 
-        ccl_queue.ext_oneapi_set_external_event(first_compute);
+        ccl_queue.ext_oneapi_submit_barrier({first_compute});
         onecclResult_t result =
             onecclAllReduce(sendbuff, recvbuff, kCount, ONECCL_INT, ONECCL_SUM,
                             comm, ccl_stream);
@@ -137,7 +137,7 @@ int main() {
             std::cerr << "AllReduce operation failed.\n";
             return 1;
         }
-        auto allreduce_event = compute_queue.ext_oneapi_get_last_event();
+        auto allreduce_event = compute_queue.ext_oneapi_submit_barrier();
 
         compute_queue.submit([&](sycl::handler &cgh) {
             cgh.depends_on(allreduce_event);

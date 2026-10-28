@@ -80,7 +80,8 @@ ccl::event allgatherv_small(sycl::queue& q,
                             ccl::datatype dtype,
                             ccl_comm* comm,
                             ccl_stream* global_stream,
-                            const ccl::vector_class<ccl::event>& deps) {
+                            const ccl::vector_class<ccl::event>& deps,
+                            bool& done) {
     if (comm->is_multi_thread_instance() == true) {
         LOG_DEBUG("|MT|: invoking allgatherv_small");
     }
@@ -90,7 +91,7 @@ ccl::event allgatherv_small(sycl::queue& q,
 
     auto lambda = [&]<typename T>() {
         return allgatherv_small_impl<T>(
-            q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, deps);
+            q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, deps, done);
     };
     return invoke_collective(lambda, dtype);
 }

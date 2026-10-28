@@ -4,6 +4,11 @@ add_library(oneCCL2 SHARED api.cpp debug.cpp)
 
 target_link_libraries(oneCCL2 PUBLIC ${CMAKE_DL_LIBS})
 
+# std::shared_mutex needs pthread_rwlock_*, which lives in libpthread on
+# glibc < 2.34; record it as NEEDED so hosts without libpthread can load us
+find_package(Threads REQUIRED)
+target_link_libraries(oneCCL2 PRIVATE Threads::Threads)
+
 # Specify the public headers for the oneCCL2 library
 target_include_directories(oneCCL2 PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>"
@@ -71,5 +76,8 @@ target_compile_definitions(oneCCL2 PRIVATE
 set_target_properties(oneCCL2 PROPERTIES OUTPUT_NAME ccl)
 set_target_properties(oneCCL2 PROPERTIES VERSION 2.0)
 set_target_properties(oneCCL2 PROPERTIES SOVERSION 2)
+# Plugins are installed next to libccl.so.2 (flat in wheels); keep them
+# resolvable without LD_LIBRARY_PATH
+set_target_properties(oneCCL2 PROPERTIES INSTALL_RPATH "\$ORIGIN")
 
 install(TARGETS oneCCL2 LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)

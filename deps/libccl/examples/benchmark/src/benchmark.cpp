@@ -261,6 +261,9 @@ void create_cpu_colls(bench_init_attr& init_attr, user_options_t& options, coll_
         else if (name == reduce_scatter_strategy_impl::class_name()) {
             colls.emplace_back(new cpu_reduce_scatter_coll<Dtype>(init_attr));
         }
+        else if (name == scatter_strategy_impl::class_name()) {
+            colls.emplace_back(new cpu_scatter_coll<Dtype>(init_attr));
+        }
         else {
             ASSERT(0, "create_colls error, unknown coll name: %s", name.c_str());
         }
@@ -311,6 +314,9 @@ void create_sycl_colls(bench_init_attr& init_attr, user_options_t& options, coll
         }
         else if (name == reduce_scatter_strategy_impl::class_name()) {
             colls.emplace_back(new sycl_reduce_scatter_coll<Dtype>(init_attr));
+        }
+        else if (name == scatter_strategy_impl::class_name()) {
+            colls.emplace_back(new sycl_scatter_coll<Dtype>(init_attr));
         }
         else {
             ASSERT(0, "create_colls error, unknown coll name: %s", name.c_str());

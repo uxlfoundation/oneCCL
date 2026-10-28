@@ -250,6 +250,58 @@ atl_status_t atl_mpi::allgatherv(atl_ep_t& ep,
     return ATL_MPI_RET(ret);
 }
 
+atl_status_t atl_mpi::scatter(atl_ep_t& ep,
+                              const void* send_buf,
+                              void* recv_buf,
+                              size_t send_len,
+                              int root,
+                              atl_req_t& req) {
+    int ret = MPI_SUCCESS;
+
+    atl_mpi_ep_t* mpi_ep = ((atl_mpi_ep_t*)ep.internal);
+    atl_mpi_req_t* mpi_req = ((atl_mpi_req_t*)req.internal);
+
+    init_req(req);
+
+    int rank, comm_size;
+    MPI_Comm_rank(mpi_ep->mpi_comm, &rank);
+    MPI_Comm_size(mpi_ep->mpi_comm, &comm_size);
+
+    const bool is_inplace = ccl::is_scatter_inplace(send_buf,
+                                                    recv_buf,
+                                                    send_len,
+                                                    1 /*dtype_size*/, // MPI_CHAR
+                                                    rank,
+                                                    root,
+                                                    comm_size);
+
+    if (ctx.sync_coll) {
+        ret = MPI_Scatter_c(send_buf,
+                            static_cast<Compat_MPI_Count_t>(send_len),
+                            MPI_CHAR,
+                            is_inplace ? MPI_IN_PLACE : recv_buf,
+                            static_cast<Compat_MPI_Count_t>(send_len),
+                            MPI_CHAR,
+                            root,
+                            mpi_ep->mpi_comm);
+    }
+    else {
+        ret = MPI_Iscatter_c(send_buf,
+                             static_cast<Compat_MPI_Count_t>(send_len),
+                             MPI_CHAR,
+                             is_inplace ? MPI_IN_PLACE : recv_buf,
+                             static_cast<Compat_MPI_Count_t>(send_len),
+                             MPI_CHAR,
+                             root,
+                             mpi_ep->mpi_comm,
+                             &mpi_req->native_req);
+    }
+
+    check_ep(ep);
+
+    return ATL_MPI_RET(ret);
+}
+
 atl_status_t atl_mpi::allreduce(atl_ep_t& ep,
                                 const void* send_buf,
                                 void* recv_buf,
@@ -294,7 +346,7 @@ atl_status_t atl_mpi::allreduce(atl_ep_t& ep,
 atl_status_t atl_mpi::alltoall(atl_ep_t& ep,
                                const void* send_buf,
                                void* recv_buf,
-                               int len,
+                               size_t len,
                                atl_req_t& req) {
     int ret = MPI_SUCCESS;
 

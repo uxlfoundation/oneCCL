@@ -26,29 +26,35 @@ int vectorized_counts(queue &q,
                       int rank,
                       size_t count) {
     /* create buffers */
-    sycl::buffer<int> send_buf(count * size);
-    sycl::buffer<int> recv_buf(count * size);
+    std::vector<size_t> send_counts(size);
+    for (int i = 0; i < size; i++) {
+        send_counts[i] = std::min(static_cast<size_t>(i + 1), count);
+    }
+    send_counts[size - 1] = count; // make sure the last rank sends the full count
+    size_t total_count = std::accumulate(send_counts.begin(), send_counts.end(), 0);
+    size_t elem_count = rank == size - 1 ? count : std::min(static_cast<size_t>(rank + 1), count);
+    std::vector<size_t> recv_counts(size, elem_count);
 
-    std::vector<size_t> send_counts(size, count);
-    std::vector<size_t> recv_counts(size, count);
+    sycl::buffer<int> send_buf(total_count);
+    sycl::buffer<int> recv_buf(elem_count * size);
 
     {
         /* open buffers and initialize them on the host side */
         sycl::host_accessor send_buf_acc(send_buf, sycl::write_only);
         sycl::host_accessor recv_buf_acc(recv_buf, sycl::write_only);
 
-        for (int i = 0; i < size; i++) {
-            for (size_t j = 0; j < count; j++) {
-                send_buf_acc[(i * count) + j] = i;
-                recv_buf_acc[(i * count) + j] = -1;
-            }
+        for (size_t j = 0; j < total_count; j++) {
+            send_buf_acc[j] = rank;
+        }
+        for (size_t j = 0; j < elem_count * size; j++) {
+            recv_buf_acc[j] = -1;
         }
     }
 
     /* open send_buf and modify it on the device side */
     q.submit([&](auto &h) {
         sycl::accessor send_buf_acc(send_buf, h, sycl::write_only);
-        h.parallel_for(count * size, [=](auto id) {
+        h.parallel_for(total_count, [=](auto id) {
             send_buf_acc[id] += 1;
         });
     });
@@ -62,8 +68,8 @@ int vectorized_counts(queue &q,
     /* open recv_buf and check its correctness on the device side */
     q.submit([&](auto &h) {
         sycl::accessor recv_buf_acc(recv_buf, h, sycl::write_only);
-        h.parallel_for(count * size, [=](auto id) {
-            if (recv_buf_acc[id] != rank + 1) {
+        h.parallel_for(elem_count * size, [=](auto id) {
+            if (recv_buf_acc[id] != static_cast<int>(id / elem_count + 1)) {
                 recv_buf_acc[id] = -1;
             }
         });
@@ -75,7 +81,7 @@ int vectorized_counts(queue &q,
     /* check the result of the test on the host side */
     {
         sycl::host_accessor recv_buf_acc(recv_buf, sycl::read_only);
-        for (size_t i = 0; i < count * size; i++) {
+        for (size_t i = 0; i < elem_count * size; i++) {
             if (recv_buf_acc[i] == -1) {
                 std::cout << "FAILED\n";
                 return -1;

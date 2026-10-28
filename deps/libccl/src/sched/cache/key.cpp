@@ -74,6 +74,7 @@ void ccl_sched_key::set(const ccl_coll_param& param, const ccl_coll_attr& attr) 
             f.count1 = param.get_send_count();
             f.reduction = param.reduction;
             break;
+        case ccl_coll_gather:
         case ccl_coll_scatter:
             f.count1 = param.get_send_count();
             f.root = param.root;

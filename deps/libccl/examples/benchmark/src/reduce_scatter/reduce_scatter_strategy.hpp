@@ -17,11 +17,16 @@
 #pragma once
 
 #include "cpu_coll.hpp"
+#include "coll_type.hpp"
 #include "reduce_scatter_strategy.hpp"
 
 struct reduce_scatter_strategy_impl {
     static constexpr const char* class_name() {
         return "reduce_scatter";
+    }
+
+    static constexpr coll_type class_id() {
+        return coll_type::reduce_scatter;
     }
 
     size_t get_send_multiplier() {

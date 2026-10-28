@@ -386,4 +386,42 @@ struct ProtoBase {
         ptr = outbuf + offset;
         storeOutput(ptr, v, nelems, gr);
     }
+    static inline void recvSend(T *recvbuf,
+                            T *remotebuf,
+                            int wireId,
+                            int peer,
+                            uint32_t flag,
+                            uint32_t slot,
+                            bool p2p,
+                            AccessGranularity gr) {
+        message_t v;
+
+        bool retry;
+        sbarrier_wait_compat(p2p);
+        do {
+            retry = false;
+            retry |= recvMessages(v, recvbuf, flag);
+        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+
+        insertFlags(v, flag);
+        sendMessages(remotebuf, v);
+        sbarrier_signal_compat(p2p);
+    }
+
+    static inline void recv(T *recvbuf,
+                            int wireId,
+                            int peer,
+                            uint32_t flag,
+                            uint32_t slot,
+                            bool p2p,
+                            AccessGranularity gr) {
+        message_t v;
+
+        bool retry;
+        sbarrier_wait_compat(p2p);
+        do {
+            retry = false;
+            retry |= recvMessages(v, recvbuf, flag);
+        } while (sycl::any_of_group(sycl::ext::oneapi::this_work_item::get_sub_group(), retry));
+    }
 };

@@ -21,11 +21,12 @@ namespace {
 void AllToAllGetCollByteCount(size_t *sendcount, size_t *recvcount,
                               size_t *paramcount, size_t *sendInplaceOffset,
                               size_t *recvInplaceOffset, size_t count,
-                              size_t /*eltSize*/, int nranks) {
-    // count = per-peer element count
-    *sendcount = count * nranks;
-    *recvcount = count * nranks;
-    *paramcount = count;
+                              size_t eltSize, int nranks) {
+    // count = whole-buffer element count, as in nccl-tests
+    size_t base = (count / nranks) & -(16 / eltSize);
+    *sendcount = base * nranks;
+    *recvcount = base * nranks;
+    *paramcount = base;
     *sendInplaceOffset = 0;
     *recvInplaceOffset = 0;
 }
@@ -35,7 +36,7 @@ testResult_t AllToAllInitData(struct threadArgs *args, onecclDataType_t type,
                               int in_place) {
     size_t const count = args->nbytes / word_size(type);
     int const nranks = args->nProcs * args->nThreads * args->nGpus;
-
+    args->reportErrors = in_place ? 0 : 1;
     for (int i = 0; i < args->nGpus; i++) {
         int const rank =
             ((args->proc * args->nThreads + args->thread) * args->nGpus + i);

@@ -1,4 +1,6 @@
 {
-  global: *ccl*;
-  local: *;
+global:
+    *ccl*;
+local:
+    *;
 };

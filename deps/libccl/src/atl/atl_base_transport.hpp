@@ -104,6 +104,17 @@ public:
                                     const size_t* offsets,
                                     atl_req_t& req) = 0;
 
+    // MPI_Scatter semantics: root's send_buf holds comm_size * send_len bytes
+    // laid out as [rank_0][rank_1]...[rank_{n-1}]; every rank receives its
+    // own send_len bytes into recv_buf. On non-root ranks send_buf is
+    // ignored — pass nullptr.
+    virtual atl_status_t scatter(atl_ep_t& ep,
+                                 const void* send_buf,
+                                 void* recv_buf,
+                                 size_t send_len,
+                                 int root,
+                                 atl_req_t& req) = 0;
+
     virtual atl_status_t allreduce(atl_ep_t& ep,
                                    const void* send_buf,
                                    void* recv_buf,
@@ -115,7 +126,7 @@ public:
     virtual atl_status_t alltoall(atl_ep_t& ep,
                                   const void* send_buf,
                                   void* recv_buf,
-                                  int len,
+                                  size_t len,
                                   atl_req_t& req) = 0;
 
     virtual atl_status_t alltoallv(atl_ep_t& ep,

@@ -24,10 +24,22 @@
 #include "coll/algorithms/utils/transmit/transmit.hpp"
 #include "coll/algorithms/utils/transmit/work_size_data.hpp"
 
-template <typename T, template <typename, int> class Proto, bool LoadSeqNoInRuntime, int SubGroupSize>
+template <typename T,
+          template <typename, int>
+          class Proto,
+          template <typename, template <typename, int> class, bool, int>
+          class Transmit,
+          bool LoadSeqNoInRuntime,
+          int SubGroupSize>
 class oneccl_reduce_scatter_pcie {};
 
-template <typename T, template <typename, int> class Proto, bool LoadSeqNoInRuntime, int SubGroupSize>
+template <typename T,
+          template <typename, int>
+          class Proto,
+          template <typename, template <typename, int> class, bool, int>
+          class Transmit,
+          bool LoadSeqNoInRuntime,
+          int SubGroupSize>
 class oneccl_reduce_scatter_counter_pcie {};
 
 template <typename T,
@@ -53,11 +65,13 @@ struct ReduceScatter {
                   T* gatherBuf,
                   T* const peerBuf0[],
                   T* const peerBuf1[],
+                  size_t ipcbuf_size,
                   ccl::reduction reduction,
                   bool p2p)
             : gr(calcAccessGranularity(input, output, nelems)),
               workSize(nelems * sizeof(T)),
               reduction(reduction),
+              ipcbuf_size(ipcbuf_size),
               transmit(nranks,
                        input,
                        output,
@@ -110,7 +124,7 @@ struct ReduceScatter {
                               T* output,
                               T* ipcbuf0,
                               T* ipcbuf1,
-                              size_t tmp_buf_size,
+                              size_t ipcbuf_size,
                               T* const peerbuf0[],
                               T* const peerbuf1[],
                               size_t nelems,
@@ -125,6 +139,7 @@ struct ReduceScatter {
                               bool& done) {
         sycl::event e1, e2;
 
+        size_t tmp_buf_size = RingTransmit<int, Rt64_128_PCIE, true>::ringSize / sizeof(T);
         done = true;
 
         if (LoadSeqNoInRuntime) {
@@ -139,6 +154,7 @@ struct ReduceScatter {
                                   ipcbuf1,
                                   peerbuf0,
                                   peerbuf1,
+                                  ipcbuf_size,
                                   reduction,
                                   p2p);
 
@@ -149,7 +165,7 @@ struct ReduceScatter {
 
             e1 = queue.submit([&](auto& h) { // TODO port to sycl free functions
                 // why does the compiler complain here but not elsewhere ?
-                h.template parallel_for<class oneccl_reduce_scatter_counter_pcie<T, Proto, LoadSeqNoInRuntime, SubGroupSize>>(
+                h.template parallel_for<class oneccl_reduce_scatter_counter_pcie<T, Proto, Transmit, LoadSeqNoInRuntime, SubGroupSize>>(
                     sycl::nd_range<1>({ 16 }, 16),
                     [ll_pattern_data,
                     barrier_data,
@@ -173,7 +189,7 @@ struct ReduceScatter {
             auto loopSize = nWires * ProtoT::wireCapacity / offload.transmit.parallel_sg;
             CCL_THROW_IF_NOT(loopSize > 0, "loopSize must be greater than 0");
             e2 = queue.submit([&](sycl::handler& cgh) {
-                cgh.parallel_for<class oneccl_reduce_scatter_pcie<T, Proto, LoadSeqNoInRuntime, SubGroupSize>>(
+                cgh.parallel_for<class oneccl_reduce_scatter_pcie<T, Proto, Transmit, LoadSeqNoInRuntime, SubGroupSize>>(
                     ndrange, offload);
             });
         }
@@ -191,6 +207,7 @@ struct ReduceScatter {
                                   ipcbuf1,
                                   peerbuf0,
                                   peerbuf1,
+                                  ipcbuf_size,
                                   reduction,
                                   p2p);
             // if (!use_recording_path(queue)) { // TODO rename to "is_workaround_required"
@@ -206,7 +223,7 @@ struct ReduceScatter {
             auto loopSize = nWires * ProtoT::wireCapacity / offload.transmit.parallel_sg;
             CCL_THROW_IF_NOT(loopSize > 0, "loopSize must be greater than 0");
             e2 = queue.submit([&](sycl::handler& cgh) {
-                cgh.parallel_for<class oneccl_reduce_scatter_pcie<T, Proto, LoadSeqNoInRuntime, SubGroupSize>>(
+                cgh.parallel_for<class oneccl_reduce_scatter_pcie<T, Proto, Transmit, LoadSeqNoInRuntime, SubGroupSize>>(
                     ndrange, offload);
             });
         }
@@ -225,13 +242,13 @@ struct ReduceScatter {
         auto nWires = pos.get_global_range(0) / SubGroupSize;
         auto wireId_x = pos.get_global_id(0) / SubGroupSize / transmit.parallel_sg;
 
-        auto loopSize = nWires * ProtoT::wireCapacity / transmit.parallel_sg;
+        auto loopSize = TransmitT::calcLoopSize(nWires, transmit.parallel_sg, ipcbuf_size);
         size_t local_id = pos.get_sub_group().get_local_id()[0];
 
         for (size_t gOff = 0, tOff = 0; gOff < workSize; gOff += loopSize, ++tOff) {
             auto wireOff = wireId_x * ProtoT::wireCapacity + gOff;
 
-            ssize_t workLeft = workSize - wireOff;
+            ssize_t workLeft = std::min((size_t)workSize, gOff + loopSize) - wireOff;
 #if defined(__enable_device_verbose__)
             if (local_id == 0)
                 sycl::ext::oneapi::experimental::printf(
@@ -265,5 +282,6 @@ private:
     AccessGranularity gr;
     ssize_t workSize;
     ccl::reduction reduction;
+    size_t ipcbuf_size;
     TransmitT transmit;
 };

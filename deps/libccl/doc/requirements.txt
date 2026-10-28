@@ -5,7 +5,7 @@ breathe==4.36.0
 certifi>=2024.07.04
 charset-normalizer==3.4.3
 docutils==0.21.2
-idna==3.10
+idna==3.15
 imagesize==1.4.1
 importlib-metadata==8.7.0
 Jinja2==3.1.6
@@ -17,7 +17,7 @@ pytz==2025.2
 PyYAML==6.0.3
 requests>=2.32.0
 snowballstemmer==3.0.1
-soupsieve==2.8
+soupsieve==2.8.4
 Sphinx==8.2.3
 sphinx-book-theme==1.1.4
 sphinx-prompt==1.10.1
@@ -30,5 +30,5 @@ sphinxcontrib-qthelp==2.0.0
 sphinxcontrib-serializinghtml==2.0.0
 urllib3>=2.2.2
 zipp==3.23.0
-setuptools==80.9.0
+setuptools==83.0.0
 sphinx_design==0.6.1

@@ -20,6 +20,9 @@ template <>
 std::map<ccl_coll_scatter_algo, std::string>
     ccl_algorithm_selector_helper<ccl_coll_scatter_algo>::algo_names = {
         std::make_pair(ccl_coll_scatter_naive, "naive"),
+#ifdef CCL_ENABLE_SYCL
+        std::make_pair(ccl_coll_scatter_topo, "topo"),
+#endif // CCL_ENABLE_SYCL
     };
 
 ccl_algorithm_selector<ccl_coll_scatter>::ccl_algorithm_selector() {
@@ -36,6 +39,9 @@ bool ccl_algorithm_selector_helper<ccl_coll_scatter_algo>::can_use(
     bool can_use = true;
 
     if (algo == ccl_coll_scatter_undefined) {
+        can_use = false;
+    }
+    else if (algo == ccl_coll_scatter_topo) {
         can_use = false;
     }
 

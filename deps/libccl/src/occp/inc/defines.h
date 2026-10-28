@@ -65,6 +65,8 @@ protected:
 #define unlikely(x) __builtin_expect(!!(x), 0)
 #endif
 
+#ifndef FOR_I
 #define FOR_I(N) for (decltype(N) i = 0; i < (N); i++)
+#endif
 
 #define HLLOG_DEFINE_OSTREAM_FORMATTER(T)

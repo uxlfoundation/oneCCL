@@ -25,9 +25,13 @@
 #include "common/env/env_parser.hpp"
 #include "common/global/global.hpp"
 #include "common/log/log.hpp"
+#include "env.hpp"
 #include "exec/exec.hpp"
 #include "oneapi/ccl/environment.hpp"
 #include "common/utils/version.hpp"
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+#include "sched/entry/ze/ze_primitives.hpp"
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
 namespace ccl {
 
@@ -43,11 +47,8 @@ std::map<ccl_priority_mode, std::string> env_data::priority_mode_names = {
 };
 
 std::map<ccl_atl_transport, std::string> env_data::atl_transport_names = {
-    std::make_pair(ccl_atl_ofi, "ofi")
-#ifdef CCL_ENABLE_MPI
-        ,
+    std::make_pair(ccl_atl_ofi, "ofi"),
     std::make_pair(ccl_atl_mpi, "mpi")
-#endif // CCL_ENABLE_MPI
 };
 
 std::map<ccl_atl_send_proxy, std::string> env_data::atl_send_proxy_names = {
@@ -77,6 +78,24 @@ std::map<process_launcher_mode, std::string> env_data::process_launcher_names = 
     std::make_pair(process_launcher_mode::none, "none")
 };
 
+std::map<graph_type, std::string> env_data::graph_type_names = {
+    std::make_pair(graph_type::auto_type, "auto"),
+    std::make_pair(graph_type::native, "native"),
+    std::make_pair(graph_type::sycl, "sycl")
+};
+
+std::map<ccl_overlapping_collectives, std::string> env_data::overlapping_collective_names = {
+    std::make_pair(ccl_overlapping_collectives::enable_always, "enable_always"),
+    std::make_pair(ccl_overlapping_collectives::enable_except_native_graph, "enable_except_native_graph"),
+    std::make_pair(ccl_overlapping_collectives::disable, "disable")
+};
+
+std::map<host_task_type, std::string> env_data::host_task_type_names = {
+    std::make_pair(host_task_type::auto_type, "auto"),
+    std::make_pair(host_task_type::event, "event"),
+    std::make_pair(host_task_type::eventless, "eventless")
+};
+
 env_data::env_data()
         : was_printed(false),
 #if defined(CCL_ENABLE_PROFILING)
@@ -95,11 +114,7 @@ env_data::env_data()
           worker_offload(true),
           worker_wait(true),
           worker_affinity_set(0),
-#ifdef CCL_ENABLE_MPI
-          atl_transport(ccl_atl_mpi),
-#else // CCL_ENABLE_MPI
           atl_transport(ccl_atl_ofi),
-#endif // CCL_ENABLE_MPI
           kvs_init_mode(kvs_mode::pmi),
           kvs_connection_timeout(120),
           kvs_mpi_allgather(true),
@@ -112,18 +127,19 @@ env_data::env_data()
           enable_sync_coll(0),
           enable_extra_ep(0),
           enable_auto_cache(0),
-#if defined(CCL_ENABLE_MPI) && defined(CCL_ENABLE_OMP)
+#if defined(CCL_ENABLE_OMP)
           enable_omp_coll(1),
           enable_omp_allreduce(1),
           enable_omp_allgatherv(1),
           omp_allreduce_num_threads("1:1-511;2:512-1023;4:1024-4095;8:4096-8191;16:8192-32767;32:32768-max"),
-#endif // CCL_ENABLE_MPI && CCL_ENABLE_OMP
+#endif // CCL_ENABLE_OMP
           mnic_type(ATL_MNIC_NONE),
           mnic_count(CCL_ENV_SIZET_NOT_SPECIFIED),
           mnic_offset(ATL_MNIC_OFFSET_NONE),
           ofi_domain_names(CCL_ENV_STR_NOT_SPECIFIED),
 
           enable_algo_fallback(1),
+          selection_policy_path(""),
           enable_unordered_coll(0),
 
           enable_fusion(0),
@@ -148,6 +164,7 @@ env_data::env_data()
           staging_buffer(ccl_staging_regular),
           enable_op_sync(0),
           enable_op_sycl_serialize(0),
+          overlapping_collectives(ccl_overlapping_collectives::enable_except_native_graph),
           enable_hostname_sharing(1),
           enable_init_hostname_sharing(1),
           occp_server_hostname("localhost"),
@@ -197,8 +214,13 @@ env_data::env_data()
           sycl_allreduce_simple_threshold(4194304),
           sycl_allreduce_simple_read(0),
           sycl_allreduce_chunking_threshold(0),
-          sycl_allreduce_ll_algo("ring"),
-          sycl_allreduce_oneshot_threshold(4096),
+          sycl_allreduce_ll_algo("oneshot:0-256;twoshots:257-2048;ring:2049-max"),
+
+          sycl_reduce_ll_threshold(4096),
+          sycl_reduce_simple_read(0),
+          sycl_reduce_chunking_threshold(0),
+          sycl_reduce_scaleout_threshold(4294967296),
+          sycl_reduce_ll_algo("ring"),
 
           sycl_reduce_scatter_tmp_buf(0),
           sycl_reduce_scatter_small_threshold(2097152),
@@ -207,6 +229,8 @@ env_data::env_data()
           sycl_reduce_scatter_scaleout_algo("auto"),
           sycl_reduce_scatter_ll_threshold(512),
           sycl_reduce_scatter_simple_threshold(8388608),
+          sycl_reduce_scatter_ll_algo("oneshot:0-256;ring:257-max"),
+          sycl_allgatherv_ll_algo("oneshot:0-256;ring:257-max"),
 
           sycl_allgatherv_tmp_buf(0),
           sycl_allgatherv_small_threshold(131072),
@@ -230,7 +254,34 @@ env_data::env_data()
           sycl_broadcast_tmp_buf(0),
           sycl_broadcast_small_threshold(524288),
           sycl_broadcast_scaleout_threshold(4294967296),
+          sycl_broadcast_ring(0),
+          // AUTO ON by default. The (world, size) policy table decides per call
+          // whether the ring beats the baseline; outside the calibrated set it
+          // falls back to no-ring, so this is safe to leave on globally.
+          sycl_broadcast_ring_auto(1),
+          sycl_broadcast_chunking_threshold(0),
+          // Default copy-engine = 0 selects the copy-kernel backend. This is
+          // only consulted when the broadcast ring is selected.
+          sycl_broadcast_ring_copy_engine(0),
+          // Master switch. 0 (default) = legacy chunked broadcast for
+          // every message size (threshold is ignored). 1 = enable the
+          // scatter-rail-allgather path on ARC-family cards, subject
+          // to the threshold below.
+          sycl_broadcast_scatter_allgather_enable(0),
+          // Message-size gate, only consulted when enable==1. Default
+          // 64 MiB: below this, chunked wins even with the new algo
+          // available. Override with the env var to tune per platform.
+          sycl_broadcast_scatter_allgather_threshold(67108864),
+          sycl_broadcast_scatter_allgather_force(false),
+          sycl_broadcast_scatter_allgather_max_ppn(0),
           sycl_allgatherv_chunking_threshold(0),
+
+          sycl_scatter_large_tmp_buf(0),
+          sycl_scatter_small_threshold(524288),
+          sycl_scatter_scaleout_threshold(4294967296),
+          sycl_scatter_scaleout_small_threshold(131072),
+          sycl_scatter_scaleout_overlap(0),
+          sycl_scatter_scaleout_overlap_buf_size(134217728),
 
           sycl_alltoall_scaleout_algo("auto"),
           sycl_enable_arc_alltoall_ll(0),
@@ -241,6 +292,11 @@ env_data::env_data()
           sycl_alltoall_use_barrier(1),
           sycl_alltoall_simple_threshold(524288),
           sycl_alltoall_copy_engine(1),
+
+          sycl_enable_allreduce_scaleout_proxy(0),
+          sycl_enable_reduce_scatter_scaleout_proxy(0),
+          sycl_enable_allgatherv_scaleout_proxy(0),
+          sycl_enable_alltoall_scaleout_proxy(0),
 
           enable_sycl_kernels(1),
 
@@ -256,6 +312,9 @@ env_data::env_data()
 #endif // CCL_ENABLE_ESIMD
           sycl_full_vector(1),
           sycl_force_recording_path(0),
+          sycl_graph_type(graph_type::auto_type),
+          sycl_oneshot_allgather_wa(1),
+          sycl_host_task_type(host_task_type::auto_type),
           sycl_kernel_memcpy_upsize(0),
           sycl_tmp_buf_size(ccl_large_tmp_bufs::buf_count * 128 * 1024 * 1024),
           sycl_scaleout_host_buf_size(1024 * 1024 * 1024),
@@ -264,6 +323,8 @@ env_data::env_data()
           sycl_scaleout_buf_alloc_mode(ccl::utils::alloc_mode::hwloc),
           sycl_pt2pt_read(0),
           sycl_pt2pt_enable(1),
+          sycl_pt2pt_simple_threshold(262144),
+          sycl_pt2pt_copy_engine(1),
           sycl_max_pipeline_chunk_size(32 * 1024 * 1024),
           sycl_pipeline_chunk_size(CCL_ENV_SIZET_NOT_SPECIFIED),
           sycl_numa_nodes(1),
@@ -278,7 +339,25 @@ env_data::env_data()
           sycl_simple_single_kernel(0),
           sycl_num_threads(0),
           sycl_work_group_size(64),
+          sycl_rate_limit_bytes_per_sec(0),
+          sycl_rate_limit_burst_bytes(0),
+          sycl_rate_limit_max_acquire_bytes(0),
+          sycl_rate_limit_refill_interval_ns(0),
+          sycl_rate_limit_device_clock_hz(0),
+          sycl_rate_limit_burst_divisor(0),
+          sycl_rate_limit_backoff_cycles(0),
+          sycl_rate_limit_stats(0),
           finalize_event_gc_threshold(128),
+
+          sycl_p2p_level(ccl_p2p_domain_level::p2p_node),
+          sycl_p2p_level_threshold(0),
+          sycl_p2p_level_allreduce_threshold(16777216),
+          sycl_p2p_level_allgatherv_threshold(8388608),
+          sycl_p2p_level_reduce_scatter_threshold(4294967296),
+          sycl_p2p_level_alltoall_small_threshold(8192),
+          sycl_p2p_level_alltoall_threshold(4194304),
+          sycl_p2p_level_broadcast_threshold(4294967296),
+          sycl_gpus_per_switch(0),
 #endif // CCL_ENABLE_SYCL
 
           allreduce_nreduce_buffering(0),
@@ -402,6 +481,7 @@ env_data::env_data()
           drmfd_dev_render_dir_path("/dev/dri/by-path/"),
           drmfd_dev_render_suffix("-render"),
 #endif // CCL_ENABLE_DRM
+          enable_ze_ce(0),
 #endif // CCL_ENABLE_SYCL
           ipc_allgatherv_wa(1),
 
@@ -498,6 +578,9 @@ void env_data::parse() {
     p.env_2_type(CCL_OFI_DOMAIN_NAMES, ofi_domain_names);
 
     p.env_2_type(CCL_ALGO_FALLBACK, enable_algo_fallback);
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+ p.env_2_type(CCL_SELECTION_POLICY, selection_policy_path);
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     // main algorithm selection
     p.env_2_type(CCL_ALLGATHER, allgather_algo_raw);
     p.env_2_type(CCL_ALLGATHERV, allgatherv_algo_raw);
@@ -510,6 +593,7 @@ void env_data::parse() {
     p.env_2_type(CCL_RECV, recv_algo_raw);
     p.env_2_type(CCL_REDUCE, reduce_algo_raw);
     p.env_2_type(CCL_REDUCE_SCATTER, reduce_scatter_algo_raw);
+    p.env_2_type(CCL_GATHER, gather_algo_raw);
     p.env_2_type(CCL_SCATTER, scatter_algo_raw);
     p.env_2_type(CCL_SEND, send_algo_raw);
     // scale-out selection part
@@ -520,6 +604,7 @@ void env_data::parse() {
     p.env_2_type(CCL_ALLTOALLV_SCALEOUT, alltoallv_scaleout_algo_raw);
     p.env_2_type(CCL_REDUCE_SCALEOUT, reduce_scaleout_algo_raw);
     p.env_2_type(CCL_REDUCE_SCATTER_SCALEOUT, reduce_scatter_scaleout_algo_raw);
+    p.env_2_type(CCL_GATHER_SCALEOUT, gather_scaleout_algo_raw);
     p.env_2_type(CCL_SCATTER_SCALEOUT, scatter_scaleout_algo_raw);
 
     p.env_2_type(CCL_UNORDERED_COLL, enable_unordered_coll);
@@ -567,6 +652,7 @@ void env_data::parse() {
     p.env_2_enum(CCL_STAGING_BUFFER, staging_buffer_names, staging_buffer);
     p.env_2_type(CCL_OP_SYNC, enable_op_sync);
     p.env_2_type(CCL_OP_SYCL_SERIALIZE, enable_op_sycl_serialize);
+    p.env_2_enum(CCL_OVERLAPPING_COLLECTIVES, overlapping_collective_names, overlapping_collectives);
     p.env_2_type(CCL_OFI_ENABLE_HOSTNAME_SHARING, enable_hostname_sharing);
     p.env_2_type(CCL_OFI_INIT_ENABLE_HOSTNAME_SHARING, enable_init_hostname_sharing);
     p.env_2_type(CCL_OCCP_SERVER_HOSTNAME, occp_server_hostname);
@@ -619,7 +705,6 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_ALLREDUCE_SIMPLE_READ, sycl_allreduce_simple_read);
     p.env_2_type(CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD, sycl_allreduce_chunking_threshold);
     p.env_2_type(CCL_SYCL_ALLREDUCE_LL, sycl_allreduce_ll_algo);
-    p.env_2_type(CCL_SYCL_ALLREDUCE_ONESHOT_THRESHOLD, sycl_allreduce_oneshot_threshold);
 
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_TMP_BUF, sycl_reduce_scatter_tmp_buf);
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_SMALL_THRESHOLD, sycl_reduce_scatter_small_threshold);
@@ -628,6 +713,14 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_SCALEOUT, sycl_reduce_scatter_scaleout_algo);
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_LL_THRESHOLD, sycl_reduce_scatter_ll_threshold);
     p.env_2_type(CCL_SYCL_REDUCE_SCATTER_SIMPLE_THRESHOLD, sycl_reduce_scatter_simple_threshold);
+    p.env_2_type(CCL_SYCL_REDUCE_SCATTER_LL, sycl_reduce_scatter_ll_algo);
+    p.env_2_type(CCL_SYCL_ALLGATHERV_LL, sycl_allgatherv_ll_algo);
+
+    p.env_2_type(CCL_SYCL_REDUCE_LL_THRESHOLD, sycl_reduce_ll_threshold);
+    p.env_2_type(CCL_SYCL_REDUCE_SIMPLE_READ, sycl_reduce_simple_read);
+    p.env_2_type(CCL_SYCL_REDUCE_CHUNKING_THRESHOLD, sycl_reduce_chunking_threshold);
+    p.env_2_type(CCL_SYCL_REDUCE_SCALEOUT_THRESHOLD, sycl_reduce_scaleout_threshold);
+    p.env_2_type(CCL_SYCL_REDUCE_LL, sycl_reduce_ll_algo);
 
     p.env_2_type(CCL_SYCL_ALLGATHERV_TMP_BUF, sycl_allgatherv_tmp_buf);
     p.env_2_type(CCL_SYCL_ALLGATHERV_SMALL_THRESHOLD, sycl_allgatherv_small_threshold);
@@ -644,6 +737,21 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_BROADCAST_TMP_BUF, sycl_broadcast_tmp_buf);
     p.env_2_type(CCL_SYCL_BROADCAST_SMALL_THRESHOLD, sycl_broadcast_small_threshold);
     p.env_2_type(CCL_SYCL_BROADCAST_SCALEOUT_THRESHOLD, sycl_broadcast_scaleout_threshold);
+    p.env_2_type(CCL_SYCL_BROADCAST_RING, sycl_broadcast_ring);
+    p.env_2_type(CCL_SYCL_BROADCAST_RING_AUTO, sycl_broadcast_ring_auto);
+    p.env_2_type(CCL_SYCL_BROADCAST_CHUNKING_THRESHOLD, sycl_broadcast_chunking_threshold);
+    p.env_2_type(CCL_SYCL_BROADCAST_RING_COPY_ENGINE, sycl_broadcast_ring_copy_engine);
+    p.env_2_type(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_ENABLE, sycl_broadcast_scatter_allgather_enable);
+    p.env_2_type(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_THRESHOLD, sycl_broadcast_scatter_allgather_threshold);
+    p.env_2_type(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_FORCE, sycl_broadcast_scatter_allgather_force);
+    p.env_2_type(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_MAX_PPN, sycl_broadcast_scatter_allgather_max_ppn);
+
+    p.env_2_type(CCL_SYCL_SCATTER_LARGE_TMP_BUF, sycl_scatter_large_tmp_buf);
+    p.env_2_type(CCL_SYCL_SCATTER_SMALL_THRESHOLD, sycl_scatter_small_threshold);
+    p.env_2_type(CCL_SYCL_SCATTER_SCALEOUT_THRESHOLD, sycl_scatter_scaleout_threshold);
+    p.env_2_type(CCL_SYCL_SCATTER_SCALEOUT_SMALL_THRESHOLD, sycl_scatter_scaleout_small_threshold);
+    p.env_2_type(CCL_SYCL_SCATTER_SCALEOUT_OVERLAP, sycl_scatter_scaleout_overlap);
+    p.env_2_type(CCL_SYCL_SCATTER_SCALEOUT_OVERLAP_BUF_SIZE, sycl_scatter_scaleout_overlap_buf_size);
     p.env_2_type(CCL_SYCL_ALLGATHERV_CHUNKING_THRESHOLD, sycl_allgatherv_chunking_threshold);
 
     p.env_2_type(CCL_SYCL_ALLTOALL_SCALEOUT, sycl_alltoall_scaleout_algo);
@@ -670,6 +778,9 @@ void env_data::parse() {
 #endif // CCL_ENABLE_ESIMD
     p.env_2_type(CCL_SYCL_FULL_VECTOR, sycl_full_vector);
     p.env_2_type(CCL_SYCL_FORCE_RECORDING_PATH, sycl_force_recording_path);
+    p.env_2_enum(CCL_SYCL_GRAPH_TYPE, graph_type_names, sycl_graph_type);
+    p.env_2_type(CCL_SYCL_ONESHOT_ALLGATHER_WA, sycl_oneshot_allgather_wa);
+    p.env_2_enum(CCL_SYCL_HOST_TASK_TYPE, host_task_type_names, sycl_host_task_type);
     p.env_2_type(CCL_SYCL_KERNEL_MEMCPY_UPSIZE, sycl_kernel_memcpy_upsize);
     p.env_2_type(CCL_SYCL_TMP_BUF_SIZE, sycl_tmp_buf_size);
     p.env_2_type(CCL_SYCL_SCALEOUT_HOST_BUF_SIZE, sycl_scaleout_host_buf_size);
@@ -678,6 +789,8 @@ void env_data::parse() {
     p.env_2_enum(CCL_SYCL_SCALEOUT_BUF_ALLOC_MODE, ccl::utils::alloc_mode_names, sycl_scaleout_buf_alloc_mode);
     p.env_2_type(CCL_SYCL_PT2PT_READ, sycl_pt2pt_read);
     p.env_2_type(CCL_SYCL_PT2PT_ENABLE, sycl_pt2pt_enable);
+    p.env_2_type(CCL_SYCL_PT2PT_SIMPLE_THRESHOLD, sycl_pt2pt_simple_threshold);
+    p.env_2_type(CCL_SYCL_PT2PT_COPY_ENGINE, sycl_pt2pt_copy_engine);
     p.env_2_type(CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE, sycl_max_pipeline_chunk_size);
     p.env_2_type(CCL_SYCL_PIPELINE_CHUNK_SIZE, (size_t&)sycl_pipeline_chunk_size);
     p.env_2_type(CCL_SYCL_NUMA_NODES, sycl_numa_nodes);
@@ -686,12 +799,34 @@ void env_data::parse() {
     p.env_2_type(CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA, sycl_enable_pipeline_gpu_rdma);
     p.env_2_type(CCL_SYCL_ENABLE_DIRECT_GPU_RDMA, sycl_enable_direct_gpu_rdma);
     p.env_2_type(CCL_SYCL_PIPELINE_GPU_RDMA, sycl_pipeline_gpu_rdma);
+    p.env_2_type(CCL_SYCL_ENABLE_ALLTOALL_SCALEOUT_PROXY, sycl_enable_alltoall_scaleout_proxy);
+    p.env_2_type(CCL_SYCL_ENABLE_ALLREDUCE_SCALEOUT_PROXY, sycl_enable_allreduce_scaleout_proxy);
+    p.env_2_type(CCL_SYCL_ENABLE_REDUCE_SCATTER_SCALEOUT_PROXY,
+                 sycl_enable_reduce_scatter_scaleout_proxy);
+    p.env_2_type(CCL_SYCL_ENABLE_ALLGATHERV_SCALEOUT_PROXY, sycl_enable_allgatherv_scaleout_proxy);
     p.env_2_type(CCL_SYCL_SUB_COMMUICATOR, sycl_sub_communicator);
     p.env_2_type(CCL_SYCL_FORCE_PCIE, sycl_force_pcie);
     p.env_2_type(CCL_SYCL_LL_BUFFER_GLOBAL, sycl_ll_buffer_global);
     p.env_2_type(CCL_SYCL_SIMPLE_SINGLE_KERNEL, sycl_simple_single_kernel);
     p.env_2_type(CCL_SYCL_NUM_THREADS, sycl_num_threads);
     p.env_2_type(CCL_SYCL_WORK_GROUP_SIZE, sycl_work_group_size);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_BYTES_PER_SEC, sycl_rate_limit_bytes_per_sec);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_BURST_BYTES, sycl_rate_limit_burst_bytes);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_MAX_ACQUIRE_BYTES, sycl_rate_limit_max_acquire_bytes);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_REFILL_INTERVAL_NS, sycl_rate_limit_refill_interval_ns);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_DEVICE_CLOCK_HZ, sycl_rate_limit_device_clock_hz);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_BURST_DIVISOR, sycl_rate_limit_burst_divisor);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_BACKOFF_CYCLES, sycl_rate_limit_backoff_cycles);
+    p.env_2_type(CCL_SYCL_RATE_LIMIT_STATS, sycl_rate_limit_stats);
+    p.env_2_type(CCL_SYCL_GPUS_PER_SWITCH, sycl_gpus_per_switch);
+    p.env_2_enum(CCL_SYCL_P2P_LEVEL, ccl_p2p_domain::p2p_names, sycl_p2p_level);
+    p.env_2_type(CCL_SYCL_P2P_LEVEL_THRESHOLD, sycl_p2p_level_threshold);
+    p.env_2_type(CCL_SYCL_P2P_LEVEL_ALLREDUCE_THRESHOLD, sycl_p2p_level_allreduce_threshold);
+    p.env_2_type(CCL_SYCL_P2P_LEVEL_ALLGATHERV_THRESHOLD, sycl_p2p_level_allgatherv_threshold);
+    p.env_2_type(CCL_SYCL_P2P_LEVEL_REDUCE_SCATTER_THRESHOLD, sycl_p2p_level_reduce_scatter_threshold);
+    p.env_2_type(CCL_SYCL_P2P_LEVEL_ALLTOALL_THRESHOLD, sycl_p2p_level_alltoall_threshold);
+    p.env_2_type(CCL_SYCL_P2P_LEVEL_ALLTOALL_SMALL_THRESHOLD, sycl_p2p_level_alltoall_small_threshold);
+    p.env_2_type(CCL_SYCL_P2P_LEVEL_BROADCAST_THRESHOLD, sycl_p2p_level_broadcast_threshold);
     p.env_2_type(CCL_FINALIZE_EVENT_GC_THRESHOLD, finalize_event_gc_threshold);
 #endif // CCL_ENABLE_SYCL
 
@@ -869,6 +1004,7 @@ void env_data::parse() {
     p.env_2_enum(CCL_ZE_TYPE2_TUNE_PORTS, type2_tune_mode_names, type2_mode);
     p.env_2_type(CCL_DRMFD_DEV_RENDER_DIR_PATH, drmfd_dev_render_dir_path);
     p.env_2_type(CCL_DRMFD_DEV_RENDER_SUFFIX, drmfd_dev_render_suffix);
+    p.env_2_type(CCL_ENABLE_ZE_CE, enable_ze_ce);
 #endif // CCL_ENABLE_SYCL
     p.env_2_type(CCL_IPC_ALLGATHERV_WA, ipc_allgatherv_wa);
 
@@ -895,6 +1031,27 @@ void env_data::parse() {
                      fp16_env_impl_names[fp16_impl_type]);
 
     p.warn_about_unused_var();
+
+#ifdef CCL_ENABLE_SYCL
+    // When the broadcast ring AUTO policy accepts the ring, it substitutes its
+    // own tuned slice-floor for CCL_SYCL_BROADCAST_CHUNKING_THRESHOLD (see
+    // broadcast_large_sycl_ring.hpp). If a user has both RING_AUTO=1 (the
+    // default) and a non-zero CHUNKING_THRESHOLD set explicitly, warn that
+    // their floor may be silently overridden; set RING_AUTO=0 to honour it
+    // unconditionally.
+    if (sycl_broadcast_ring && sycl_broadcast_ring_auto &&
+        std::getenv(CCL_SYCL_BROADCAST_CHUNKING_THRESHOLD) != nullptr &&
+        sycl_broadcast_chunking_threshold != 0) {
+        LOG_INFO(CCL_SYCL_BROADCAST_CHUNKING_THRESHOLD,
+                 "=",
+                 sycl_broadcast_chunking_threshold,
+                 " may be overridden by the AUTO policy table when ",
+                 CCL_SYCL_BROADCAST_RING_AUTO,
+                 "=1 accepts the ring; set ",
+                 CCL_SYCL_BROADCAST_RING_AUTO,
+                 "=0 to honour your floor unconditionally");
+    }
+#endif // CCL_ENABLE_SYCL
 }
 
 void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
@@ -1011,6 +1168,11 @@ void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
     LOG_INFO_PROFILED(CCL_OFI_DOMAIN_NAMES, ": ", (ofi_domain_names.length()) ? ofi_domain_names : CCL_ENV_STR_NOT_SPECIFIED);
 
     LOG_INFO_PROFILED(CCL_ALGO_FALLBACK, ": ", enable_algo_fallback);
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    LOG_INFO_PROFILED(
+        CCL_SELECTION_POLICY, ": ",
+        selection_policy_path.empty() ? CCL_ENV_STR_NOT_SPECIFIED : selection_policy_path);
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     LOG_INFO_PROFILED(CCL_ALLGATHER,
                       ": ",
                       (allgather_algo_raw.length()) ? allgather_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
@@ -1040,6 +1202,8 @@ void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
         CCL_REDUCE_SCATTER,
         ": ",
         (reduce_scatter_algo_raw.length()) ? reduce_scatter_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO_PROFILED(
+        CCL_GATHER, ": ", (gather_algo_raw.length()) ? gather_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO_PROFILED(
         CCL_SCATTER, ": ", (scatter_algo_raw.length()) ? scatter_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO_PROFILED(CCL_SEND, ": ", (send_algo_raw.length()) ? send_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
@@ -1071,6 +1235,10 @@ void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
         CCL_REDUCE_SCATTER_SCALEOUT,
         ": ",
         (reduce_scatter_scaleout_algo_raw.length()) ? reduce_scatter_scaleout_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO_PROFILED(
+        CCL_GATHER_SCALEOUT,
+        ": ",
+        (gather_scaleout_algo_raw.length()) ? gather_scaleout_algo_raw : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO_PROFILED(
         CCL_SCATTER_SCALEOUT,
         ": ",
@@ -1144,7 +1312,6 @@ void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
     LOG_INFO_PROFILED(CCL_SYCL_ALLREDUCE_SIMPLE_READ, ": ", sycl_allreduce_simple_read);
     LOG_INFO_PROFILED(CCL_SYCL_ALLREDUCE_CHUNKING_THRESHOLD, ": ", sycl_allreduce_chunking_threshold);
     LOG_INFO_PROFILED(CCL_SYCL_ALLREDUCE_LL, ": ", (!sycl_allreduce_ll_algo.empty()) ? sycl_allreduce_ll_algo : CCL_ENV_STR_NOT_SPECIFIED);
-    LOG_INFO_PROFILED(CCL_SYCL_ALLREDUCE_ONESHOT_THRESHOLD, ": ", sycl_allreduce_oneshot_threshold);
 
     LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SCATTER_TMP_BUF, ": ", sycl_reduce_scatter_tmp_buf);
     LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SCATTER_SMALL_THRESHOLD, ": ", sycl_reduce_scatter_small_threshold);
@@ -1153,6 +1320,14 @@ void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
     LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SCATTER_SCALEOUT, ": ", (!sycl_reduce_scatter_scaleout_algo.empty()) ? sycl_reduce_scatter_scaleout_algo : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SCATTER_LL_THRESHOLD, ": ", sycl_reduce_scatter_ll_threshold);
     LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SCATTER_SIMPLE_THRESHOLD, ": ", sycl_reduce_scatter_simple_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SCATTER_LL, ": ", (!sycl_reduce_scatter_ll_algo.empty()) ? sycl_reduce_scatter_ll_algo : CCL_ENV_STR_NOT_SPECIFIED);
+    LOG_INFO_PROFILED(CCL_SYCL_ALLGATHERV_LL, ": ", (!sycl_allgatherv_ll_algo.empty()) ? sycl_allgatherv_ll_algo : CCL_ENV_STR_NOT_SPECIFIED);
+
+    LOG_INFO_PROFILED(CCL_SYCL_REDUCE_LL_THRESHOLD, ": ", sycl_reduce_ll_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SIMPLE_READ, ": ", sycl_reduce_simple_read);
+    LOG_INFO_PROFILED(CCL_SYCL_REDUCE_CHUNKING_THRESHOLD, ": ", sycl_reduce_chunking_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_REDUCE_SCALEOUT_THRESHOLD, ": ", sycl_reduce_scaleout_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_REDUCE_LL, ": ", (!sycl_reduce_ll_algo.empty()) ? sycl_reduce_ll_algo : CCL_ENV_STR_NOT_SPECIFIED);
 
     LOG_INFO_PROFILED(CCL_SYCL_ALLGATHERV_TMP_BUF, ": ", sycl_allgatherv_tmp_buf);
     LOG_INFO_PROFILED(CCL_SYCL_ALLGATHERV_SMALL_THRESHOLD, ": ", sycl_allgatherv_small_threshold);
@@ -1168,6 +1343,21 @@ void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
     LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_TMP_BUF, ": ", sycl_broadcast_tmp_buf);
     LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_SMALL_THRESHOLD, ": ", sycl_broadcast_small_threshold);
     LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_SCALEOUT_THRESHOLD, ": ", sycl_broadcast_scaleout_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_RING, ": ", sycl_broadcast_ring);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_RING_AUTO, ": ", sycl_broadcast_ring_auto);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_CHUNKING_THRESHOLD, ": ", sycl_broadcast_chunking_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_RING_COPY_ENGINE, ": ", sycl_broadcast_ring_copy_engine);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_ENABLE, ": ", sycl_broadcast_scatter_allgather_enable);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_THRESHOLD, ": ", sycl_broadcast_scatter_allgather_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_FORCE, ": ", sycl_broadcast_scatter_allgather_force);
+    LOG_INFO_PROFILED(CCL_SYCL_BROADCAST_SCATTER_ALLGATHER_MAX_PPN, ": ", sycl_broadcast_scatter_allgather_max_ppn);
+
+    LOG_INFO_PROFILED(CCL_SYCL_SCATTER_LARGE_TMP_BUF, ": ", sycl_scatter_large_tmp_buf);
+    LOG_INFO_PROFILED(CCL_SYCL_SCATTER_SMALL_THRESHOLD, ": ", sycl_scatter_small_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_SCATTER_SCALEOUT_THRESHOLD, ": ", sycl_scatter_scaleout_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_SCATTER_SCALEOUT_SMALL_THRESHOLD, ": ", sycl_scatter_scaleout_small_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_SCATTER_SCALEOUT_OVERLAP, ": ", sycl_scatter_scaleout_overlap);
+    LOG_INFO_PROFILED(CCL_SYCL_SCATTER_SCALEOUT_OVERLAP_BUF_SIZE, ": ", sycl_scatter_scaleout_overlap_buf_size);
 
     LOG_INFO_PROFILED(CCL_SYCL_ALLTOALL_SCALEOUT, ": ", (!sycl_alltoall_scaleout_algo.empty()) ? sycl_alltoall_scaleout_algo : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO_PROFILED(CCL_SYCL_ALLTOALL_ARC_LL, ": ", sycl_enable_arc_alltoall_ll);
@@ -1199,18 +1389,43 @@ void env_data::print(int rank, bool is_profile_mode, bool is_mt_enabled) {
     LOG_INFO_PROFILED(CCL_SYCL_SCALEOUT_BUF_ALLOC_MODE, ": ", str_by_enum(ccl::utils::alloc_mode_names, sycl_scaleout_buf_alloc_mode));
     LOG_INFO_PROFILED(CCL_SYCL_PT2PT_READ, ": ", sycl_pt2pt_read);
     LOG_INFO_PROFILED(CCL_SYCL_PT2PT_ENABLE, ": ", sycl_pt2pt_enable);
+    LOG_INFO_PROFILED(CCL_SYCL_PT2PT_SIMPLE_THRESHOLD, ": ", sycl_pt2pt_simple_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_PT2PT_COPY_ENGINE, ": ", sycl_pt2pt_copy_engine);
     LOG_INFO_PROFILED(CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE, ": ", sycl_max_pipeline_chunk_size);
     LOG_INFO_PROFILED(CCL_SYCL_PIPELINE_CHUNK_SIZE, ": ", (sycl_pipeline_chunk_size != CCL_ENV_SIZET_NOT_SPECIFIED) ? std::to_string(sycl_pipeline_chunk_size) : CCL_ENV_STR_NOT_SPECIFIED);
     LOG_INFO_PROFILED(CCL_SYCL_NUMA_NODES, ": ", sycl_numa_nodes);
     LOG_INFO_PROFILED(CCL_SYCL_ENABLE_PIPELINE_GPU_RDMA, ": ", sycl_enable_pipeline_gpu_rdma);
     LOG_INFO_PROFILED(CCL_SYCL_ENABLE_DIRECT_GPU_RDMA, ": ", sycl_enable_direct_gpu_rdma);
     LOG_INFO_PROFILED(CCL_SYCL_PIPELINE_GPU_RDMA, ": ", sycl_pipeline_gpu_rdma);
+    LOG_INFO_PROFILED(CCL_SYCL_ENABLE_ALLTOALL_SCALEOUT_PROXY, ": ", sycl_enable_alltoall_scaleout_proxy);
+    LOG_INFO_PROFILED(CCL_SYCL_ENABLE_ALLREDUCE_SCALEOUT_PROXY, ": ", sycl_enable_allreduce_scaleout_proxy);
+    LOG_INFO_PROFILED(CCL_SYCL_ENABLE_REDUCE_SCATTER_SCALEOUT_PROXY, ": ", sycl_enable_reduce_scatter_scaleout_proxy);
+    LOG_INFO_PROFILED(CCL_SYCL_ENABLE_ALLGATHERV_SCALEOUT_PROXY, ": ", sycl_enable_allgatherv_scaleout_proxy);
     LOG_INFO_PROFILED(CCL_SYCL_SUB_COMMUICATOR, ": ", sycl_sub_communicator);
     LOG_INFO_PROFILED(CCL_SYCL_FORCE_PCIE, ": ", sycl_force_pcie);
     LOG_INFO_PROFILED(CCL_SYCL_LL_BUFFER_GLOBAL, ": ", sycl_ll_buffer_global);
     LOG_INFO_PROFILED(CCL_SYCL_SIMPLE_SINGLE_KERNEL, ": ", sycl_simple_single_kernel);
     LOG_INFO_PROFILED(CCL_SYCL_NUM_THREADS, ": ", sycl_num_threads);
     LOG_INFO_PROFILED(CCL_SYCL_WORK_GROUP_SIZE, ": ", sycl_work_group_size);
+#ifdef CCL_ENABLE_SYCL_RATE_LIMITER
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_BYTES_PER_SEC, ": ", sycl_rate_limit_bytes_per_sec);
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_BURST_BYTES, ": ", sycl_rate_limit_burst_bytes);
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_MAX_ACQUIRE_BYTES, ": ", sycl_rate_limit_max_acquire_bytes);
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_REFILL_INTERVAL_NS, ": ", sycl_rate_limit_refill_interval_ns);
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_DEVICE_CLOCK_HZ, ": ", sycl_rate_limit_device_clock_hz);
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_BURST_DIVISOR, ": ", sycl_rate_limit_burst_divisor);
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_BACKOFF_CYCLES, ": ", sycl_rate_limit_backoff_cycles);
+    LOG_INFO_PROFILED(CCL_SYCL_RATE_LIMIT_STATS, ": ", sycl_rate_limit_stats);
+#endif // CCL_ENABLE_SYCL_RATE_LIMITER
+    LOG_INFO_PROFILED(CCL_SYCL_GPUS_PER_SWITCH, ": ", sycl_gpus_per_switch);
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL, ": ", str_by_enum(ccl_p2p_domain::p2p_names, sycl_p2p_level));
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL_THRESHOLD, ": ", sycl_p2p_level_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL_ALLREDUCE_THRESHOLD, ": ", sycl_p2p_level_allreduce_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL_ALLGATHERV_THRESHOLD, ": ", sycl_p2p_level_allgatherv_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL_REDUCE_SCATTER_THRESHOLD, ": ", sycl_p2p_level_reduce_scatter_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL_ALLTOALL_THRESHOLD, ": ", sycl_p2p_level_alltoall_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL_ALLTOALL_SMALL_THRESHOLD, ": ", sycl_p2p_level_alltoall_small_threshold);
+    LOG_INFO_PROFILED(CCL_SYCL_P2P_LEVEL_BROADCAST_THRESHOLD, ": ", sycl_p2p_level_broadcast_threshold);
     LOG_INFO_PROFILED(CCL_FINALIZE_EVENT_GC_THRESHOLD, ": ", finalize_event_gc_threshold);
 #endif // CCL_ENABLE_SYCL
 
@@ -1396,6 +1611,29 @@ void env_data::set_internal_env() {
     if (log_level >= ccl_log_level::info) {
         setenv("I_MPI_DEBUG", "4", 0);
     }
+}
+
+void env_data::adjust_device_defaults() {
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    // Requires ze_data — call after api_wrappers_init(). ze_data may still be
+    // absent when the level-zero backend is disabled (stub backend, CCL_ZE_ENABLE=0,
+    // or ze_api_init failure); in that case there are no per-device defaults to
+    // apply and the env-provided values stand.
+    auto& gd = ccl::global_data::get();
+    if (!gd.ze_data || gd.ze_data->devices.empty()) {
+        return;
+    }
+    const bool is_arc = ccl::ze::is_arc_card(gd.ze_data->devices[0].family);
+
+    // sycl_broadcast_ring: on ARC/BMG the pipelined ring is the default; on
+    // other families the ctor default (0) stands. Only override when the user
+    // did not set CCL_SYCL_BROADCAST_RING explicitly — env_parser only writes
+    // the field when the variable is present, so getenv() is the only way to
+    // distinguish "absent" from "present and 0".
+    if (is_arc && std::getenv(CCL_SYCL_BROADCAST_RING) == nullptr) {
+        sycl_broadcast_ring = 1;
+    }
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 }
 
 int env_data::env_2_worker_affinity_auto(int local_proc_idx, size_t workers_per_process) {

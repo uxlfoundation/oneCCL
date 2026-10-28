@@ -54,7 +54,8 @@ ccl::event send_ll(const void *send_buf,
         // use small tmp buffer. Can not use large tmp buffer because
         // there is only single copy of the buffer.
         // Otherwise a barrier is needed here
-        auto [local_tmp_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
+        auto [local_tmp_buf, remote_ptrs] = recording ? node_comm->get_all_tmp_bufs_gpu(true)
+                                                      : node_comm->get_all_tmp_bufs(true);
         for (int i = 0; i < NRanks; i++) {
             peerbuf0[i] = (T *)remote_ptrs[i];
             peerbuf1[i] = (T *)((char *)remote_ptrs[i] + node_comm->get_tmp_buf_size() / 2);

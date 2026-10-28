@@ -117,8 +117,7 @@ void transport_data::init_comms(user_options_t& options) {
         // empty props means out-of-order sycl queue
         sycl::property_list props{};
         if (options.sycl_queue_type) {
-            props = { sycl::property::queue::in_order{},
-                      sycl::property::queue::enable_profiling{} };
+            props = { sycl::property::queue::in_order{} };
         }
         auto sycl_queues = create_sycl_queues(
             sycl_dev_names[options.sycl_dev_type], proc_ranks, options.sycl_root_dev, props);

@@ -101,10 +101,8 @@ public:
     atl_status_t alltoall(size_t ep_idx,
                           const void* send_buf,
                           void* recv_buf,
-                          int len,
-                          atl_req_t& req) override {
-        return ATL_STATUS_UNSUPPORTED;
-    }
+                          size_t len,
+                          atl_req_t& req) override;
 
     atl_status_t alltoallv(size_t ep_idx,
                            const void* send_buf,
@@ -113,9 +111,7 @@ public:
                            void* recv_buf,
                            const size_t* recv_lens,
                            const size_t* recv_offsets,
-                           atl_req_t& req) override {
-        return ATL_STATUS_UNSUPPORTED;
-    }
+                           atl_req_t& req) override;
 
     atl_status_t barrier(size_t ep_idx, atl_req_t& req) override;
 
@@ -137,9 +133,7 @@ public:
                         int root,
                         atl_datatype_t dtype,
                         atl_reduction_t op,
-                        atl_req_t& req) override {
-        return ATL_STATUS_UNSUPPORTED;
-    }
+                        atl_req_t& req) override;
 
     atl_status_t reduce_scatter(size_t ep_idx,
                                 const void* send_buf,
@@ -148,6 +142,13 @@ public:
                                 atl_datatype_t dtype,
                                 atl_reduction_t op,
                                 atl_req_t& req) override;
+
+    atl_status_t scatter(size_t ep_idx,
+                         const void* send_buf,
+                         void* recv_buf,
+                         size_t send_len,
+                         int root,
+                         atl_req_t& req) override;
 
     atl_status_t read(size_t ep_idx,
                       void* buf,
@@ -193,4 +194,8 @@ private:
     uint64_t tag_counter_allreduce = 0;
     uint64_t tag_counter_reduce_scatter = 0;
     uint64_t tag_counter_bcast = 0;
+    uint64_t tag_counter_reduce = 0;
+    uint64_t tag_counter_scatter = 0;
+    uint64_t tag_counter_alltoall = 0;
+    uint64_t tag_counter_alltoallv = 0;
 };

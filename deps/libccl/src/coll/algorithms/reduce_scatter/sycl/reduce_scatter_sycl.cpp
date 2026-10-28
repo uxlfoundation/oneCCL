@@ -15,139 +15,192 @@
 */
 
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/utils/sycl_policy_resolver_scaleup.hpp"
+#include "coll/algorithms/utils/sycl_policy_resolver_scaleout.hpp"
+#include "coll/algorithms/utils/barrier_data.hpp"  // use_recording_path
 #include "common/api_wrapper/mpi_api_wrapper.hpp"
 
 #if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.hpp"
 #include "coll/algorithms/utils/sycl_reductions.hpp"
+#include "coll/algorithms/utils/sycl_selection.hpp"
+#include "coll/algorithms/utils/transmit/ring_transmit.hpp"
+#include "coll/algorithms/utils/transmit/oneshot_transmit.hpp"
+#include "coll/selection/selector_impl.hpp"
 #endif // defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 
-namespace ccl {
-namespace v1 {
-
-ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
-                                           const void* send_buf,
-                                           void* recv_buf,
-                                           size_t recv_count,
-                                           datatype dtype,
-                                           reduction reduction,
-                                           ccl_comm* comm,
-                                           ccl_stream* global_stream,
-                                           const vector_class<event>& deps,
-                                           bool& done,
-                                           sycl_coll_scaleup_attr coll_attr) {
-    ccl::event e;
-    done = true;
-
-    ccl_comm* node_comm = comm->get_node_comm().get();
-    uint32_t world = node_comm->size();
-    int rank = node_comm->rank();
-
-    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
-
-    if (world == 1) {
-        sycl::event sycl_e;
-        auto sycl_q = global_stream->get_native_stream();
-        std::vector<sycl::event> dep_events = get_sycl_events(deps);
-        if (send_buf != recv_buf) {
-            LOG_DEBUG("single rank: out-of-place case, coll: reduce_scatter");
-            sycl_e = sycl_q.submit([=](sycl::handler& h) {
-                h.depends_on(dep_events);
-                h.memcpy(recv_buf, send_buf, recv_count * ccl_dtype.size());
-            });
-        }
-        else {
-            LOG_DEBUG("single rank: inplace case, coll: reduce_scatter");
-            sycl_e = submit_wait_on_events(sycl_q, dep_events);
-        }
-
-        if (ccl_reduction_type_storage::is_custom(reduction)) {
-            ccl_reduction_data reduction_op = make_reduction_operation(reduction);
-            auto lambda = [&]<typename T>() {
-                sycl_e = pre_operation_invoke<T, 1, 32>(sycl_q,
-                                                        recv_buf,
-                                                        recv_count,
-                                                        false,
-                                                        nullptr,
-                                                        reduction_op,
-                                                        comm->get_node_comm()->get_tmp_buf_size(),
-                                                        { sycl_e });
-
-                return ccl::event::create_from_native(sycl_e);
-            };
-            return invoke_collective(lambda, dtype);
-        }
-
-        return ccl::event::create_from_native(sycl_e);
+// Resolve the per-message-size LL transmit algorithm token for the SYCL
+// reduce-scatter scale-up path. CCL_SYCL_REDUCE_SCATTER_LL picks one of
+// "ring" / "oneshot" per message-size range using the same
+// "<algo>:<lo>-<hi>;..." syntax as the algorithm-selector framework
+// (re-uses fill_table_from_str / get_value_from_table with std::string keys).
+// When set to a single token, that algorithm is used for all sizes.
+// When explicitly cleared, defaults to ring.
+static std::string select_reduce_scatter_scaleup_ll_algo(size_t bytes) {
+    const std::string& spec = ccl::global_data::env().sycl_reduce_scatter_ll_algo;
+    if (spec.empty()) {
+        return "ring";
     }
 
-    const bool is_single_tile = comm->get_pair_comm()->size() == 1;
-    const bool has_all_vertices_connected = comm->get_topo_manager().has_all_vertices_connected();
-    LOG_DEBUG("|CCL_SYCL| has_all_vertices_connected", has_all_vertices_connected);
+    static ccl_selection_table_t<std::string> table = [&]() {
+        ccl_selection_table_t<std::string> t;
+        fill_table_from_str(spec, t);
+        return t;
+    }();
 
-    // for ARC GPUs to do ring RT256
-    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
-        (recv_count * world * ccl_dtype.size() <= ccl::global_data::env().sycl_reduce_scatter_simple_threshold ||
-         !node_comm->get_topo_manager().has_p2p_access())) {
+    return ccl_algorithm_selector_base<std::string>::get_value_from_table(bytes, table);
+}
+
+namespace {
+
+// world == 1 fast path: memcpy/wait-on-events, plus custom-reduction pre-op.
+ccl::event reduce_scatter_scaleup_single_rank(sycl::queue& /*q*/,
+                                              const void* send_buf,
+                                              void* recv_buf,
+                                              size_t recv_count,
+                                              ccl::datatype dtype,
+                                              ccl::reduction reduction,
+                                              const std::shared_ptr<ccl_comm> p2p_comm,
+                                              ccl_stream* global_stream,
+                                              const ccl::vector_class<ccl::event>& deps) {
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    sycl::event sycl_e;
+    auto sycl_q = global_stream->get_native_stream();
+    std::vector<sycl::event> dep_events = get_sycl_events(deps);
+    if (send_buf != recv_buf) {
+        LOG_DEBUG("single rank: out-of-place case, coll: reduce_scatter");
+        sycl_e = sycl_q.submit([=](sycl::handler& h) {
+            h.depends_on(dep_events);
+            h.memcpy(recv_buf, send_buf, recv_count * ccl_dtype.size());
+        });
+    }
+    else {
+        LOG_DEBUG("single rank: inplace case, coll: reduce_scatter");
+        sycl_e = submit_wait_on_events(sycl_q, dep_events);
+    }
+    if (ccl_reduction_type_storage::is_custom(reduction)) {
+        ccl_reduction_data reduction_op = make_reduction_operation(reduction);
+        auto lambda = [&]<typename T>() {
+            sycl_e = pre_operation_invoke<T, 1, 32>(sycl_q, recv_buf, recv_count, false, nullptr,
+                                                    reduction_op, p2p_comm->get_tmp_buf_size(),
+                                                    { sycl_e });
+            return ccl::event::create_from_native(sycl_e);
+        };
+        return invoke_collective(lambda, dtype);
+    }
+    return ccl::event::create_from_native(sycl_e);
+}
+
+// Arc LL256 path: single-shot; per-msg selects `oneshot` vs `ring` from
+// CCL_SYCL_REDUCE_SCATTER_LL via `select_reduce_scatter_scaleup_ll_algo`.
+ccl::event reduce_scatter_scaleup_ll256(const void* send_buf,
+                                        void* recv_buf,
+                                        size_t recv_count,
+                                        ccl::datatype dtype,
+                                        ccl::reduction reduction,
+                                        ccl_comm* comm,
+                                        const std::shared_ptr<ccl_comm> p2p_comm,
+                                        ccl_stream* global_stream,
+                                        bool& done) {
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl::event e;
+#ifdef CCL_ENABLE_ITT
+    ccl::profile::itt::task_begin(
+        "reduce_scatter_ll", "recv_size", recv_count * ccl_dtype.size(), comm->unique_id());
+#endif // CCL_ENABLE_ITT
+    LOG_DEBUG("invoking reduce_scatter LL kernel reduce_scatter_ll, recv_count:",
+              recv_count, " datatype: ", dtype);
+    const size_t msg_bytes = recv_count * ccl_dtype.size();
+    const std::string ll_algo = select_reduce_scatter_scaleup_ll_algo(msg_bytes);
+    if (ll_algo == "oneshot" && msg_bytes < (size_t)ONESHOT_MAX_MSGSIZE) {
+        // OneShot does the scatter+reduce in a single shot (minimum latency);
+        // hard-capped at ONESHOT_MAX_MSGSIZE, above which it falls back to ring.
+        e = reduce_scatter_ll<OneShotTransmit>(
+            send_buf, recv_buf, recv_count, dtype, reduction, comm, p2p_comm, global_stream, done);
+    }
+    else if (ll_algo == "ring" || ll_algo == "oneshot") {
+        // Ring is the default, also used as fallback when oneshot exceeds threshold.
+        e = reduce_scatter_ll<RingTransmit>(
+            send_buf, recv_buf, recv_count, dtype, reduction, comm, p2p_comm, global_stream, done);
+    }
+    else {
+        LOG_ERROR("CCL_SYCL_REDUCE_SCATTER_LL must be ring or oneshot, got: ", ll_algo);
+        done = false;
+    }
+    LOG_DEBUG("invoking reduce_scatter LL kernel, recv_count:", recv_count, " datatype: ", dtype, " done");
+#ifdef CCL_ENABLE_ITT
+    ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
+    return e;
+}
+
+// Non-ESIMD vec path: small kernel below threshold, else large kernel.
+ccl::event reduce_scatter_scaleup_default(sycl::queue& /*q*/,
+                                      const void* send_buf,
+                                      void* recv_buf,
+                                      size_t recv_count,
+                                      uint32_t world,
+                                      ccl::datatype dtype,
+                                      ccl::reduction reduction,
+                                      ccl_comm* comm,
+                                      const std::shared_ptr<ccl_comm> p2p_comm,
+                                      ccl_stream* global_stream,
+                                      const ccl::vector_class<ccl::event>& deps,
+                                      sycl_scaleup_options coll_attr) {
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl::event e;
+    if (recv_count * world * ccl_dtype.size() <= ccl::global_data::env().sycl_reduce_scatter_small_threshold) {
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_begin(
-            "reduce_scatter_rt_ring", "recv_size", recv_count * ccl_dtype.size(), comm->unique_id());
+            "reduce_scatter_small", "send_size", recv_count * world * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
-        LOG_DEBUG("invoking reduce_scatter RT256 kernel reduce_scatter_rt_ring, recv_count:",
-                  recv_count,
-                  " datatype: ",
-                  dtype);
-        e = reduce_scatter_rt_ring(send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, done);
-        LOG_DEBUG("invoking reduce_scatter RT256 kernel, recv_count:", recv_count, " datatype: ", dtype, " done");
+        LOG_DEBUG("invoking small reduce_scatter: recv_count:", recv_count, " datatype: ", dtype);
+        e = reduce_scatter_small(
+            send_buf, recv_buf, recv_count, 0 /* rem_count */, dtype, reduction, comm, p2p_comm, global_stream, deps);
+        LOG_DEBUG("invoking small reduce_scatter: recv_count:", recv_count, " datatype: ", dtype, " done");
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
-        return e;
     }
+    else {
+#ifdef CCL_ENABLE_ITT
+        ccl::profile::itt::task_begin(
+            "reduce_scatter_large", "send_size", recv_count * world * ccl_dtype.size(), comm->unique_id());
+#endif // CCL_ENABLE_ITT
+        LOG_DEBUG("invoking large reduce_scatter: recv_count:", recv_count, " datatype: ", dtype);
+        e = reduce_scatter_large(
+            send_buf, recv_buf, recv_count, dtype, reduction, comm, p2p_comm, global_stream, deps, coll_attr);
+        LOG_DEBUG("invoking large reduce_scatter: recv_count:", recv_count, " datatype: ", dtype, " done");
+#ifdef CCL_ENABLE_ITT
+        ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
+    }
+    return e;
+}
 
 #ifdef CCL_ENABLE_ESIMD
-    const bool is_esimd_enabled = ccl::global_data::env().sycl_esimd;
-#else
-    const bool is_esimd_enabled = false;
-#endif // CCL_ENABLE_ESIMD
-
-    if (!is_esimd_enabled) {
-        if (recv_count * world * ccl_dtype.size() <= ccl::global_data::env().sycl_reduce_scatter_small_threshold) {
-#ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin(
-                "reduce_scatter_small", "send_size", recv_count * world * ccl_dtype.size(), comm->unique_id());
-#endif // CCL_ENABLE_ITT
-            LOG_DEBUG("invoking small reduce_scatter: recv_count:", recv_count, " datatype: ", dtype);
-            e = reduce_scatter_small(
-                send_buf, recv_buf, recv_count, 0 /* rem_count */, dtype, reduction, comm, global_stream, deps);
-            LOG_DEBUG("invoking small reduce_scatter: recv_count:", recv_count, " datatype: ", dtype, " done");
-#ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_end();
-#endif // CCL_ENABLE_ITT
-        }
-        else {
-#ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_begin(
-                "reduce_scatter_large", "send_size", recv_count * world * ccl_dtype.size(), comm->unique_id());
-#endif // CCL_ENABLE_ITT
-            LOG_DEBUG("invoking large reduce_scatter: recv_count:", recv_count, " datatype: ", dtype);
-            e = reduce_scatter_large(
-                send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, deps, coll_attr);
-            LOG_DEBUG("invoking large reduce_scatter: recv_count:", recv_count, " datatype: ", dtype, " done");
-#ifdef CCL_ENABLE_ITT
-            ccl::profile::itt::task_end();
-#endif // CCL_ENABLE_ITT
-        }
-
-        return e;
-    }
-
-#ifdef CCL_ENABLE_ESIMD
-    // ESIMD
+// ESIMD path: small (if in-threshold and all-vertices-connected), then medium
+// (if not single-tile), then large (if not single-tile); else done=false.
+ccl::event reduce_scatter_scaleup_esimd(sycl::queue& q,
+                                        const void* send_buf,
+                                        void* recv_buf,
+                                        size_t recv_count,
+                                        int rank,
+                                        uint32_t world,
+                                        ccl::datatype dtype,
+                                        ccl::reduction reduction,
+                                        const std::shared_ptr<ccl_comm> p2p_comm,
+                                        ccl_comm* comm,
+                                        ccl_stream* global_stream,
+                                        bool is_single_tile,
+                                        bool has_all_vertices_connected,
+                                        const ccl::vector_class<ccl::event>& deps,
+                                        bool& done) {
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    ccl::event e;
     if (recv_count * world * ccl_dtype.size() <= ccl::global_data::env().sycl_reduce_scatter_small_threshold &&
         has_all_vertices_connected) {
-        init_reduce_scatter_small(dtype, q, comm, global_stream, rank, world);
-
+        init_reduce_scatter_small(dtype, q, p2p_comm, global_stream, rank, world);
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_begin(
             "reduce_scatter_small", "send_size", recv_count * world * ccl_dtype.size(), comm->unique_id());
@@ -155,53 +208,107 @@ ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects small kernel, recv_count:", recv_count, " datatype: ", dtype);
         e = run_reduce_scatter_small(dtype, q, send_buf, recv_buf, recv_count, reduction, deps, done);
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects small kernel, recv_count:",
-                  recv_count,
-                  " datatype: ",
-                  dtype,
-                  " done");
+                  recv_count, " datatype: ", dtype, " done");
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
-        if (done)
-            return e;
+        if (done) return e;
     }
     if (recv_count * world * ccl_dtype.size() <= ccl::global_data::env().sycl_reduce_scatter_medium_threshold &&
         !is_single_tile) {
-        init_reduce_scatter_medium(dtype, q, comm, global_stream, rank, world);
-
+        init_reduce_scatter_medium(dtype, q, p2p_comm, global_stream, rank, world);
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_begin(
             "reduce_scatter_medium", "send_size", recv_count * world * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects medium kernel: count:", recv_count, " datatype: ", dtype);
         e = run_reduce_scatter_medium(dtype, q, send_buf, recv_buf, recv_count, reduction, deps, done);
-        LOG_DEBUG(
-            "|CCL_SYCL| reduce_scatter selects medium kernel: count:", recv_count, " datatype: ", dtype, " done");
+        LOG_DEBUG("|CCL_SYCL| reduce_scatter selects medium kernel: count:",
+                  recv_count, " datatype: ", dtype, " done");
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
+        return e;
     }
-    else if (!is_single_tile) {
-        init_reduce_scatter_large(dtype, q, comm, global_stream, rank, world);
-
+    if (!is_single_tile) {
+        init_reduce_scatter_large(dtype, q, p2p_comm, global_stream, rank, world);
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_begin(
             "reduce_scatter_large", "send_size", recv_count * world * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
         LOG_DEBUG("|CCL_SYCL| reduce_scatter selects large kernel: count:", recv_count, " datatype: ", dtype);
         e = run_reduce_scatter_large(dtype, q, send_buf, recv_buf, recv_count, reduction, deps, done);
-        LOG_DEBUG(
-            "|CCL_SYCL| reduce_scatter selects large kernel: count:", recv_count, " datatype: ", dtype, " done");
+        LOG_DEBUG("|CCL_SYCL| reduce_scatter selects large kernel: count:",
+                  recv_count, " datatype: ", dtype, " done");
 #ifdef CCL_ENABLE_ITT
         ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT
+        return e;
     }
-    else {
-        done = false;
-    }
+    done = false;
+    return e;
+}
 #endif // CCL_ENABLE_ESIMD
 
-    return e;
+}  // namespace
+
+namespace ccl {
+namespace v1 {
+
+ccl::event reduce_scatter_scaleup_sycl(sycl::queue& q,
+                                       const void* send_buf,
+                                       void* recv_buf,
+                                       size_t recv_count,
+                                       datatype dtype,
+                                       reduction reduction,
+                                       ccl_comm* comm,
+                                       const std::shared_ptr<ccl_comm> p2p_comm,
+                                       ccl_stream* global_stream,
+                                       const vector_class<event>& deps,
+                                       bool& done,
+                                       sycl_scaleup_options coll_attr) {
+    ccl::event e;
+    done = true;
+
+    // Fast path: no scaleup needed when the local p2p domain has one rank.
+    if (p2p_comm->size() == 1) {
+        return reduce_scatter_scaleup_single_rank(q, send_buf, recv_buf, recv_count, dtype,
+                                                  reduction, p2p_comm, global_stream, deps);
+    }
+
+    const uint32_t world = p2p_comm->size();
+    const int rank = p2p_comm->rank();
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    LOG_DEBUG("|CCL_SYCL| has_all_vertices_connected",
+              comm->get_topo_manager().has_all_vertices_connected());
+
+    // Threshold for the LL256 gate uses total bytes across the local domain.
+    const auto tune = ccl::sycl_policy_resolver::scaleup_resolver{
+        ccl::sycl_policy::policy_query(
+            ccl_coll_reduce_scatter, recv_count * world * ccl_dtype.size(), ccl_dtype,
+            /*r2r_size=*/0, comm->size(), use_recording_path(q))
+            .with_comm(comm)
+            .with_p2p_comm(p2p_comm.get())
+            .with_stream(global_stream)
+    }.reduce_scatter();
+
+    switch (tune.protocol) {
+        case ccl::sycl_policy::scaleup_protocol::ll:
+            return reduce_scatter_scaleup_ll256(send_buf, recv_buf, recv_count, dtype, reduction,
+                                                comm, p2p_comm, global_stream, done);
+#ifdef CCL_ENABLE_ESIMD
+        case ccl::sycl_policy::scaleup_protocol::esimd:
+            return reduce_scatter_scaleup_esimd(q, send_buf, recv_buf, recv_count, rank, world,
+                                                dtype, reduction, p2p_comm, comm, global_stream,
+                                                comm->get_pair_comm()->size() == 1,
+                                                comm->get_topo_manager().has_all_vertices_connected(),
+                                                deps, done);
+#endif
+        case ccl::sycl_policy::scaleup_protocol::default_kernel:
+        default:
+            return reduce_scatter_scaleup_default(q, send_buf, recv_buf, recv_count, world, dtype,
+                                              reduction, comm, p2p_comm, global_stream, deps, coll_attr);
+    }
 }
 
 // calculate the location to copy from for a given index
@@ -394,29 +501,29 @@ static bool do_fallback_to_scheduler(size_t size) {
     return is_above_threshold || exception_cases;
 }
 
-ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
-                                          const void* send_buf,
-                                          void* recv_buf,
-                                          size_t recv_count,
-                                          datatype dtype,
-                                          reduction reduction,
-                                          ccl_comm* comm,
-                                          ccl_stream* global_stream,
-                                          const vector_class<event>& deps,
-                                          bool& done) {
+ccl::event reduce_scatter_sycl_multi_domain(sycl::queue& q,
+                                            const void* send_buf,
+                                            void* recv_buf,
+                                            size_t recv_count,
+                                            datatype dtype,
+                                            reduction reduction,
+                                            ccl_comm* global_comm,
+                                            std::shared_ptr<ccl_comm> p2p_comm,
+                                            std::shared_ptr<ccl_comm> r2r_comm,
+                                            ccl_stream* global_stream,
+                                            const vector_class<event>& deps,
+                                            bool& done) {
     ccl::event ev;
     sycl::event e;
     done = true;
 
-    int rank = comm->rank();
-    int world = comm->size();
-    std::shared_ptr<ccl_comm> r2r_comm = comm->get_r2r_comm();
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+    int rank = global_comm->rank();
+    int world = global_comm->size();
 
     if (r2r_comm->size() == 1) {
         LOG_DEBUG("reduce_scatter calls single node");
-        return reduce_scatter_sycl_single_node(
-            q, send_buf, recv_buf, recv_count, dtype, reduction, comm, global_stream, deps, done);
+        return reduce_scatter_scaleup_sycl(
+            q, send_buf, recv_buf, recv_count, dtype, reduction, global_comm, p2p_comm, global_stream, deps, done);
     }
 
     LOG_DEBUG("reduce_scatter calls multi node: recv_count: ",
@@ -450,7 +557,7 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
 
     bool __attribute__((unused)) in_place = (recv_buf == (char*)send_buf + recv_count * rank * ccl_dtype.size());
 
-    const int buf_size = comm->get_scaleout_device_buf_size();
+    const int buf_size = global_comm->get_scaleout_device_buf_size();
     size_t max_pack_count;
     if (total_size <= buf_size) {
         max_pack_count = recv_count;
@@ -466,8 +573,8 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
     size_t displ = 0;
     int nchunks = (recv_count + max_pack_count - 1) / max_pack_count;
 
-    bool need_rearrange = nchunks > 1 || node_comm->size() > 1 || reduce_has_pre_operation;
-    void* staging_buf = need_rearrange ? comm->get_scaleout_device_buf(q) : (void*)send_buf;
+    bool need_rearrange = nchunks > 1 || p2p_comm->size() > 1 || reduce_has_pre_operation;
+    void* staging_buf = need_rearrange ? global_comm->get_scaleout_device_buf(q) : (void*)send_buf;
 
     std::vector<ccl::event> evs;
     // copy deps to evs
@@ -500,7 +607,7 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
                           recv_count,
                           dtype,
                           r2r_comm->size(),
-                          node_comm->size(),
+                          p2p_comm->size(),
                           dep_events);
 
 #ifdef PRINT_TIMING
@@ -524,22 +631,22 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
 
         // scale up on each node
         void* scaleup_buf;
-        if (node_comm->size() > 1) {
+        if (p2p_comm->size() > 1) {
             size_t scaleup_recv_count = pack_count * r2r_comm->size();
-            scaleup_buf = (char*)staging_buf + scaleup_recv_count * node_comm->rank() * ccl_dtype.size();
-            sycl_coll_scaleup_attr coll_attr;
-            coll_attr.force_use_tmp = true;
-            ev = reduce_scatter_sycl_single_node(q,
-                                                 staging_buf,
-                                                 scaleup_buf,
-                                                 scaleup_recv_count,
-                                                 dtype,
-                                                 rs_scaleup_reduction,
-                                                 node_comm.get(),
-                                                 global_stream,
-                                                 evs,
-                                                 done,
-                                                 coll_attr);
+            scaleup_buf = (char*)staging_buf + scaleup_recv_count * p2p_comm->rank() * ccl_dtype.size();
+            sycl_scaleup_options coll_attr{/*force_tmp=*/true};
+            ev = reduce_scatter_scaleup_sycl(q,
+                                             staging_buf,
+                                             scaleup_buf,
+                                             scaleup_recv_count,
+                                             dtype,
+                                             rs_scaleup_reduction,
+                                             global_comm,
+                                             p2p_comm,
+                                             global_stream,
+                                             evs,
+                                             done,
+                                             coll_attr);
             if (!done) {
                 // fallback
                 LOG_INFO("allreduce_sycl allgatherv was not done -- falling back");
@@ -577,7 +684,7 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
                                                             false,
                                                             nullptr,
                                                             reduction_op,
-                                                            node_comm->get_tmp_buf_size(),
+                                                            p2p_comm->get_tmp_buf_size(),
                                                             { sycl_e });
 
                     return ccl::event::create_from_native(sycl_e);
@@ -589,8 +696,10 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
         }
 
         // scale out
-        sycl_reduce_scatter_tune_attr scaleout_tune_attr = reduce_scatter_select_tune_attr(
-            pack_count * ccl_dtype.size(), r2r_comm->size(), ccl_dtype, use_recording_path(q));
+        sycl_scaleout_tune_attr scaleout_tune_attr = ccl::sycl_policy_resolver::scaleout_resolver{
+            ccl::sycl_policy::policy_query(ccl_coll_reduce_scatter, pack_count * ccl_dtype.size(), ccl_dtype,
+                r2r_comm->size(), global_comm->size(), use_recording_path(q))
+        }.reduce_scatter();
         void* scaleout_recv_buf = (char*)recv_buf + displ * ccl_dtype.size();
         ev = reduce_scatter_scaleout_sycl(q,
                                           scaleup_buf,
@@ -622,7 +731,7 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
             std::vector<sycl::event> avg_deps_evs;
             avg_deps_evs.push_back(ev.get_native());
             // average divisor
-            int total_ranks = comm->size();
+            int total_ranks = global_comm->size();
             LOG_DEBUG("reduce_scatter_sycl calculate average on counts: ", pack_count, ", ranks: ", total_ranks);
 
             sycl::event reduce_event =
@@ -639,8 +748,43 @@ ccl::event reduce_scatter_sycl_multi_node(sycl::queue& q,
     } // end of for
 
     if (need_rearrange)
-        comm->put_scaleout_device_buf(staging_buf);
+        global_comm->put_scaleout_device_buf(staging_buf);
 
+    return ev;
+}
+
+ccl::event reduce_scatter_scaleout_only(sycl::queue& q,
+                                        const void* send_buf,
+                                        void* recv_buf,
+                                        size_t recv_count,
+                                        datatype dtype,
+                                        reduction reduction,
+                                        ccl_comm* global_comm,
+                                        ccl_stream* global_stream,
+                                        const vector_class<event>& deps,
+                                        bool& done) {
+    ccl::event ev;
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+
+    sycl_scaleout_tune_attr scaleout_tune_attr = ccl::sycl_policy_resolver::scaleout_resolver{
+        ccl::sycl_policy::policy_query(ccl_coll_reduce_scatter, recv_count * ccl_dtype.size(), ccl_dtype,
+            /*r2r_size=*/0, global_comm->size(), use_recording_path(q))
+    }.reduce_scatter();
+    LOG_DEBUG("reduce_scatter_sycl scaleout only");
+    ev = reduce_scatter_scaleout_sycl(q,
+                                      send_buf,
+                                      recv_buf,
+                                      recv_count,
+                                      dtype,
+                                      reduction,
+                                      global_comm,
+                                      deps,
+                                      true,
+                                      scaleout_tune_attr,
+                                      done);
+    if (!done) {
+        LOG_INFO("reduce_scatter_sycl scaleout was not done -- falling back");
+    }
     return ev;
 }
 
@@ -662,12 +806,6 @@ ccl::event reduce_scatter_sycl(sycl::queue q,
         return ccl::event::create_from_native(e);
     }
 
-    bool is_single_node = false;
-    if (ccl::global_data::env().backend == backend_mode::native) {
-        const ccl::topo_manager& topo_manager = comm->get_topo_manager();
-        is_single_node = topo_manager.is_single_node;
-    }
-
 #ifdef CCL_ENABLE_ESIMD
     // ESIMD scale-up does not support sub-communicators
     if (ccl::global_data::env().sycl_esimd) {
@@ -680,16 +818,19 @@ ccl::event reduce_scatter_sycl(sycl::queue q,
     }
 #endif // CCL_ENABLE_ESIMD
 
-    if (is_single_node && ccl::global_data::env().sycl_single_node_algorithm) {
-        LOG_DEBUG("reduce_scatter is_single_node");
-        return reduce_scatter_sycl_single_node(
-            q, send_buf, recv_buf, recv_count, dtype, reduction, comm, op_stream, deps, done);
-    }
-
     CCL_THROW_IF_NOT(q.is_in_order(), "SYCL queue must be in-order");
 
-    return reduce_scatter_sycl_multi_node(
-        q, send_buf, recv_buf, recv_count, dtype, reduction, comm, op_stream, deps, done);
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    auto p2p_level = ccl_p2p_domain::sycl_get_reduce_scatter_p2p_level(comm, recv_count * ccl_dtype.size(), ccl::global_data::env().sycl_p2p_level_reduce_scatter_threshold);
+
+    auto [ p2p_comm, r2r_comm ] = ccl_p2p_domain::get_p2p_comms(comm, p2p_level);
+
+    if (r2r_comm->is_uniform && r2r_comm->size() == 1) {
+        LOG_DEBUG("is_single_domain");
+        return reduce_scatter_scaleup_sycl(q, send_buf, recv_buf, recv_count, dtype, reduction, comm, p2p_comm, op_stream, deps, done);
+    }
+
+    return reduce_scatter_sycl_multi_domain(q, send_buf, recv_buf, recv_count, dtype, reduction, comm, p2p_comm, r2r_comm, op_stream, deps, done);
 }
 
 } // namespace v1

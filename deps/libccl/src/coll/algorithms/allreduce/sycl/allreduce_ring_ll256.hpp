@@ -24,4 +24,5 @@ ccl::event arc_allreduce(const void *src,
                          ccl::datatype dtype,
                          ccl::reduction reduction,
                          ccl_comm *comm,
+                         std::shared_ptr<ccl_comm> p2p_comm,
                          ccl_stream *global_stream);

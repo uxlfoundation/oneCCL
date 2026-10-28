@@ -23,10 +23,18 @@
 #include "coll/algorithms/utils/transmit/transmit.hpp"
 #include "coll/algorithms/utils/transmit/work_size_data.hpp"
 
-template <typename T, template <typename, int> class Proto, bool LoadSeqNoInRuntime, int SubGroupSize>
+template <typename T,
+          template <typename, int> class Proto,
+          template <typename, template <typename, int> class, bool, int> class Transmit,
+          bool LoadSeqNoInRuntime,
+          int SubGroupSize>
 class oneccl_allgatherv_pcie {};
 
-template <typename T, template <typename, int> class Proto, bool LoadSeqNoInRuntime, int SubGroupSize>
+template <typename T,
+          template <typename, int> class Proto,
+          template <typename, template <typename, int> class, bool, int> class Transmit,
+          bool LoadSeqNoInRuntime,
+          int SubGroupSize>
 class oneccl_allgatherv_counter_pcie {};
 
 template <typename T,
@@ -52,11 +60,13 @@ struct AllGather {
               uint32_t seqNo,
               T* scatterBuf,
               T* gatherBuf,
+              size_t ipcbuf_size,
               T* const peerBuf0[],
               T* const peerBuf1[],
               bool p2p)
             : rank(rank),
               nRanks(nranks),
+              ipcbuf_size(ipcbuf_size),
               gr(calcAccessGranularity(input, output, nelems)),
               workSize(nelems * sizeof(T)),
               transmit(nranks,
@@ -108,7 +118,7 @@ struct AllGather {
                               const size_t* offsets,
                               T* ipcbuf0,
                               T* ipcbuf1,
-                              size_t tmp_buf_size,
+                              size_t ipcbuf_size,
                               T* const peerbuf0[],
                               T* const peerbuf1[],
                               size_t nelems,
@@ -124,6 +134,8 @@ struct AllGather {
 
         done = true;
 
+        size_t tmp_buf_size = RingTransmit<int, Rt64_128_PCIE, true>::ringSize / sizeof(T);
+
         if (LoadSeqNoInRuntime) {
             AllGather offload(nranks,
                               input,
@@ -135,6 +147,7 @@ struct AllGather {
                               0,
                               ipcbuf0,
                               ipcbuf1,
+                              ipcbuf_size,
                               peerbuf0,
                               peerbuf1,
                               p2p);
@@ -167,7 +180,7 @@ struct AllGather {
             auto loopSize = nWires * ProtoT::wireCapacity / offload.transmit.parallel_sg;
             CCL_THROW_IF_NOT(loopSize > 0, "loopSize must be greater than 0");
             e2 = queue.submit([&](sycl::handler& cgh) {
-                cgh.parallel_for<class oneccl_allgatherv_pcie<T, Proto, LoadSeqNoInRuntime, SubGroupSize>>(
+                cgh.parallel_for<class oneccl_allgatherv_pcie<T, Proto, Transmit, LoadSeqNoInRuntime, SubGroupSize>>(
                     ndrange, offload);
             });
         }
@@ -184,6 +197,7 @@ struct AllGather {
                               ll_pattern_data.get_tmp_pattern(),
                               ipcbuf0,
                               ipcbuf1,
+                              ipcbuf_size,
                               peerbuf0,
                               peerbuf1,
                               p2p);
@@ -201,7 +215,7 @@ struct AllGather {
             auto loopSize = nWires * ProtoT::wireCapacity / offload.transmit.parallel_sg;
             CCL_THROW_IF_NOT(loopSize > 0, "loopSize must be greater than 0");
             e2 = queue.submit([&](sycl::handler& cgh) {
-                cgh.parallel_for<class oneccl_allgatherv_pcie<T, Proto, LoadSeqNoInRuntime, SubGroupSize>>(
+                cgh.parallel_for<class oneccl_allgatherv_pcie<T, Proto, Transmit, LoadSeqNoInRuntime, SubGroupSize>>(
                     ndrange, offload);
             });
             // TODO
@@ -221,13 +235,13 @@ struct AllGather {
         auto nWires = pos.get_global_range(0) / SubGroupSize;
         auto wireId_x = pos.get_global_id(0) / SubGroupSize / transmit.parallel_sg;
 
-        auto loopSize = nWires * ProtoT::wireCapacity / transmit.parallel_sg;
+        auto loopSize = TransmitT::calcLoopSize(nWires, transmit.parallel_sg, ipcbuf_size);
         size_t local_id = pos.get_sub_group().get_local_id()[0];
 
         for (size_t gOff = 0, tOff = 0; gOff < workSize; gOff += loopSize, ++tOff) {
             auto wireOff = wireId_x * ProtoT::wireCapacity + gOff;
 
-            ssize_t workLeft = workSize - wireOff;
+            ssize_t workLeft = std::min((size_t)workSize, gOff + loopSize) - wireOff;
 #if defined(__enable_device_verbose__)
             if (local_id == 0)
                 sycl::ext::oneapi::experimental::printf(
@@ -260,6 +274,7 @@ private:
 
     size_t rank;
     size_t nRanks;
+    size_t ipcbuf_size;
     AccessGranularity gr;
     ssize_t workSize;
     TransmitT transmit;

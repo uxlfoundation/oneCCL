@@ -37,6 +37,7 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
                                      ccl::datatype dtype,
                                      ccl::reduction reduction,
                                      ccl_comm* comm,
+                                     const std::shared_ptr<ccl_comm> p2p_comm,
                                      ccl_stream* global_stream,
                                      const ccl::vector_class<ccl::event>& deps) {
     sycl::queue q = global_stream->get_native_stream();
@@ -44,10 +45,9 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
 
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
-    const size_t tmp_buf_size = node_comm->get_tmp_buf_size();
-    const int comm_size = node_comm->size();
-    const int comm_rank = node_comm->rank();
+    const size_t tmp_buf_size = p2p_comm->get_tmp_buf_size();
+    const int comm_size = p2p_comm->size();
+    const int comm_rank = p2p_comm->rank();
 
     ccl_reduction_data reduction_op = make_reduction_operation(reduction);
     const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
@@ -79,13 +79,13 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
     const bool use_kernel_sync = ccl::global_data::env().sycl_kernel_sync;
 
     auto [local_tmp_buf, remote_ptrs] =
-        is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
-    int* tmp_buf_idx = node_comm->get_tmp_buf_idx();
+        is_recording ? p2p_comm->get_all_tmp_bufs_gpu(true) : p2p_comm->get_all_tmp_bufs(true);
+    int* tmp_buf_idx = p2p_comm->get_tmp_buf_idx();
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     // VS : vec_size, SGS : sub_group_size, LB : use_local_barrier, GB : use_global_barrier
     auto reduce_sum_invoke = [=, &q]<int VS, int SGS, int LB, int GB>(std::vector<sycl::event> l_dep_events) {
@@ -125,7 +125,7 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
 
         ccl_kernel_barrier_data kernel_barrier_data = get_kernel_barrier_data(comm).inc_slot();
         // if global barrier is not used, then do not increment the barrier counter
-        ccl_comm_barrier_data comm_barrier_data = GB ? node_comm->barrier_inc() : node_comm->barrier_data();
+        ccl_comm_barrier_data comm_barrier_data = GB ? p2p_comm->barrier_inc() : p2p_comm->barrier_data();
 
         sycl::event local_event;
         if (rem_count == 0) {
@@ -224,7 +224,7 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
                                          tmp_buf_idx,
                                          copy_count,
                                          dsize,
-                                         node_comm->get_tmp_buf_size(),
+                                         p2p_comm->get_tmp_buf_size(),
                                          dep_events);
         }
         else {
@@ -243,18 +243,18 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
                                                            is_recording,
                                                            tmp_buf_idx,
                                                            reduction_op,
-                                                           node_comm->get_tmp_buf_size(),
+                                                           p2p_comm->get_tmp_buf_size(),
                                                            { memcpy_event });
         }
 
-        sycl::event barrier_event = invoke_barrier(node_comm, q, { memcpy_event }, use_cpu_barrier);
+        sycl::event barrier_event = invoke_barrier(p2p_comm, q, { memcpy_event }, use_cpu_barrier);
 
         sycl::event local_event = reduce_sum_invoke.template operator()<VS, 32, 0, 0>({ barrier_event });
 
         return local_event;
     };
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     // run the three phases of collective as separate kernels.
     // when cpu barrier is enabled we cannot use single gpu kernel
@@ -323,7 +323,7 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
         kernel_event = sycl_average(q, recv_buf, count, comm_size, dtype, avg_deps_evs);
     }
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     return ccl::event::create_from_native(kernel_event);
 }
@@ -340,6 +340,7 @@ ccl::event reduce_scatter_small_impl(const void* send_buf,
                                                       ccl::datatype dtype, \
                                                       ccl::reduction reduction, \
                                                       ccl_comm* comm, \
+                                                      std::shared_ptr<ccl_comm> p2p_comm, \
                                                       ccl_stream* global_stream, \
                                                       const ccl::vector_class<ccl::event>& deps)
 

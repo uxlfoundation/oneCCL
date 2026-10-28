@@ -15,12 +15,18 @@
 */
 
 // examples/sycl/sycl.cpp
+
+// oneCCL + SYCL example:
+// Shows how to run a GPU AllReduce concurrently with independent compute
+// using two in-order queues linked by SYCL events, then validates the result.
+
 #include "oneapi/ccl.h"
 
-#include <algorithm>
 #include <iostream>
 #include <mpi.h>
+#include <stdexcept>
 #include <sycl/sycl.hpp>
+#include <vector>
 
 // Create SYCL queues by distributing them
 // based on local rank of each process
@@ -56,7 +62,7 @@ int main() {
     int world_size = 0;
     int version = 0;
     constexpr int kCount = 128 * 1024 * 1024;
-    constexpr int kIterations = 1000;
+    constexpr int kIterations = 100;
 
     MPI_Comm local_comm = 0;
     onecclComm_t comm = nullptr;
@@ -84,13 +90,11 @@ int main() {
         // can use ncclUniqueId. Any other backend could use that provided they
         // can send the handle to other ranks
         onecclGetUniqueId(&uid);
-        MPI_Bcast(&uid, sizeof(uid), MPI_BYTE, 0, MPI_COMM_WORLD);
-    } else {
-        MPI_Bcast(&uid, sizeof(uid), MPI_BYTE, 0, MPI_COMM_WORLD);
     }
+    MPI_Bcast(&uid, sizeof(uid), MPI_BYTE, 0, MPI_COMM_WORLD);
 
-    auto compute_queue = create_queue(rank);
-    auto ccl_queue = create_queue(rank);
+    auto compute_queue = create_queue(local_rank);
+    auto ccl_queue = create_queue(local_rank);
 
     // Currently we provide the API to select device used
     // by oneCCL communicators, but in the future SYCL will
@@ -98,7 +102,7 @@ int main() {
     result = onecclSetDevice(local_rank);
     if (result != onecclSuccess) {
         std::cerr << "Failed to set device.\n";
-        return 1;
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
     // Initialize communicator based on user provided id. In the future I think
@@ -108,7 +112,7 @@ int main() {
     result = onecclCommInitRank(&comm, world_size, uid, rank);
     if (result != onecclSuccess) {
         std::cerr << "Failed to initialize communicator.\n";
-        return 1;
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
     int *sendbuff = static_cast<int *>(
@@ -118,48 +122,42 @@ int main() {
     int *computebuff = static_cast<int *>(
         sycl::malloc_device(kCount * sizeof(int), compute_queue));
 
+    if (sendbuff == nullptr || recvbuff == nullptr || computebuff == nullptr) {
+        std::cerr << "Failed to allocate device buffers.\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    compute_queue.memset(sendbuff, 0, kCount * sizeof(int)).wait();
+
     for (int i = 0; i < kIterations; i++) {
         // Submit first compute kernel to the GPU
-        auto first_compute = compute_queue.submit([&](sycl::handler &h) {
-            h.parallel_for<class compute_kernel_1>(
-                sycl::range<1>(kCount), [=](sycl::id<1> idx) {
-                    for (int i = 0; i < 16; i++) {
-                        sendbuff[idx] += (rank * i + 1) * 100000;
-                    }
-                });
+        auto first_compute = compute_queue.submit([&](sycl::handler &cgh) {
+            cgh.parallel_for<class compute_kernel_1>(
+                sycl::range<1>(kCount),
+                [=](sycl::id<1> idx) { sendbuff[idx] += rank + 1; });
         });
 
         // Submit second kernel to the same queue
         compute_queue.submit([&](sycl::handler &cgh) {
             cgh.parallel_for<class compute_kernel_2>(
                 sycl::range<1>(kCount), [=](sycl::id<1> idx) {
-                    computebuff[idx] = 0;
-                    for (int i = 0; i < 16; i++) {
-                        computebuff[idx] += 1;
-                    }
+                    int a1 = i + 1;
+                    int an = i + world_size;
+                    computebuff[idx] = (world_size * (a1 + an)) / 2;
                 });
         });
 
         // Record dependency on `ccl_queue` to the first compute kernel,
         // so AllReduce is running after the first kernel and in parallel
         // to the second one
-        ccl_queue.ext_oneapi_set_external_event(first_compute);
-        onecclResult_t const result = onecclAllReduce(
+        ccl_queue.ext_oneapi_submit_barrier({first_compute});
+        onecclResult_t const allreduce_result = onecclAllReduce(
             sendbuff, recvbuff, kCount, onecclInt, onecclSum, comm, &ccl_queue);
-        if (result != onecclSuccess) {
+        if (allreduce_result != onecclSuccess) {
             std::cerr << "AllReduce operation failed.\n";
-            return 1;
+            MPI_Abort(MPI_COMM_WORLD, 1);
         }
-        auto event_optional = ccl_queue.ext_oneapi_get_last_event();
-
-#if defined(__INTEL_LLVM_COMPILER) && (__INTEL_LLVM_COMPILER < 20250200)
-        // Older Intel compiler returns event directly
-        auto allreduce_event = event_optional;
-#else
-        // Newer Intel or open-source compilers return optional<event>
-        sycl::event allreduce_event =
-            event_optional.has_value() ? event_optional.value() : sycl::event();
-#endif
+        auto allreduce_event = ccl_queue.ext_oneapi_submit_barrier();
 
         // Third compute kernel will run after the second kernel and Allreduce
         // The queue is in-order, so the only dependency we have to express
@@ -168,31 +166,63 @@ int main() {
             cgh.depends_on(allreduce_event);
             cgh.parallel_for<class compute_kernel_3>(
                 sycl::range<1>(kCount), [=](sycl::id<1> idx) {
-                    sendbuff[idx] = sendbuff[idx] + computebuff[idx];
+                    sendbuff[idx] = recvbuff[idx] - computebuff[idx] + i + 1;
                 });
         });
-
-        compute_queue.wait();
     }
 
-    std::vector<int> recvbuff_host(kCount);
+    // Wait for all submitted work to complete before reading results.
+    compute_queue.wait();
+
+    // Copy the final reduced buffer back to the host to check it.
+    std::vector<int> recvbuff_host;
+    try {
+        recvbuff_host.resize(kCount);
+    } catch (const std::exception &e) {
+        std::cerr << "Rank " << rank
+                  << ": Failed to allocate host buffer: " << e.what() << "\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     compute_queue.memcpy(recvbuff_host.data(), recvbuff, kCount * sizeof(int))
         .wait();
 
-    // Output the result
-    for (int i = 0; i < std::min<unsigned long>(recvbuff_host.size(),
-                                                static_cast<unsigned long>(16));
-         i++) {
-        std::cout << recvbuff_host[i] << " ";
+    int a1 = kIterations;
+    int an = kIterations - 1 + world_size;
+    int expected = (world_size * (a1 + an)) / 2;
+
+    bool success = true;
+
+    // Validate the result
+    for (int i = 0; i < kCount; i++) {
+        if (recvbuff_host[i] != expected) {
+            std::cerr << "Rank " << rank << ": Mismatch at index " << i
+                      << ": expected " << expected << ", got "
+                      << recvbuff_host[i] << "\n";
+            success = false;
+            break;
+        }
     }
-    std::cout << '\n';
+    if (success) {
+        std::cout << "Rank " << rank << ": Result verification passed!\n";
+    }
+
+    // Cleanup
+    sycl::free(sendbuff, compute_queue);
+    sycl::free(recvbuff, compute_queue);
+    sycl::free(computebuff, compute_queue);
 
     result = onecclCommDestroy(comm);
     if (result != onecclSuccess) {
         std::cerr << "Destroy communicator failed.\n";
-        return 1;
+        MPI_Abort(MPI_COMM_WORLD, 1);
     }
 
+    MPI_Comm_free(&local_comm);
     MPI_Finalize();
+
+    if (!success) {
+        // Report validation failure as a nonzero exit code
+        return 1;
+    }
     return 0;
 }

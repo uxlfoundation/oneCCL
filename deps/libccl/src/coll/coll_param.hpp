@@ -64,6 +64,7 @@ struct ccl_coll_attr {
     ccl_coll_attr(const ccl::barrier_attr& attr);
     ccl_coll_attr(const ccl::broadcast_attr& attr);
     ccl_coll_attr(const ccl::pt2pt_attr& attr);
+    ccl_coll_attr(const ccl::gather_attr& attr);
     ccl_coll_attr(const ccl::reduce_attr& attr);
     ccl_coll_attr(const ccl::reduce_scatter_attr& attr);
     ccl_coll_attr(const ccl::scatter_attr& attr);
@@ -262,6 +263,16 @@ struct ccl_coll_param {
                                                       ccl_comm* comm,
                                                       const ccl_stream* stream,
                                                       const std::vector<ccl::event>& deps = {});
+
+    static ccl_coll_param create_gather_param(const void* send_buf,
+                                              void* recv_buf,
+                                              size_t count,
+                                              ccl::datatype dtype,
+                                              int root,
+                                              const ccl_coll_attr& attr,
+                                              ccl_comm* comm,
+                                              const ccl_stream* stream,
+                                              const std::vector<ccl::event>& deps = {});
 
     static ccl_coll_param create_scatter_param(const void* send_buf,
                                                void* recv_buf,

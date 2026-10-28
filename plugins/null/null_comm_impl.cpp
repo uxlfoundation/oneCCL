@@ -88,6 +88,18 @@ onecclResult_t oneccl_allgather_impl(const void * /*sendbuff*/,
     return onecclSuccess;
 }
 
+onecclResult_t oneccl_alltoallv_impl(const void * /*sendbuff*/,
+                                     const size_t * /*send_counts*/,
+                                     void * /*recvbuff*/,
+                                     const size_t * /*recv_counts*/,
+                                     onecclDataType_t /*datatype*/,
+                                     onecclComm_t /*comm*/, void * /*stream*/) {
+    PROCESS_HOOKS(ONECCL_BEFORE_ALLTOALLV);
+
+    PROCESS_HOOKS(ONECCL_AFTER_ALLTOALLV);
+    return onecclSuccess;
+}
+
 onecclResult_t oneccl_broadcast_impl(const void * /*sendbuff*/,
                                      void * /*recvbuff*/, size_t /*count*/,
                                      onecclDataType_t /*datatype*/,
@@ -118,6 +130,16 @@ oneccl_reduce_scatter_impl(const void * /*sendbuff*/, void * /*recvbuff*/,
     PROCESS_HOOKS(ONECCL_BEFORE_REDUCE_SCATTER);
 
     PROCESS_HOOKS(ONECCL_AFTER_REDUCE_SCATTER);
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_scatter_impl(const void * /*sendbuff*/,
+                                   void * /*recvbuff*/, size_t /*count*/,
+                                   onecclDataType_t /*datatype*/, int /*root*/,
+                                   onecclComm_t /*comm*/, void * /*stream*/) {
+    PROCESS_HOOKS(ONECCL_BEFORE_SCATTER);
+
+    PROCESS_HOOKS(ONECCL_AFTER_SCATTER);
     return onecclSuccess;
 }
 
@@ -299,9 +321,11 @@ oneccl_init_communicator_impl(onecclComm_t *comm, size_t /*nranks*/,
     (*comm)->destroy = oneccl_destroy_communicator_impl;
     (*comm)->allreduce = oneccl_allreduce_impl;
     (*comm)->allgather = oneccl_allgather_impl;
+    (*comm)->alltoallv = oneccl_alltoallv_impl;
     (*comm)->broadcast = oneccl_broadcast_impl;
     (*comm)->reduce = oneccl_reduce_impl;
     (*comm)->reduce_scatter = oneccl_reduce_scatter_impl;
+    (*comm)->scatter = oneccl_scatter_impl;
     (*comm)->send = oneccl_send_impl;
     (*comm)->recv = oneccl_recv_impl;
     (*comm)->get_device = oneccl_comm_device_impl;

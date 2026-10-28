@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "common/global/global.hpp"
-#include "coll/algorithms/utils/comm_barrier_data.hpp"
+#include "coll/algorithms/utils/barrier_data.hpp"
 #include "coll/algorithms/utils/consts.hpp"
 #include "coll/algorithms/utils/sycl_barrier.hpp"
 #include "coll/algorithms/utils/sycl_ptrs.hpp"
@@ -61,6 +61,17 @@ inline T apply_reduction(const ccl_reduction_data &reduction, const T &a, const 
     }
     else {
         return ReduceOp()(reduction, a, b);
+    }
+}
+
+// generic apply_reduction that selects the operation dynamically based on reduction.op_type
+template <typename T>
+inline T apply_reduction(const ccl_reduction_data &reduction, const T &a, const T &b) {
+    if (reduction.op_type == ccl_reduction_type_internal::ccl_sum) {
+        return apply_reduction<T, sycl_sum_op>(reduction, a, b);
+    }
+    else {
+        return apply_reduction<T, sycl_any_op>(reduction, a, b);
     }
 }
 

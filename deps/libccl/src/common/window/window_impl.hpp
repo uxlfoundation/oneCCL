@@ -16,62 +16,51 @@
 
 #pragma once
 
-#include "oneapi/ccl/config.h"
-
-#include <cstddef>
-#include <vector>
+#include "oneapi/ccl/types.hpp"
+#include "oneapi/ccl/device_api/window.hpp"
 
 class ccl_comm;
 
-#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-class ccl_window;
-#endif
-
 namespace ccl {
 
-/**
- * Internal window implementation class.
- * This contains the actual data structures that should be hidden from users.
- * The ccl_window_impl wraps the internal ccl_window and provides an opaque interface.
- */
+namespace v1 {
+
+// Single implementation behind both public entry points. In ccl_api_functions.cpp.
+// Explicitly hidden: -fvisibility=internal does not take on this library.
+#define CCL_WINDOW_LOCAL __attribute__((visibility("hidden")))
+
+CCL_WINDOW_LOCAL window_t
+window_register_internal(ccl_comm* comm, void* buffer, size_t size, int win_flags);
+CCL_WINDOW_LOCAL void window_deregister_internal(ccl_comm* comm, window_t& win);
+
+} // namespace v1
+
+// PIMPL body of ccl::v1::window. The class name is v1 ABI (it is spelled inside the
+// exported window(shared_ptr<ccl_window_impl>&&) symbol); the layout is not, so this
+// can be a thin adapter that keeps window RAII over the window_t path.
 class ccl_window_impl {
 public:
-    ccl_window_impl(ccl_comm* comm, void* buffer, size_t size, int win_flags);
-    ~ccl_window_impl();
+    ccl_window_impl(ccl_comm* comm, v1::window_t win) : comm_(comm), win_(win) {}
 
-    // Prevent copying
+    // Runs from noexcept ~window(); a throw here would abort.
+    ~ccl_window_impl() {
+        try {
+            v1::window_deregister_internal(comm_, win_);
+        }
+        catch (...) {
+        }
+    }
+
     ccl_window_impl(const ccl_window_impl&) = delete;
     ccl_window_impl& operator=(const ccl_window_impl&) = delete;
 
-    // Allow moving
-    ccl_window_impl(ccl_window_impl&& other) noexcept;
-    ccl_window_impl& operator=(ccl_window_impl&& other) noexcept;
-
-    // Internal accessors (only for use within the library)
-    void* get_buffer() const {
-        return buffer_;
+    v1::window_t get_window() const {
+        return win_;
     }
-    size_t get_size() const {
-        return size_;
-    }
-    ccl_comm* get_comm() const {
-        return comm_;
-    }
-#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-    ccl_window* get_internal_window() const {
-        return internal_window_;
-    }
-#endif
 
 private:
-    ccl_comm* comm_;
-    void* buffer_;
-    size_t size_;
-#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
-    ccl_window* internal_window_; // The actual internal window from comm
-#else
-    void* internal_window_; // Placeholder when SYCL/ZE not enabled
-#endif
+    ccl_comm* comm_; // not owned, as in 2022.1.0
+    v1::window_t win_;
 };
 
 } // namespace ccl

@@ -660,6 +660,7 @@ run()
                                 do
                                     if [[ "${example}" == "sycl_allgatherv_usm_comm_split" || \
                                           "${example}" == "sycl_reduce_scatter_usm_comm_split" || \
+                                          "${example}" == "sycl_scatter_usm_comm_split" || \
                                           "${example}" == "sycl_allreduce_usm_comm_split" ]] && [[ "${n}" != 4 ]]; then
                                         continue
                                     fi
@@ -700,6 +701,7 @@ run()
                     else
                         if [[ "${example}" == "sycl_allgatherv_usm_comm_split" || \
                               "${example}" == "sycl_reduce_scatter_usm_comm_split" || \
+                              "${example}" == "sycl_scatter_usm_comm_split" || \
                               "${example}" == "sycl_allreduce_usm_comm_split" ]] && [[ "${n}" != 4 ]]; then
                             continue
                         fi

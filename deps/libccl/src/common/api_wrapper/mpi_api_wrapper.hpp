@@ -82,6 +82,8 @@ typedef struct mpi_lib_ops {
     decltype(MPI_Ireduce_c) *MPI_Ireduce_c_ptr;
     decltype(MPI_Ireduce_scatter_block) *MPI_Ireduce_scatter_block_ptr;
     decltype(MPI_Ireduce_scatter_block_c) *MPI_Ireduce_scatter_block_c_ptr;
+    decltype(MPI_Iscatter) *MPI_Iscatter_ptr;
+    decltype(MPI_Iscatter_c) *MPI_Iscatter_c_ptr;
     decltype(MPI_Isend) *MPI_Isend_ptr;
     decltype(MPI_Isend_c) *MPI_Isend_c_ptr;
     decltype(MPI_Op_create) *MPI_Op_create_ptr;
@@ -93,6 +95,8 @@ typedef struct mpi_lib_ops {
     decltype(MPI_Reduce_scatter) *MPI_Reduce_scatter_ptr;
     decltype(MPI_Reduce_scatter_block) *MPI_Reduce_scatter_block_ptr;
     decltype(MPI_Reduce_scatter_block_c) *MPI_Reduce_scatter_block_c_ptr;
+    decltype(MPI_Scatter) *MPI_Scatter_ptr;
+    decltype(MPI_Scatter_c) *MPI_Scatter_c_ptr;
     decltype(MPI_Test) *MPI_Test_ptr;
     decltype(MPI_Type_commit) *MPI_Type_commit_ptr;
     decltype(MPI_Type_contiguous) *MPI_Type_contiguous_ptr;
@@ -161,6 +165,8 @@ static std::vector<std::string> mpi_fn_names = {
     "MPI_Ireduce_c",
     "MPI_Ireduce_scatter_block",
     "MPI_Ireduce_scatter_block_c",
+    "MPI_Iscatter",
+    "MPI_Iscatter_c",
     "MPI_Isend",
     "MPI_Isend_c",
     "MPI_Op_create",
@@ -172,6 +178,8 @@ static std::vector<std::string> mpi_fn_names = {
     "MPI_Reduce_scatter",
     "MPI_Reduce_scatter_block",
     "MPI_Reduce_scatter_block_c",
+    "MPI_Scatter",
+    "MPI_Scatter_c",
     "MPI_Test",
     "MPI_Type_commit",
     "MPI_Type_contiguous",
@@ -313,6 +321,12 @@ extern ccl::mpi_lib_ops_t mpi_lib_ops;
 #else // MPI_Ireduce_scatter_block_c
 #define MPI_Ireduce_scatter_block_c ccl::mpi_lib_ops.MPI_Ireduce_scatter_block_ptr
 #endif // MPI_Ireduce_scatter_block_c
+#define MPI_Iscatter ccl::mpi_lib_ops.MPI_Iscatter_ptr
+#if ENABLE_LARGE_COUNT_SUPPORT
+#define MPI_Iscatter_c ccl::mpi_lib_ops.MPI_Iscatter_c_ptr
+#else // MPI_Iscatter_c
+#define MPI_Iscatter_c ccl::mpi_lib_ops.MPI_Iscatter_ptr
+#endif // MPI_Iscatter_c
 #define MPI_Isend ccl::mpi_lib_ops.MPI_Isend_ptr
 #if ENABLE_LARGE_COUNT_SUPPORT
 #define MPI_Isend_c ccl::mpi_lib_ops.MPI_Isend_c_ptr
@@ -336,6 +350,12 @@ extern ccl::mpi_lib_ops_t mpi_lib_ops;
 #else // MPI_Reduce_scatter_block_c
 #define MPI_Reduce_scatter_block_c ccl::mpi_lib_ops.MPI_Reduce_scatter_block_ptr
 #endif // MPI_Reduce_scatter_block_c
+#define MPI_Scatter ccl::mpi_lib_ops.MPI_Scatter_ptr
+#if ENABLE_LARGE_COUNT_SUPPORT
+#define MPI_Scatter_c ccl::mpi_lib_ops.MPI_Scatter_c_ptr
+#else // MPI_Scatter_c
+#define MPI_Scatter_c ccl::mpi_lib_ops.MPI_Scatter_ptr
+#endif // MPI_Scatter_c
 #define MPI_Test            ccl::mpi_lib_ops.MPI_Test_ptr
 #define MPI_Type_commit     ccl::mpi_lib_ops.MPI_Type_commit_ptr
 #define MPI_Type_contiguous ccl::mpi_lib_ops.MPI_Type_contiguous_ptr

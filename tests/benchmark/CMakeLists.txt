@@ -33,9 +33,23 @@ add_executable(alltoall_perf
     timer.cpp
 )
 
-# Define the executable target for p2p benchmark
-add_executable(p2p_perf
-    p2p.cpp
+# Define the executable target for AllToAllV benchmark
+add_executable(alltoallv_perf
+    alltoallv.cpp
+    common.cpp
+    timer.cpp
+)
+
+# Define the executable target for Scatter benchmark
+add_executable(scatter_perf
+    scatter.cpp
+    common.cpp
+    timer.cpp
+)
+
+# Define the executable target for SendRecv benchmark
+add_executable(sendrecv_perf
+    sendrecv.cpp
     common.cpp
     timer.cpp
 )
@@ -67,7 +81,15 @@ target_include_directories(alltoall_perf PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
 
-target_include_directories(p2p_perf PRIVATE
+target_include_directories(alltoallv_perf PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
+)
+
+target_include_directories(scatter_perf PRIVATE
+    "${PROJECT_SOURCE_DIR}/src"
+)
+
+target_include_directories(sendrecv_perf PRIVATE
     "${PROJECT_SOURCE_DIR}/src"
 )
 
@@ -102,7 +124,19 @@ target_link_libraries(alltoall_perf PRIVATE
     Threads::Threads
 )
 
-target_link_libraries(p2p_perf PRIVATE
+target_link_libraries(alltoallv_perf PRIVATE
+    oneCCL2
+    MPI::MPI_CXX
+    Threads::Threads
+)
+
+target_link_libraries(scatter_perf PRIVATE
+    oneCCL2
+    MPI::MPI_CXX
+    Threads::Threads
+)
+
+target_link_libraries(sendrecv_perf PRIVATE
     oneCCL2
     MPI::MPI_CXX
     Threads::Threads
@@ -140,8 +174,20 @@ add_sycl_to_target(TARGET alltoall_perf SOURCES
     timer.cpp
 )
 
-add_sycl_to_target(TARGET p2p_perf SOURCES
-    p2p.cpp
+add_sycl_to_target(TARGET alltoallv_perf SOURCES
+    alltoallv.cpp
+    common.cpp
+    timer.cpp
+)
+
+add_sycl_to_target(TARGET scatter_perf SOURCES
+    scatter.cpp
+    common.cpp
+    timer.cpp
+)
+
+add_sycl_to_target(TARGET sendrecv_perf SOURCES
+    sendrecv.cpp
     common.cpp
     timer.cpp
 )
@@ -192,12 +238,30 @@ if(${ONECCL_BUILD_TESTS})
     set_tests_properties(alltoall_perf_test PROPERTIES
         TIMEOUT 600
     )
+
     add_test(
-        NAME p2p_perf_test
-        COMMAND mpiexec -n 2 $<TARGET_FILE:p2p_perf> -b 1K -e 1M -g 1
+        NAME alltoallv_perf_test
+        COMMAND mpiexec -n 2 $<TARGET_FILE:alltoallv_perf> -b 1K -e 1M -g 1
         CONFIGURATIONS benchmarks
     )
-    set_tests_properties(p2p_perf_test PROPERTIES
+    set_tests_properties(alltoallv_perf_test PROPERTIES
+        TIMEOUT 600
+    )
+    add_test(
+        NAME scatter_perf_test
+        COMMAND mpiexec -n 2 $<TARGET_FILE:scatter_perf> -b 1K -e 1M -g 1
+        CONFIGURATIONS benchmarks
+    )
+    set_tests_properties(scatter_perf_test PROPERTIES
+        TIMEOUT 600
+    )
+
+    add_test(
+        NAME sendrecv_perf_test
+        COMMAND mpiexec -n 2 $<TARGET_FILE:sendrecv_perf> -b 1K -e 1M -g 1
+        CONFIGURATIONS benchmarks
+    )
+    set_tests_properties(sendrecv_perf_test PROPERTIES
         TIMEOUT 600
     )
     

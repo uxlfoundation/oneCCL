@@ -28,4 +28,8 @@ target_link_libraries(ccl_legacy PRIVATE "${COVERAGE_CXX_FLAGS}")
 target_compile_options(ccl_legacy PRIVATE "${EXTRA_CXX_FLAGS}")
 target_link_options(ccl_legacy PRIVATE "${EXTRA_CXX_FLAGS}")
 
+# Resolve libccl.so.1 and the SYCL/compiler runtime next to the plugin
+# (flat wheel layout) without LD_LIBRARY_PATH
+set_target_properties(ccl_legacy PROPERTIES INSTALL_RPATH "\$ORIGIN")
+
 install(TARGETS ccl_legacy LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)

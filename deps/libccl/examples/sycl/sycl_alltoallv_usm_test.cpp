@@ -79,17 +79,26 @@ int main(int argc, char *argv[]) {
     auto stream = ccl::create_stream(q);
 
     /* create buffers */
-    auto send_buf = allocator.allocate(count * size, usm_alloc_type);
-    auto recv_buf = allocator.allocate(count * size, usm_alloc_type);
+    std::vector<size_t> send_counts(size);
+    for (int i = 0; i < size; i++) {
+        send_counts[i] = std::min(static_cast<size_t>(i + 1), count);
+    }
+    send_counts[size - 1] = count; // make sure the last rank sends the full count
+    size_t total_send_counts = std::accumulate(send_counts.begin(), send_counts.end(), 0);
+    size_t elem_count = rank == size - 1 ? count : std::min(static_cast<size_t>(rank + 1), count);
+    std::vector<size_t> recv_counts(size, elem_count);
 
-    std::vector<size_t> send_counts(size, count);
-    std::vector<size_t> recv_counts(size, count);
+    auto send_buf = allocator.allocate(total_send_counts, usm_alloc_type);
+    auto recv_buf = allocator.allocate(elem_count * size, usm_alloc_type);
 
     /* open buffers and modify them on the device side */
+    auto max_count = std::max(total_send_counts, elem_count * size);
     auto e = q.submit([&](auto &h) {
-        h.parallel_for(count * size, [=](auto id) {
-            send_buf[id] = id / count + 1;
-            recv_buf[id] = -1;
+        h.parallel_for(max_count, [=](auto id) {
+            if (id < total_send_counts)
+                send_buf[id] = rank + 1;
+            if (id < elem_count * size)
+                recv_buf[id] = -1;
         });
     });
 
@@ -102,11 +111,11 @@ int main(int argc, char *argv[]) {
     ccl::alltoallv(send_buf, send_counts, recv_buf, recv_counts, comm, stream, attr, deps).wait();
 
     /* open recv_buf and check its correctness on the device side */
-    sycl::buffer<int> check_buf(count * size);
+    sycl::buffer<int> check_buf(elem_count * size);
     q.submit([&](auto &h) {
         sycl::accessor check_buf_acc(check_buf, h, sycl::write_only);
-        h.parallel_for(count * size, [=](auto id) {
-            if (recv_buf[id] != rank + 1) {
+        h.parallel_for(elem_count * size, [=](auto id) {
+            if (recv_buf[id] != static_cast<int>(id / elem_count + 1)) {
                 check_buf_acc[id] = -1;
             }
             else {
@@ -122,13 +131,13 @@ int main(int argc, char *argv[]) {
     {
         sycl::host_accessor check_buf_acc(check_buf, sycl::read_only);
         size_t i;
-        for (i = 0; i < count * size; i++) {
+        for (i = 0; i < elem_count * size; i++) {
             if (check_buf_acc[i] == -1) {
                 std::cout << "FAILED\n";
                 break;
             }
         }
-        if (i == count * size) {
+        if (i == elem_count * size) {
             std::cout << "PASSED\n";
         }
     }

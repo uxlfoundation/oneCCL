@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "common/api_wrapper/ze_api_wrapper.hpp"
 
 #if __has_include(<sycl/sycl.hpp>)
@@ -80,6 +82,7 @@ constexpr sycl::backend get_level_zero_backend() {
 
 sycl::event submit_barrier(sycl::queue queue);
 sycl::event submit_barrier(sycl::queue queue, sycl::event event);
+sycl::event submit_barrier(sycl::queue queue, std::vector<sycl::event> events);
 
 #ifdef CCL_ENABLE_SYCL_INTEROP_EVENT
 sycl::event make_event(const sycl::context& context, const ze_event_handle_t& sync_event);

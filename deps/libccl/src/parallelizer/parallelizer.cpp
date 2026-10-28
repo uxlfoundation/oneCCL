@@ -326,7 +326,8 @@ ccl::status ccl_parallelizer::process_base(ccl_sched* sched, bool update_sched_i
                 CCL_FATAL("unexpected allgatherv_algo ", algo.allgatherv);
             }
             break;
-        case ccl_coll_reduce_scatter: part_count = 1; break;
+        case ccl_coll_gather:
+        case ccl_coll_reduce_scatter:
         case ccl_coll_scatter:
             /* scatter naive algorithm: no pipelining in this phase */
             part_count = 1;
@@ -386,6 +387,11 @@ ccl::status ccl_parallelizer::process_base(ccl_sched* sched, bool update_sched_i
                 offsets[idx] = idx * counts[idx] * dtype_size;
             }
             counts[counts.size() - 1] += coll_param.get_recv_count() % counts.size();
+            break;
+        case ccl_coll_gather:
+            /* gather with part_count==1: single chunk, no offset computation needed */
+            counts[0] = coll_param.get_send_count();
+            offsets[0] = 0;
             break;
         case ccl_coll_scatter:
             /* scatter with part_count==1: single chunk, no offset computation needed */
@@ -566,6 +572,28 @@ ccl::status ccl_parallelizer::process_base(ccl_sched* sched, bool update_sched_i
                 param.comm = comm;
                 param.stream = coll_param.stream;
                 param.is_scaleout = coll_param.is_scaleout;
+                ccl::add_coll_entry(part_scheds[idx].get(), param);
+            }
+            break;
+
+        case ccl_coll_gather:
+            /* part_count == 1 always; gather does not chunk in this phase */
+            for (idx = 0; idx < part_count; idx++) {
+                ccl_coll_param param{ false };
+                param.ctype = ccl_coll_gather;
+                param.send_buf = ccl_buffer(coll_param.get_send_buf_ptr(),
+                                            coll_param.get_send_count() * dtype_size,
+                                            offsets[idx],
+                                            ccl_buffer_type::INDIRECT);
+                param.recv_buf = ccl_buffer(coll_param.get_recv_buf_ptr(),
+                                            coll_param.get_recv_count() * dtype_size,
+                                            offsets[idx],
+                                            ccl_buffer_type::INDIRECT);
+                param.count = counts[idx];
+                param.dtype = dtype;
+                param.root = coll_param.root;
+                param.comm = comm;
+                param.stream = coll_param.stream;
                 ccl::add_coll_entry(part_scheds[idx].get(), param);
             }
             break;

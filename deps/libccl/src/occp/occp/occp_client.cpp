@@ -37,6 +37,11 @@ occp_client_t::occp_client_t(rank_t rank,
                              uint32_t op_timeout)
         : rank_(rank),
           occp_srv_(srv_addr) {
+    /* The OCCP bootstrap is disabled: CCL_KVS_MODE=occp is rejected by the env parser, so
+     * nothing should reach this constructor. Abort rather than dial out if anything does. */
+    OCCL_OUT("OCCP bootstrap is disabled in this build");
+    abort();
+
     comm_id_ = occp_srv_.port(); // use port as comm_id for logging
 
     // Store config values from constructor parameters

@@ -19,6 +19,8 @@
 #include "coll/group/group.hpp"
 #include <memory>
 
+#include "coll/algorithms/utils/host_task.hpp"
+
 //namespace ccl {
 //namespace v1 {
 
@@ -582,7 +584,7 @@ sycl::event pipe_sendrecv_plain(sycl::queue& q,
     return recv_copy_e;
 }
 
-sycl::event pipe_sendrecv(sycl::queue& q,
+sycl::event pipe_sendrecv(sycl::queue q,
                           const void* send_buf,
                           size_t send_count,
                           int dest,
@@ -666,7 +668,7 @@ sycl::event pipe_sendrecv(sycl::queue& q,
 }
 
 // two-way RDMA, no pipeline
-sycl::event sendrecv_rdma(sycl::queue& q,
+sycl::event sendrecv_rdma(sycl::queue q,
                           const void* send_buf,
                           size_t send_count,
                           int dest,
@@ -683,8 +685,6 @@ sycl::event sendrecv_rdma(sycl::queue& q,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t send_size = send_count * ccl_dtype.size();
     size_t recv_size = recv_count * ccl_dtype.size();
-    CCL_ASSERT(send_size <= comm->get_scaleout_host_buf_size());
-    CCL_ASSERT(recv_size <= comm->get_scaleout_host_buf_size());
 
     int ep_idx = 0;
     e = q.submit([=](sycl::handler& h) {
@@ -716,15 +716,58 @@ sycl::event gpu_send_plain(sycl::queue& q,
                            int sendtag,
                            ccl::datatype dtype,
                            ccl_comm* comm,
-                           const ccl::vector_class<sycl::event>& deps) {
+                           const ccl::vector_class<sycl::event>& deps,
+                           bool use_rdma) {
     sycl::event e;
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t send_size = send_count * ccl_dtype.size();
-    CCL_ASSERT(send_size <= comm->get_scaleout_host_buf_size());
     int ep_idx = 0;
 
-    if (group_impl::is_group_active) {
+    LOG_DEBUG("gpu_send_plain: send_size=",
+              send_size,
+              ", dest=",
+              dest,
+              ", sendtag=",
+              sendtag,
+              " group ",
+              group_impl::is_group_active(),
+              " use rdma: ",
+              use_rdma);
+
+    if (use_rdma) {
+        if (group_impl::is_group_active()) {
+            auto send_req_ptr = std::make_shared<ccl_internal_comm::group_send_request>();
+            send_req_ptr->send_host_buf = const_cast<void*>(send_buf);
+            send_req_ptr->send_size = send_size;
+            send_req_ptr->comm = comm;
+            send_req_ptr->use_rdma = use_rdma;
+
+            e = ccl_host_task(q, {}, [=]() {
+                ATL_CALL_THROW_IF_ERROR(atl_comm->send(
+                    ep_idx, send_buf, send_size, dest, sendtag, send_req_ptr->atl_send_req));
+            });
+            group_impl::add_group_send_request(send_req_ptr, q, sendtag);
+        }
+        else {
+            e = q.submit([=](sycl::handler& h) {
+                h.host_task([=]() {
+                    atl_req_t send_req;
+                    ATL_CALL_THROW_IF_ERROR(
+                        atl_comm->send(ep_idx, send_buf, send_size, dest, sendtag, send_req));
+                    ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, send_req));
+                    if (!send_req.is_completed) {
+                        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, send_req));
+                    }
+                });
+            });
+        }
+        return e;
+    }
+
+    CCL_ASSERT(send_size <= comm->get_scaleout_host_buf_size());
+
+    if (group_impl::is_group_active()) {
         void* host_buf = malloc(send_size);
         if (!host_buf) {
             CCL_THROW("Failed to allocate ", send_size, " bytes for group send operation");
@@ -744,16 +787,15 @@ sycl::event gpu_send_plain(sycl::queue& q,
         send_req_ptr->send_host_buf = host_buf;
         send_req_ptr->send_size = send_size;
         send_req_ptr->comm = comm;
+        send_req_ptr->use_rdma = use_rdma;
 
-        e = q.submit([=](sycl::handler& h) {
-            h.depends_on(e);
-            h.host_task([=]() {
-                ATL_CALL_THROW_IF_ERROR(atl_comm->send(
-                    ep_idx, host_buf, send_size, dest, sendtag, send_req_ptr->atl_send_req));
-            });
+        CCL_THROW_IF_NOT(!use_rdma, "entered non-rdma path with rdma enabled");
+
+        e = ccl_host_task(q, {e}, [=]() {
+            ATL_CALL_THROW_IF_ERROR(atl_comm->send(
+                ep_idx, host_buf, send_size, dest, sendtag, send_req_ptr->atl_send_req));
         });
-        group_impl::add_group_send_request(send_req_ptr, group_impl::is_group_active);
-        group_impl::set_sycl_queue(q);
+        group_impl::add_group_send_request(send_req_ptr, q, sendtag);
     }
     else {
         LOG_DEBUG("gpu_send_plain: non-group: send_size=",
@@ -762,7 +804,6 @@ sycl::event gpu_send_plain(sycl::queue& q,
                   dest,
                   ", sendtag=",
                   sendtag);
-        sycl::event e;
         std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
         auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
         size_t send_size = send_count * ccl_dtype.size();
@@ -800,15 +841,58 @@ sycl::event gpu_recv_plain(sycl::queue& q,
                            int recvtag,
                            ccl::datatype dtype,
                            ccl_comm* comm,
-                           const ccl::vector_class<sycl::event>& deps) {
+                           const ccl::vector_class<sycl::event>& deps,
+                           bool use_rdma) {
     sycl::event e;
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t recv_size = recv_count * ccl_dtype.size();
-    CCL_ASSERT(recv_size <= comm->get_scaleout_host_buf_size());
     int ep_idx = 0;
 
-    if (group_impl::is_group_active) {
+    LOG_DEBUG("gpu_recv_plain: recv_size=",
+              recv_size,
+              ", src=",
+              src,
+              ", recvtag=",
+              recvtag,
+              ", group API=",
+              group_impl::is_group_active(),
+              ", use_rdma=",
+              use_rdma);
+
+    if (use_rdma) {
+        if (group_impl::is_group_active()) {
+            auto recv_req_ptr = std::make_shared<ccl_internal_comm::group_recv_request>();
+            recv_req_ptr->recv_user_buf = const_cast<void*>(recv_buf);
+            recv_req_ptr->recv_size = recv_size;
+            recv_req_ptr->comm = comm;
+            recv_req_ptr->use_rdma = use_rdma;
+
+            e = ccl_host_task(q, {}, [=]() {
+                ATL_CALL_THROW_IF_ERROR(atl_comm->recv(
+                    ep_idx, recv_buf, recv_size, src, recvtag, recv_req_ptr->atl_recv_req));
+            });
+            group_impl::add_group_recv_request(recv_req_ptr, q, recvtag);
+        }
+        else {
+            e = q.submit([=](sycl::handler& h) {
+                h.host_task([=]() {
+                    atl_req_t recv_req;
+                    ATL_CALL_THROW_IF_ERROR(
+                        atl_comm->recv(ep_idx, recv_buf, recv_size, src, recvtag, recv_req));
+                    ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, recv_req));
+                    if (!recv_req.is_completed) {
+                        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
+                    }
+                });
+            });
+        }
+        return e;
+    }
+
+    CCL_ASSERT(recv_size <= comm->get_scaleout_host_buf_size());
+
+    if (group_impl::is_group_active()) {
         void* host_buf = malloc(recv_size);
         if (!host_buf) {
             CCL_THROW("Failed to allocate ", recv_size, " bytes for group recv operation");
@@ -824,16 +908,15 @@ sycl::event gpu_recv_plain(sycl::queue& q,
         recv_req_ptr->recv_host_buf = host_buf;
         recv_req_ptr->recv_size = recv_size;
         recv_req_ptr->comm = comm;
+        recv_req_ptr->use_rdma = use_rdma;
 
-        e = q.submit([=](sycl::handler& h) {
-            h.depends_on(deps);
-            h.host_task([=]() {
-                ATL_CALL_THROW_IF_ERROR(atl_comm->recv(
-                    ep_idx, host_buf, recv_size, src, recvtag, recv_req_ptr->atl_recv_req));
-            });
+        CCL_THROW_IF_NOT(!use_rdma, "entered non-rdma path with rdma enabled");
+
+        e = ccl_host_task(q, deps, [=]() {
+            ATL_CALL_THROW_IF_ERROR(atl_comm->recv(
+                ep_idx, host_buf, recv_size, src, recvtag, recv_req_ptr->atl_recv_req));
         });
-        group_impl::add_group_recv_request(recv_req_ptr, group_impl::is_group_active);
-        group_impl::set_sycl_queue(q);
+        group_impl::add_group_recv_request(recv_req_ptr, q, recvtag);
     }
     else {
         LOG_DEBUG("gpu_recv_plain: non-group: recv_size=",

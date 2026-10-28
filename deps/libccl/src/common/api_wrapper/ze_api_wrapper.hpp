@@ -121,6 +121,19 @@ typedef struct ze_lib_ops {
     decltype(zelTracerMemFreeRegisterCallback) *zelTracerMemFreeRegisterCallback;
     decltype(zelTracerSetEnabled) *zelTracerSetEnabled;
     decltype(zeMemGetIpcHandleWithProperties) *zeMemGetIpcHandleWithProperties;
+    decltype(zeInitDrivers) *zeInitDrivers;
+    decltype(zeCommandListAppendEventReset) *zeCommandListAppendEventReset;
+    decltype(zeCommandListAppendMemoryFill) *zeCommandListAppendMemoryFill;
+    decltype(zeCommandListAppendMemAdvise) *zeCommandListAppendMemAdvise;
+    decltype(zeCommandListAppendMemoryPrefetch) *zeCommandListAppendMemoryPrefetch;
+    decltype(zeModuleGetKernelNames) *zeModuleGetKernelNames;
+    decltype(zeFenceReset) *zeFenceReset;
+    decltype(zeFenceQueryStatus) *zeFenceQueryStatus;
+    decltype(zeFenceDestroy) *zeFenceDestroy;
+    decltype(zeCommandListImmediateAppendCommandListsExp) *zeCommandListImmediateAppendCommandListsExp;
+    decltype(zeCommandListHostSynchronize) *zeCommandListHostSynchronize;
+    decltype(zeEventCounterBasedCreate) *zeEventCounterBasedCreate;
+    decltype(zeEventCounterBasedGetDeviceAddress) *zeEventCounterBasedGetDeviceAddress;
 } ze_lib_ops_t;
 
 static std::vector<std::string> ze_fn_names = {
@@ -217,6 +230,19 @@ static std::vector<std::string> ze_fn_names = {
 
 static std::vector<std::string> ze_fn_names_optional = {
     "zeMemGetIpcHandleWithProperties",
+    "zeInitDrivers",
+    "zeCommandListAppendEventReset",
+    "zeCommandListAppendMemoryFill",
+    "zeCommandListAppendMemAdvise",
+    "zeCommandListAppendMemoryPrefetch",
+    "zeModuleGetKernelNames",
+    "zeFenceReset",
+    "zeFenceQueryStatus",
+    "zeFenceDestroy",
+    "zeCommandListImmediateAppendCommandListsExp",
+    "zeCommandListHostSynchronize",
+    "zeEventCounterBasedCreate",
+    "zeEventCounterBasedGetDeviceAddress",
 };
 
 extern ccl::ze_lib_ops_t ze_lib_ops;
@@ -314,6 +340,19 @@ extern ccl::ze_lib_ops_t ze_lib_ops;
 #define zelTracerMemFreeRegisterCallback    ccl::ze_lib_ops.zelTracerMemFreeRegisterCallback
 #define zelTracerSetEnabled                 ccl::ze_lib_ops.zelTracerSetEnabled
 #define zeMemGetIpcHandleWithProperties     ccl::ze_lib_ops.zeMemGetIpcHandleWithProperties
+#define zeInitDrivers                       ccl::ze_lib_ops.zeInitDrivers
+#define zeCommandListAppendEventReset       ccl::ze_lib_ops.zeCommandListAppendEventReset
+#define zeCommandListAppendMemoryFill       ccl::ze_lib_ops.zeCommandListAppendMemoryFill
+#define zeCommandListAppendMemAdvise        ccl::ze_lib_ops.zeCommandListAppendMemAdvise
+#define zeCommandListAppendMemoryPrefetch   ccl::ze_lib_ops.zeCommandListAppendMemoryPrefetch
+#define zeModuleGetKernelNames              ccl::ze_lib_ops.zeModuleGetKernelNames
+#define zeFenceReset                        ccl::ze_lib_ops.zeFenceReset
+#define zeFenceQueryStatus                  ccl::ze_lib_ops.zeFenceQueryStatus
+#define zeFenceDestroy                      ccl::ze_lib_ops.zeFenceDestroy
+#define zeCommandListImmediateAppendCommandListsExp       ccl::ze_lib_ops.zeCommandListImmediateAppendCommandListsExp
+#define zeCommandListHostSynchronize        ccl::ze_lib_ops.zeCommandListHostSynchronize
+#define zeEventCounterBasedCreate           ccl::ze_lib_ops.zeEventCounterBasedCreate
+#define zeEventCounterBasedGetDeviceAddress ccl::ze_lib_ops.zeEventCounterBasedGetDeviceAddress
 
 bool ze_api_init();
 void ze_api_fini();

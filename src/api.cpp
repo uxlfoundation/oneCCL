@@ -29,7 +29,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <map>
 #include <mutex>
 #include <set>
@@ -47,6 +46,9 @@ thread_local struct onecclThreadContext {
 
 std::shared_mutex plugin_lock;
 std::unordered_map<std::string, dl_handle> library_cache;
+// Why plugins could not be used in the current init attempt, reported if no
+// plugin is selected
+thread_local std::string plugin_load_errors;
 
 // This a map is storing possible names for plugins used by oneCCL,
 // The name `libexternal_Soneccl_Slibccl_Ulegacy` was added to support
@@ -162,9 +164,14 @@ onecclResult_t load_plugin(onecclPlugin_t *plugin, const std::string &path) {
             std::scoped_lock const lock(plugin_lock);
             handle = dlopen(path.c_str(), RTLD_LAZY);
             if (handle == nullptr) {
-                ONECCL_INFO("Cannot open plugin library: %s", dlerror());
+                const char *error = dlerror();
+                ONECCL_INFO("Cannot open plugin library: %s", error);
+                plugin_load_errors += "\n  dlopen(" + path + "): ";
+                plugin_load_errors +=
+                    error != nullptr ? error : "unknown error";
                 return onecclError;
             }
+            ONECCL_INFO("Loaded plugin library: %s", path.c_str());
             // Cache the loaded library
             library_cache[path] = handle;
         }
@@ -180,6 +187,8 @@ onecclResult_t load_plugin(onecclPlugin_t *plugin, const std::string &path) {
     if (dlsym_error != nullptr) {
         ONECCL_ERROR("Cannot load plugin entrypoint: '%s': %s", symbol,
                      dlsym_error);
+        plugin_load_errors +=
+            "\n  dlsym(" + path + ", " + symbol + "): " + dlsym_error;
         return onecclError;
     }
 
@@ -188,10 +197,51 @@ onecclResult_t load_plugin(onecclPlugin_t *plugin, const std::string &path) {
     auto plugin_init_fn = reinterpret_cast<onecclPluginCallInit_t>(
         plugin->call(ONECCL_PLUGIN_INIT));
     if (plugin_init_fn != nullptr) {
-        return plugin_init_fn();
+        onecclResult_t const result = plugin_init_fn();
+        if (result != onecclSuccess) {
+            plugin_load_errors += "\n  " + path + ": plugin init failed";
+        }
+        return result;
     }
 
     return onecclSuccess;
+}
+
+// Directory of libccl.so.2 itself (with a trailing slash), or empty
+std::string get_library_dir() {
+#ifndef _WIN32
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void *>(&get_library_dir), &info) != 0 &&
+        info.dli_fname != nullptr) {
+        std::string const path(info.dli_fname);
+        auto const pos = path.rfind('/');
+        if (pos != std::string::npos) {
+            return path.substr(0, pos + 1);
+        }
+    }
+#endif
+    return {};
+}
+
+// Prefer the plugin installed next to libccl.so.2, so the plugin matches this
+// libccl.so.2 no matter how it was found; if it is missing or dlopen fails,
+// use the loader search. A plugin the process already loaded (e.g. linked by
+// the application) wins, so no second copy with separate state is opened.
+onecclResult_t load_bundled_plugin(onecclPlugin_t *plugin,
+                                   const std::string &name) {
+#ifndef _WIN32
+    if (void *const loaded = dlopen(name.c_str(), RTLD_LAZY | RTLD_NOLOAD)) {
+        dlclose(loaded);
+        return load_plugin(plugin, name);
+    }
+    static const std::string library_dir = get_library_dir();
+    std::string const sibling = library_dir + name;
+    if (!library_dir.empty() && access(sibling.c_str(), F_OK) == 0 &&
+        load_plugin(plugin, sibling) == onecclSuccess) {
+        return onecclSuccess;
+    }
+#endif
+    return load_plugin(plugin, name);
 }
 
 onecclResult_t init_library_with_override(const char *ccl_plugin) {
@@ -203,7 +253,7 @@ onecclResult_t init_library_with_override(const char *ccl_plugin) {
         if (plugin_str == to_string(type)) {
             for (const auto &path : paths) {
                 onecclResult_t const result =
-                    load_plugin(&thread_context.plugin, path);
+                    load_bundled_plugin(&thread_context.plugin, path);
                 if (result == onecclSuccess) {
                     thread_context.plugin_type = type;
                     thread_context.init_done = true;
@@ -226,7 +276,8 @@ onecclResult_t init_library_with_override(const char *ccl_plugin) {
         }
     }
 
-    ONECCL_ERROR("oneCCL could not initialize plugin privided in CCL_PLUGIN.");
+    ONECCL_ERROR("oneCCL could not initialize plugin provided in CCL_PLUGIN.%s",
+                 plugin_load_errors.c_str());
     return onecclError;
 }
 
@@ -259,6 +310,9 @@ onecclResult_t init_library_without_override() {
                 ONECCL_INFO("Failed to load plugin type: %s due to conflicts "
                             "with previously loaded plugins.",
                             to_string(type).c_str());
+                plugin_load_errors +=
+                    "\n  " + to_string(type) +
+                    ": skipped, conflicts with a loaded plugin";
                 continue;
             }
         }
@@ -266,7 +320,7 @@ onecclResult_t init_library_without_override() {
         onecclPlugin plugin;
         onecclResult_t result = onecclError;
         for (const auto &path : paths) {
-            result = load_plugin(&plugin, path);
+            result = load_bundled_plugin(&plugin, path);
             if (result == onecclSuccess) {
                 break; // Successfully loaded, no need to try other paths
             }
@@ -285,6 +339,8 @@ onecclResult_t init_library_without_override() {
         if (platform_score_func == nullptr) {
             ONECCL_ERROR(
                 "Plugin does not provide function to evaluate platform!");
+            plugin_load_errors +=
+                "\n  " + to_string(type) + ": no platform evaluation function";
             continue;
         }
 
@@ -293,11 +349,18 @@ onecclResult_t init_library_without_override() {
             SAFE_CALL([&] { return platform_score_func(&platform_score); });
         if (result != onecclSuccess) {
             ONECCL_INFO("Failed to evaluate plugin score!");
+            plugin_load_errors +=
+                "\n  " + to_string(type) + ": platform evaluation failed";
             continue;
         }
 
         ONECCL_INFO("Platform score for %s: %d", to_string(type).c_str(),
                     platform_score);
+        if (platform_score <= 0) {
+            plugin_load_errors += "\n  " + to_string(type) +
+                                  ": platform score " +
+                                  std::to_string(platform_score);
+        }
         if (platform_score > 0 && platform_score > best_platform_score) {
             thread_context.plugin = plugin;
             thread_context.plugin_type = type;
@@ -309,7 +372,8 @@ onecclResult_t init_library_without_override() {
 
     if (thread_context.plugin_type == onecclPluginAny) {
         ONECCL_ERROR("oneCCL could not be initialized! Could not load any "
-                     "plugin. Please rerun with `CCL_LOG_LEVEL=info`.");
+                     "plugin. Please rerun with `CCL_LOG_LEVEL=info`.%s",
+                     plugin_load_errors.c_str());
         return onecclError;
     }
 
@@ -337,9 +401,11 @@ onecclResult_t init_library() {
                 BUILD_COMPILER_PATH, BUILD_TYPE, BUILD_SYSTEM_NAME,
                 BUILD_SYSTEM_PROCESSOR);
 
+    plugin_load_errors.clear();
+
     // Try initializing with CCL_PLUGIN environment variable if set
     const char *ccl2_plugin = utils_getenv("CCL_PLUGIN");
-    if (ccl2_plugin == nullptr) {
+    if (ccl2_plugin == nullptr || *ccl2_plugin == '\0') {
         return init_library_without_override();
     }
 
@@ -351,7 +417,7 @@ onecclResult_t init_library() {
     return onecclError
 
 onecclResult_t init_comm(onecclComm_t *comm, size_t nranks,
-                         onecclUniqueId commId, int rank,
+                         const onecclUniqueId &commId, int rank,
                          const onecclConfig_t *config) {
     auto init_comm_func = reinterpret_cast<onecclPluginCallCommInit_t>(
         thread_context.plugin.call(ONECCL_PLUGIN_INIT_COMM));
@@ -364,7 +430,7 @@ onecclResult_t init_comm(onecclComm_t *comm, size_t nranks,
     }
 
     auto *new_comm =
-        static_cast<onecclComm_t>(calloc(sizeof(struct onecclComm), 1));
+        static_cast<onecclComm_t>(calloc(1, sizeof(struct onecclComm)));
     ONECCL_CHECK_MALLOC(new_comm);
 
     new_comm->id = commId;
@@ -374,7 +440,7 @@ onecclResult_t init_comm(onecclComm_t *comm, size_t nranks,
         return init_comm_func(&new_comm, nranks, commId, rank, config);
     });
     if (result != onecclSuccess) {
-        std::cerr << "Plugin could not initialize communicator!" << '\n';
+        ONECCL_ERROR("Plugin could not initialize communicator!");
         free(new_comm);
         return result;
     }
@@ -508,7 +574,7 @@ onecclResult_t onecclCommSplit(onecclComm_t comm, int color, int key,
         config = &comm->config;
     }
 
-    *newcomm = static_cast<onecclComm_t>(calloc(sizeof(struct onecclComm), 1));
+    *newcomm = static_cast<onecclComm_t>(calloc(1, sizeof(struct onecclComm)));
     ONECCL_CHECK_PTR(newcomm);
 
     (*newcomm)->config = *config;
@@ -595,7 +661,7 @@ onecclResult_t CCL_C_API onecclAllToAll(const void *sendbuff, void *recvbuff,
 
     ONECCL_CHECK_PTR(comm);
 
-    if (comm->allgather == nullptr) {
+    if (comm->alltoall == nullptr) {
         ONECCL_WARN("Plugin does not implement onecclAllToAll");
         return onecclNotImplemented;
     }
@@ -603,6 +669,29 @@ onecclResult_t CCL_C_API onecclAllToAll(const void *sendbuff, void *recvbuff,
     return SAFE_CALL([=]() {
         return comm->alltoall(sendbuff, recvbuff, count, datatype, comm,
                               stream);
+    });
+}
+
+onecclResult_t CCL_C_API onecclAllToAllV(const void *sendbuff,
+                                         const size_t *send_counts,
+                                         void *recvbuff,
+                                         const size_t *recv_counts,
+                                         onecclDataType_t datatype,
+                                         onecclComm_t comm, void *stream) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+    ONECCL_CHECK_PTR(send_counts);
+    ONECCL_CHECK_PTR(recv_counts);
+
+    if (comm->alltoallv == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclAllToAllV");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() {
+        return comm->alltoallv(sendbuff, send_counts, recvbuff, recv_counts,
+                               datatype, comm, stream);
     });
 }
 
@@ -656,6 +745,24 @@ onecclResult_t onecclReduceScatter(const void *sendbuff, void *recvbuff,
     return SAFE_CALL([=]() {
         return comm->reduce_scatter(sendbuff, recvbuff, recvcount, datatype,
                                     redop, comm, stream);
+    });
+}
+
+onecclResult_t onecclScatter(const void *sendbuff, void *recvbuff, size_t count,
+                             onecclDataType_t datatype, int root,
+                             onecclComm_t comm, void *stream) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+
+    if (comm->scatter == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclScatter");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() {
+        return comm->scatter(sendbuff, recvbuff, count, datatype, root, comm,
+                             stream);
     });
 }
 
@@ -844,6 +951,90 @@ onecclResult_t onecclCommWindowDeregister(onecclComm_t comm,
 
     return SAFE_CALL(
         [=]() { return comm->comm_window_deregister(comm, window); });
+}
+
+onecclResult_t onecclDevCommCreate(onecclComm_t comm,
+                                   const onecclDevCommRequirements_t *reqs,
+                                   onecclDevComm_t *dev_comm) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+    ONECCL_CHECK_PTR(reqs);
+    ONECCL_CHECK_PTR(dev_comm);
+
+    if (comm->dev_comm_create == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclDevCommCreate");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL(
+        [=]() { return comm->dev_comm_create(comm, reqs, dev_comm); });
+}
+
+onecclResult_t onecclDevCommDestroy(onecclComm_t comm,
+                                    const onecclDevComm_t *dev_comm) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(comm);
+    // nullptr dev_comm is a no-op, as in onecclCommWindowDeregister.
+
+    if (comm->dev_comm_destroy == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclDevCommDestroy");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() { return comm->dev_comm_destroy(comm, dev_comm); });
+}
+
+onecclResult_t onecclGetPeerDevicePointer(onecclWindow_t window, size_t offset,
+                                          int peer, void **out_ptr) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(window);
+    ONECCL_CHECK_PTR(out_ptr);
+
+    auto func = reinterpret_cast<onecclPluginCallGetPeerDevicePointer_t>(
+        thread_context.plugin.call(ONECCL_PLUGIN_GET_PEER_DEVICE_POINTER));
+    if (func == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclGetPeerDevicePointer");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() { return func(window, offset, peer, out_ptr); });
+}
+
+onecclResult_t onecclGetLsaDevicePointer(onecclWindow_t window, size_t offset,
+                                         int lsa_peer, void **out_ptr) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(window);
+    ONECCL_CHECK_PTR(out_ptr);
+
+    auto func = reinterpret_cast<onecclPluginCallGetLsaDevicePointer_t>(
+        thread_context.plugin.call(ONECCL_PLUGIN_GET_LSA_DEVICE_POINTER));
+    if (func == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclGetLsaDevicePointer");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() { return func(window, offset, lsa_peer, out_ptr); });
+}
+
+onecclResult_t onecclGetLocalDevicePointer(onecclWindow_t window, size_t offset,
+                                           void **out_ptr) {
+    INIT_CCL;
+
+    ONECCL_CHECK_PTR(window);
+    ONECCL_CHECK_PTR(out_ptr);
+
+    auto func = reinterpret_cast<onecclPluginCallGetLocalDevicePointer_t>(
+        thread_context.plugin.call(ONECCL_PLUGIN_GET_LOCAL_DEVICE_POINTER));
+    if (func == nullptr) {
+        ONECCL_WARN("Plugin does not implement onecclGetLocalDevicePointer");
+        return onecclNotImplemented;
+    }
+
+    return SAFE_CALL([=]() { return func(window, offset, out_ptr); });
 }
 
 onecclResult_t onecclCommDevice(onecclComm_t comm, int *device) {

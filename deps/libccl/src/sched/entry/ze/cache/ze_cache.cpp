@@ -574,8 +574,20 @@ void ipc_handle_cache::push(ze_context_handle_t context,
             cache.erase(lru_iter);
         }
     }
+    
+    if (ccl::global_data::env().ze_ipc_mem_handle_type ==
+        ccl::ze::ipc_mem_handle_type::fabric) {
+        ze_ipc_mem_handle_type_ext_desc_t desc = {
+            .stype = ZE_STRUCTURE_TYPE_IPC_MEM_HANDLE_TYPE_EXT_DESC,
+            .pNext = NULL,
+            .typeFlags = ZE_IPC_MEM_HANDLE_TYPE_FLAG_FABRIC_ACCESSIBLE
+        };
 
-    ZE_CALL(zeMemGetIpcHandle, (context, ipc_desc.ptr, &out_value->handle));
+        ZE_CALL(zeMemGetIpcHandleWithProperties, (context, ipc_desc.ptr, &desc, &out_value->handle));
+    }
+    else {
+    	ZE_CALL(zeMemGetIpcHandle, (context, ipc_desc.ptr, &out_value->handle));
+    }
 
     out_value->mem_id = ipc_desc.mem_id;
     // every call to zeMemGetIpcHandle results in increment of

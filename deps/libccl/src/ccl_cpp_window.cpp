@@ -24,6 +24,10 @@ namespace ccl {
 
 namespace v1 {
 
+// v1 ABI: the sret slot size is compiled into 2022.1.0 callers.
+static_assert(sizeof(window) == sizeof(std::shared_ptr<ccl_window_impl>),
+              "v1 ABI: ccl::v1::window must be exactly its shared_ptr pimpl");
+
 CCL_API window::window(impl_value_t&& impl) : base_t(std::move(impl)) {}
 
 CCL_API window::window(window&& src) : base_t(std::move(src)) {}

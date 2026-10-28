@@ -16,6 +16,8 @@
 
 #pragma once
 #include <atomic>
+#include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <optional>
 
@@ -42,10 +44,12 @@
 #include "oneapi/ccl/coll_attr.hpp"
 #include "coll/algorithms/algorithm_utils.hpp"
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+#include "common/ze/ze_wrapper.hpp"
 #include "common/global/ze/ze_fd_manager.hpp"
 #include "sched/entry/ze/ze_primitives.hpp"
 #include "sched/entry/ze/ze_handle_exchange_entry.hpp"
-#include "coll/algorithms/utils/comm_barrier_data.hpp"
+#include "coll/algorithms/utils/barrier_data.hpp"
+#include "coll/algorithms/utils/cb_events_data.hpp"
 #include "coll/algorithms/utils/consts.hpp"
 #include "comm/windows.hpp"
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
@@ -154,9 +158,21 @@ public:
     sycl::queue &getMainQueue() {
         return main_queue.value();
     }
-};
 
-extern SerializedStream global_serialize_stream;
+    bool hasMainQueue() {
+        return main_queue.has_value();
+    }
+
+    ~SerializedStream() {
+        LOG_TRACE("serialized stream destroyed");
+    }
+
+    // Process-wide, but lifetime is tied to the set of live ccl_comms:
+    // the first comm to call acquire_serialize_stream() constructs it;
+    // when the last comm holding a shared_ptr is destroyed, the singleton
+    // is released while Level Zero is still alive. Thread-safe.
+    static std::shared_ptr<SerializedStream> acquire();
+};
 
 #endif
 
@@ -346,18 +362,12 @@ struct alignas(CACHELINE_SIZE) ccl_large_tmp_bufs {
     std::array<void*, buf_count> tmp_bufs;
     // ipc exchanged pointers to remote tmp buffers
     std::array<void*, MAX_NODE_RANKS> remote_tmp_bufs[buf_count] = {};
-    std::array<void*, MAX_NODE_RANKS> remote_numa_tmp_bufs[buf_count] = {};
-    std::array<void*, MAX_GPUS> remote_even_tmp_bufs[buf_count] = {};
-    std::array<void*, MAX_TILES> remote_pair_tmp_bufs[buf_count] = {};
 
     ccl_large_tmp_bufs() {
         // Explicitly zero-initialize all pointers
         tmp_bufs.fill(nullptr);
         for (int i = 0; i < buf_count; i++) {
             remote_tmp_bufs[i].fill(nullptr);
-            remote_numa_tmp_bufs[i].fill(nullptr);
-            remote_even_tmp_bufs[i].fill(nullptr);
-            remote_pair_tmp_bufs[i].fill(nullptr);
         }
     }
 };
@@ -395,16 +405,18 @@ public:
 #endif
             {
                 // sycl::free accepts nullptr, no need to check
-                sycl::free(tmp_bufs[0], free_q_ref);
-                sycl::free(tmp_bufs_gpu[0], free_q_ref);
-                sycl::free(tmp_bufs_gpu_index, free_q_ref);
-                sycl::free(tmp_bufs_gpu_secondary_index, free_q_ref);
+		if (tmp_allocated) {
+                    sycl::free(tmp_bufs[0], free_q_ref);
+                    sycl::free(tmp_bufs_gpu[0], free_q_ref);
+                    sycl::free(tmp_bufs_gpu_index, free_q_ref);
+                    sycl::free(tmp_bufs_gpu_secondary_index, free_q_ref);
+		}
                 sycl::free(pattern_data_gpu.ll_pattern_data_internal, free_q_ref);
             }
             set_ptrs_to_null();
         }
-        else if (tmp_bufs[0] || tmp_bufs_gpu[0] || tmp_bufs_gpu_index ||
-                 tmp_bufs_gpu_secondary_index) {
+        else if ((umf_allocated || tmp_allocated) && (tmp_bufs[0] || tmp_bufs_gpu[0] || tmp_bufs_gpu_index ||
+                 tmp_bufs_gpu_secondary_index)) {
             LOG_WARN("internal error, memory leak occurs");
         }
     }
@@ -471,6 +483,18 @@ public:
         q_ref.memset(tmp_bufs_gpu_secondary_index, 0, sizeof(*tmp_bufs_gpu_secondary_index), t)
             .wait();
 
+        this->tmp_bufs_gpu_index = tmp_bufs_gpu_index;
+        this->tmp_bufs_gpu_secondary_index = tmp_bufs_gpu_secondary_index;
+
+        for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
+            void* tmp_buf_ptr = tmp_buf + i * buf_size;
+            void* tmp_buf_ptr_gpu = tmp_buf_gpu + i * buf_size;
+
+            this->tmp_bufs[i] = tmp_buf_ptr;
+            this->tmp_bufs_gpu[i] = tmp_buf_ptr_gpu;
+        }
+        tmp_allocated = true;
+
 #ifdef CCL_ENABLE_UMF
         if (umf_enable) {
             this->pattern_data_gpu.ll_pattern_data_internal = static_cast<LLPatternDataInternal*>(
@@ -491,26 +515,16 @@ public:
                 });
             })
             .wait();
-        this->pattern_data.ll_pattern_data_internal = &this->pattern_data_internal_cpu;
-        this->pattern_data.init(buf_count);
-
-        this->tmp_bufs_gpu_index = tmp_bufs_gpu_index;
-        this->tmp_bufs_gpu_secondary_index = tmp_bufs_gpu_secondary_index;
-
-        for (int i = 0; i < ccl_tmp_bufs::buf_count; i++) {
-            void* tmp_buf_ptr = tmp_buf + i * buf_size;
-            void* tmp_buf_ptr_gpu = tmp_buf_gpu + i * buf_size;
-
-            this->tmp_bufs[i] = tmp_buf_ptr;
-            this->tmp_bufs_gpu[i] = tmp_buf_ptr_gpu;
-        }
     }
 
-    void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
+    // for sub-comm to inherit GPU storage from node comm
+    void inherit_pointers(ccl_comm *node_comm);
+
+    void set_remote_tmp_bufs(int my_rank, std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
         remote_tmp_bufs[idx] = ptrs;
     }
 
-    void set_remote_tmp_bufs_gpu(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
+    void set_remote_tmp_bufs_gpu(int my_rank, std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
         remote_tmp_bufs_gpu[idx] = ptrs;
     }
 
@@ -578,6 +592,8 @@ private:
         tmp_bufs_gpu_index = NULL;
         tmp_bufs_gpu_secondary_index = NULL;
         pattern_data_gpu.ll_pattern_data_internal = NULL;
+        pattern_data.ll_pattern_data_internal = &pattern_data_internal_cpu;
+        pattern_data.init(buf_count);
     }
 
     std::shared_ptr<sycl::queue> free_q;
@@ -592,6 +608,7 @@ private:
 
     int index = 0;
     bool umf_allocated = false;
+    bool tmp_allocated = false;
 };
 
 class alignas(CACHELINE_SIZE) ccl_scaleout_host_bufs {
@@ -679,6 +696,7 @@ public:
         void* recv_host_buf;
         size_t recv_size;
         ccl_comm* comm;
+        bool use_rdma;
     };
 
     struct group_send_request {
@@ -686,6 +704,7 @@ public:
         void* send_host_buf;
         size_t send_size;
         ccl_comm* comm;
+        bool use_rdma;
     };
 #endif // CCL_ENABLE_SYCL
 
@@ -741,6 +760,15 @@ public:
         m_flag_data.set_count(count);
     }
 
+    ccl_comm_pair_flag_data pair_flag_data() const {
+        return m_pair_flag_data;
+    }
+
+    void set_pair_flag_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs, size_t* counts) {
+        m_pair_flag_data.set_remote_ptrs(ptrs);
+        m_pair_flag_data.set_pair_counts(counts);
+    }
+
     void* get_tmp_buf(int idx) const {
         return m_tmp_buf.get_tmp_buf(idx);
     }
@@ -777,12 +805,16 @@ public:
         return m_tmp_buf.get_tmp_buf_secondary_idx();
     }
 
+    void inherit_pointers(ccl_comm *node_comm) {
+        m_tmp_buf.inherit_pointers(node_comm);
+    }
+
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
-        m_tmp_buf.set_remote_tmp_bufs(ptrs, idx);
+        m_tmp_buf.set_remote_tmp_bufs(m_rank, ptrs, idx);
     }
 
     void set_remote_tmp_bufs_gpu(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
-        m_tmp_buf.set_remote_tmp_bufs_gpu(ptrs, idx);
+        m_tmp_buf.set_remote_tmp_bufs_gpu(m_rank, ptrs, idx);
     }
 
     ccl_large_tmp_bufs& get_large_tmp_bufs() {
@@ -891,6 +923,22 @@ public:
         }
         return ptrs;
     }
+
+    ccl_ce_cb_events& get_ce_cb_events()
+    {
+        return m_ce_cb_events;
+    }
+
+    ze_cb_event_ptr& get_remote_cb_event(int rank)
+    {
+        return m_ce_cb_events.get_remote(rank);
+    }
+
+    ze_cb_event_ptr& get_local_cb_event(int rank)
+    {
+        return m_ce_cb_events.get_local(rank);
+    }
+
 #endif // CCL_ENABLE_SYCL
 
     std::shared_ptr<atl_base_comm> atl_comm;
@@ -905,6 +953,7 @@ private:
 #ifdef CCL_ENABLE_SYCL
     ccl_comm_barrier_data m_barrier_data;
     ccl_comm_flag_data m_flag_data;
+    ccl_comm_pair_flag_data m_pair_flag_data;
     ccl_tmp_bufs m_tmp_buf;
     ccl_large_tmp_bufs m_large_tmp_buf{};
     ccl_scaleout_host_bufs m_scaleout_host_bufs;
@@ -917,6 +966,9 @@ private:
     std::vector<group_recv_request> group_recv_requests;
 
     std::vector<ccl_window*> windows;
+
+    // owns the CE counter-based events and the doorbell allocation behind them
+    ccl_ce_cb_events m_ce_cb_events;
 #endif // CCL_ENABLE_SYCL
 };
 
@@ -952,7 +1004,26 @@ public:
     ccl_comm(ccl_comm&& src) = default;
     ccl_comm& operator=(ccl_comm& src) = delete;
     ccl_comm& operator=(ccl_comm&& src) = default;
-    ~ccl_comm() = default;
+    ~ccl_comm() {
+        LOG_TRACE("comm destructor started");
+        // The destructor is implicitly noexcept. Any exception that escapes it
+        // calls std::terminate(). The SYCL wait()/submit_barrier() calls below
+        // are not marked noexcept by the spec and may throw, so guard the body.
+        try {
+#ifdef CCL_ENABLE_SYCL
+            if (serialize_stream && serialize_stream->hasMainQueue()) {
+                serialize_stream->getMainQueue().ext_oneapi_submit_barrier().wait();
+            }
+#ifdef CCL_ENABLE_ZE
+            last_event.wait();
+#endif
+#endif
+        }
+        catch (const std::exception& e) {
+            LOG_ERROR("exception in comm destructor: ", e.what());
+        }
+        LOG_TRACE("comm destructor finished");
+    };
 
     void set_parent_comm(ccl_comm* comm) {
         parent_comm = comm;
@@ -1022,6 +1093,9 @@ private:
     int get_numa_node_for_gpu(std::shared_ptr<ccl_comm> node_comm,
                               std::shared_ptr<ccl::device> device_ptr,
                               std::shared_ptr<ccl::context> context_ptr);
+    ssize_t get_pcie_switch_for_gpu(std::shared_ptr<ccl_comm> node_comm,
+                                    std::shared_ptr<ccl::device> device_ptr,
+                                    std::shared_ptr<ccl::context> context_ptr);
 
     ccl_comm* get_impl() {
         return this;
@@ -1050,6 +1124,7 @@ public:
     // needed for multithreading (single process multiple devices) approach:
     ccl_comm* create_subcommExt(int size, int rank) const;
     ccl_comm* create_subcommExt(const std::vector<int>& colors, int rank, int key) const;
+    ccl_comm* create_subcomm_split_mt(int color, int key) const;
 
     std::shared_ptr<ccl_comm> clone_with_new_id(int comm_id);
 
@@ -1069,6 +1144,27 @@ public:
 
     int get_rank_from_global(int global_rank) const;
     bool try_get_rank_from_global(int global_rank) const;
+
+    /**
+     * Cache whether this local p2p communicator and its matching r2r
+     * communicator have the expected global-rank order.
+     *
+     * For example, with four ranks per local p2p domain, the p2p groups must
+     * be {0,1,2,3}, {4,5,6,7}, ... and the matching r2r groups must be
+     * {0,4,...}, {1,5,...}, {2,6,...}, and {3,7,...}.
+     */
+    void set_block_ordered_with_r2r(bool value) {
+        block_ordered_with_r2r = value;
+    }
+
+    /**
+     * Return the rank-layout result cached when the topology subcommunicators
+     * were created. Communicator rank mappings are immutable, so callers do
+     * not need to repeat the mapping check for every collective invocation.
+     */
+    bool is_block_ordered_with_r2r() const {
+        return block_ordered_with_r2r;
+    }
 
     /**
      * Returns the number of @c rank in the node communicator
@@ -1141,6 +1237,38 @@ public:
         }
         CCL_ASSERT(numa_r2r_comm, "no numa_r2r_comm");
         return numa_r2r_comm;
+    }
+
+    std::shared_ptr<ccl_comm> get_pcie_switch_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_pcie_switch_comm();
+        }
+        CCL_ASSERT(pcie_switch_comm, "no pcie_switch_comm");
+        return pcie_switch_comm;
+    }
+
+    std::shared_ptr<ccl_comm> get_pcie_switch_r2r_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_pcie_switch_r2r_comm();
+        }
+        CCL_ASSERT(pcie_switch_r2r_comm, "no pcie_switch_r2r_comm");
+        return pcie_switch_r2r_comm;
+    }
+
+    std::shared_ptr<ccl_comm> get_self_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_self_comm();
+        }
+        CCL_ASSERT(self_comm, "no self comm");
+        return self_comm;
+    }
+
+    std::shared_ptr<ccl_comm> get_self_r2r_comm() const {
+        if (parent_comm) {
+            return parent_comm->get_self_r2r_comm();
+        }
+        CCL_ASSERT(self_r2r_comm, "no self_r2r comm");
+        return self_r2r_comm;
     }
 
     std::shared_ptr<ccl_comm> get_even_comm() const {
@@ -1257,6 +1385,14 @@ public:
         comm_impl->set_flag_ptrs(ptrs, count);
     }
 
+    ccl_comm_pair_flag_data pair_flag_data() const {
+        return comm_impl->pair_flag_data();
+    }
+
+    void set_pair_flag_ptrs(std::array<size_t*, MAX_NODE_RANKS> ptrs, size_t* counts) {
+        comm_impl->set_pair_flag_ptrs(ptrs, counts);
+    }
+
     void allocate_buffers(sycl::queue& q, bool tmp_in_device, bool umf_enable = false) {
         comm_impl->allocate_buffers(q, tmp_in_device, umf_enable);
     }
@@ -1291,6 +1427,10 @@ public:
 
     int* get_tmp_buf_secondary_idx() {
         return comm_impl->get_tmp_buf_secondary_idx();
+    }
+
+    void inherit_pointers(ccl_comm *node_comm) {
+        comm_impl->inherit_pointers(node_comm);
     }
 
     void set_remote_tmp_bufs(std::array<void*, MAX_NODE_RANKS> ptrs, int idx) {
@@ -1391,7 +1531,71 @@ public:
         return comm_impl->get_pattern_data_auto(q);
     }
 
+
+    ze_cb_event_ptr& get_remote_cb_event(int rank)
+    {
+        return comm_impl->get_remote_cb_event(rank);
+    }
+    
+    ze_cb_event_ptr& get_local_cb_event(int rank)
+    {
+        return comm_impl->get_local_cb_event(rank);
+    }
+
+    // Allocates the CE doorbell region this rank exports. Returns it so the caller can add
+    // it to the ipc_ptrs exchange; ownership stays with the comm.
+    cb_event_mem_t* allocate_cb_events_memory(sycl::queue& q)
+    {
+        return comm_impl->get_ce_cb_events().allocate_device_memory(q, size());
+    }
+
+    // Creates the counter-based events over the exchanged doorbell cells. cb_events_device
+    // is the result of the exchange for the slot allocate_cb_events_memory() fed.
+    void init_cb_events(const std::array<void*, MAX_NODE_RANKS>& cb_events_device,
+                        ze_device_ptr ze_device)
+    {
+        comm_impl->get_ce_cb_events().init(cb_events_device, ze_device, rank(), size());
+    }
+
+    const ze_cmd_queue_ptr& get_ce_queue() const
+    {
+        return ce_queue;
+    }
+
+    const ze_devices_t& get_devices() const
+    {
+        return ze_device_manager.devices();
+    }
 #endif // CCL_ENABLE_SYCL
+
+    void set_topo_info();
+
+    bool is_cross_upi() const {
+        if (node_comm) {
+            return node_comm->is_cross_upi();
+        }
+        else {
+            return m_is_cross_upi;
+        }
+    }
+
+    bool is_cross_pcie_switch() const {
+        if (node_comm) {
+            return node_comm->is_cross_pcie_switch();
+        }
+        else {
+            return m_is_cross_switch;
+        }
+    }
+
+    bool has_pcie_switch() const {
+        if (parent_comm) {
+            return parent_comm->has_pcie_switch();
+        }
+        else {
+            return m_has_pcie_switch;
+        }
+    }
 
     // collectives operation declarations
     ccl::event barrier(const ccl::stream::impl_value_t& stream,
@@ -1413,6 +1617,7 @@ public:
     int global_current_id = invalid_id;
     uint64_t unique_comm_id = invalid_uniq_id;
 
+    bool is_uniform = false;
 private:
     // this is an internal part of the communicator
     // we store there only the fields which should be shared
@@ -1431,10 +1636,22 @@ private:
     std::shared_ptr<ccl_comm> node_comm;
     std::shared_ptr<ccl_comm> numa_comm;
     std::shared_ptr<ccl_comm> numa_r2r_comm;
+    std::shared_ptr<ccl_comm> pcie_switch_comm;
+    std::shared_ptr<ccl_comm> pcie_switch_r2r_comm;
+    std::shared_ptr<ccl_comm> self_comm;
+    std::shared_ptr<ccl_comm> self_r2r_comm;
     std::shared_ptr<ccl_comm> even_comm;
     std::shared_ptr<ccl_comm> pair_comm;
+    bool m_has_pcie_switch{ false };
+    bool m_is_cross_upi{ false };
+    bool m_is_cross_switch{ false };
+    // Cached property of this p2p communicator and its canonical r2r peer.
+    bool block_ordered_with_r2r = false;
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     std::shared_ptr<void> handle_exchange_data;
+    ze_device_manager_t ze_device_manager;
+    // ze_device_ptr ze_device;
+    ze_cmd_queue_ptr  ce_queue;
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     // these fields are duplicate with the ones in ccl_internal_comm
@@ -1447,6 +1664,12 @@ private:
     ccl_rank2rank_map local2global_map{};
     ccl::topo_manager topo_manager;
     std::shared_ptr<ccl_comm_env> env;
+#ifdef CCL_ENABLE_SYCL
+    // Refcounted process-wide serializer. Keeps the singleton alive at least
+    // as long as this comm — released when the last live comm goes away, so
+    // its L0-backed queue/event die before L0 tears down.
+    std::shared_ptr<SerializedStream> serialize_stream = SerializedStream::acquire();
+#endif // CCL_ENABLE_SYCL
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     std::shared_ptr<ccl::ze::fd_manager> fd_manager;
     void init_ipc_exchange_mode(std::shared_ptr<ccl_comm> comm);
@@ -1454,9 +1677,6 @@ private:
     ccl_stream* last_stream = nullptr;
     // Map of streams to their most recent events for finalize tracking
     std::unordered_map<ccl_stream*, sycl::event> finalize_events;
-    // Flag to track if comm was used during graph recording (invalid for finalize)
-    bool used_in_graph_recording = false;
-
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
     ccl_sched_id_t next_sched_id_internal{};

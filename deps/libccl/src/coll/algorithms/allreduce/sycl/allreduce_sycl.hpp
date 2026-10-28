@@ -64,6 +64,7 @@ ccl::event allreduce_small(const void* send_buf,
                            ccl::datatype dtype,
                            ccl::reduction reduction,
                            ccl_comm* comm,
+                           std::shared_ptr<ccl_comm> p2p_comm,
                            ccl_stream* global_stream,
                            const ccl::vector_class<ccl::event>& deps);
 
@@ -73,6 +74,7 @@ ccl::event allreduce_large(const void* send_buf,
                            ccl::datatype dtype,
                            ccl::reduction reduction,
                            ccl_comm* comm,
+                           const std::shared_ptr<ccl_comm> p2p_comm,
                            ccl_stream* global_stream,
                            const ccl::vector_class<ccl::event>& deps);
 
@@ -84,6 +86,7 @@ ccl::event allreduce_ll(const void* src,
                         ccl::datatype dtype,
                         ccl::reduction reduction,
                         ccl_comm* comm,
+                        const std::shared_ptr<ccl_comm> p2p_comm,
                         ccl_stream* global_stream,
                         bool& done);
 
@@ -96,6 +99,6 @@ ccl::event allreduce_scaleout_sycl(sycl::queue& q,
                                    ccl_comm* comm,
                                    const ccl::vector_class<ccl::event>& deps,
                                    bool original_deps,
-                                   sycl_allreduce_tune_attr tune_attr,
+                                   sycl_scaleout_tune_attr tune_attr,
                                    bool& done,
                                    bool is_cpu_buffers = false);

@@ -18,4 +18,7 @@ if(ONECCL_ENABLE_ITT)
   target_link_libraries(ccl_null PRIVATE "${COVERAGE_CXX_FLAGS}" ittnotify)
 endif()
 
+# Resolve dependencies next to the plugin without LD_LIBRARY_PATH
+set_target_properties(ccl_null PROPERTIES INSTALL_RPATH "\$ORIGIN")
+
 install(TARGETS ccl_null LIBRARY DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)

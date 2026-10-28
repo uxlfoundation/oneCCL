@@ -20,10 +20,102 @@
 #include <array>
 #include <sycl/sycl.hpp>
 
-#include "coll/algorithms/utils/comm_barrier_data.hpp"
+#include "coll/algorithms/utils/barrier_data.hpp"
 #include "coll/algorithms/utils/consts.hpp"
 #include "coll/algorithms/utils/sycl_ptrs.hpp"
 #include "coll/algorithms/utils/tvisa/include/gen_visa_templates.hpp"
+
+namespace syclext = sycl::ext::oneapi;
+namespace syclexp = sycl::ext::oneapi::experimental;
+
+template <typename T>
+inline void mem_store(T *ptr, const T val) {
+#if defined(CCL_SYCL_ENABLE_ARCB) && defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+    char *dst = (char *)ptr;
+    lscStore<16, CacheCtrl::L1UC_L3UC>(dst, val);
+#else
+    *ptr = val;
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+    __LscFlushCache();
+#endif
+#endif
+}
+
+// sfence-like (Store Fence): Ensures all prior stores (writes) are visible across the system
+inline void sfence_system() {
+    sycl::atomic_fence(sycl::memory_order::release, sycl::memory_scope::system);
+}
+
+// lfence-like (Load Fence): Ensures all following loads (reads) fetch fresh data across the system
+inline void lfence_system() {
+    sycl::atomic_fence(sycl::memory_order::acquire, sycl::memory_scope::system);
+}
+
+// mfence-like (Memory Fence): Ensures both prior reads and writes are visible to other threads on the *same device*
+inline void mfence_device() {
+    sycl::atomic_fence(sycl::memory_order::acq_rel, sycl::memory_scope::device);
+}
+
+struct sycl_barrier_helper {
+    const sycl::nd_item<1> it;
+    const size_t idx;
+    const sycl::sub_group sg;
+    const size_t sidx;
+
+    sycl_barrier_helper(const sycl::nd_item<1>& it)
+        : it(it),
+          idx(it.get_global_linear_id()),
+          sg(it.get_sub_group()),
+          sidx(sg.get_local_id()) {}
+
+    inline void sync_group(bool use_root_sync) const {
+        if (use_root_sync) {
+            sycl::group_barrier(it.ext_oneapi_get_root_group());
+        } else {
+            sycl::group_barrier(it.get_group());
+        }
+    }
+
+    template <bool use_root_sync_v = false>
+    inline void sync_group_template() const {
+        if constexpr (use_root_sync_v) {
+            sycl::group_barrier(it.ext_oneapi_get_root_group());
+        } else {
+            sycl::group_barrier(it.get_group());
+        }
+    }
+
+    inline void wait_eq(size_t* ptr, size_t count) const {
+#if 1
+        size_t *addr = ptr;
+        size_t val = 0;
+        while (val < count) {
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+            lscLoad<16, CacheCtrl::L1UC_L3UC>(val, addr);
+#endif
+        }
+#else
+        sycl::atomic_ref<size_t,
+                         sycl::memory_order::relaxed,
+                         sycl::memory_scope::device,
+                         sycl::access::address_space::global_space>
+            atomic_p(*ptr);
+        size_t val = atomic_p.load();
+        while (val < count) {
+            val = atomic_p.load();
+        }
+#endif
+    }
+
+    inline void atomic_inc(size_t* ptr) const {
+        sycl::atomic_ref<size_t,
+                         sycl::memory_order::relaxed,
+                         sycl::memory_scope::device,
+                         sycl::access::address_space::global_space>
+            atomic_p(*ptr);
+        atomic_p += 1;
+    }
+};
 
 inline void kernel_barrier(size_t *sync_ptr, const sycl::nd_item<1> it) {
     sycl::sub_group sg = it.get_sub_group();
@@ -302,5 +394,56 @@ inline void comm_barrier(ccl_comm_barrier_data barrier_data,
         while (val < counter_full) {
             val = atomic_p.load();
         }
+    }
+}
+
+// Pairwise barrier between two ranks using per-peer counters.
+// Uses per-peer counters so it does not interfere with ring p2p_barrier calls.
+//
+// use_root_sync (template) selects the in-barrier group_barrier scope:
+//   false: sycl::group_barrier(get_group())       — within one work-group
+//   true : sycl::group_barrier(get_root_group())  — across all work-groups
+// Multi-WG launches MUST set true so stores from sibling WGs are fenced
+// before the flag write (and reads after the flag wait fence on receive).
+template <bool use_root_sync = false>
+inline void p2p_barrier_pair(ccl_comm_pair_flag_data pflag,
+                             int peer_rank,
+                             const sycl::nd_item<1> it,
+                             const bool use_subgroups = false) {
+    sycl_barrier_helper helper(it);
+
+    const int comm_rank = pflag.rank();
+    size_t *pair_counts = pflag.pair_counts();
+    std::array<size_t *, MAX_NODE_RANKS> sync_remote_ptrs = pflag.remote_ptrs();
+
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+    __LscFlushCache();
+#endif
+
+    if (helper.idx == 0) {
+        pair_counts[peer_rank] += 1;
+    }
+
+    helper.template sync_group_template<use_root_sync>();
+
+    const size_t flag_count = pair_counts[peer_rank];
+
+    sfence_system();
+
+    // write arrival flag into peer's pair_flags cell owned by this rank
+    if (helper.idx == 0) {
+        mem_store(&(sync_remote_ptrs[peer_rank][comm_rank]), flag_count);
+    }
+
+    // poll local pair_flags for peer's arrival
+    const size_t use_idx = use_subgroups ? helper.sidx : helper.idx;
+    if (use_idx == 0) {
+        helper.wait_eq(&(sync_remote_ptrs[comm_rank][peer_rank]), flag_count);
+    }
+
+    lfence_system();
+
+    if (!use_subgroups) {
+        helper.template sync_group_template<use_root_sync>();
     }
 }

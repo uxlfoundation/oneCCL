@@ -62,6 +62,8 @@ public:
 
     int get_id() override;
 
+    static int allocate_id();
+
 private:
     // The KVS ID was introduced to facilitate multi-group execution in a multi-threading context.
     // In the example provided, the user has:

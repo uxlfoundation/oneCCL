@@ -74,6 +74,14 @@ sycl::event submit_barrier(sycl::queue queue, sycl::event event) {
 #endif // ICPX_VERSION
 }
 
+sycl::event submit_barrier(sycl::queue queue, std::vector<sycl::event> events) {
+#if ICPX_VERSION >= 140000
+    return queue.ext_oneapi_submit_barrier(events);
+#elif ICPX_VERSION < 140000
+    return queue.submit_barrier(events);
+#endif // ICPX_VERSION
+}
+
 #ifdef CCL_ENABLE_SYCL_INTEROP_EVENT
 sycl::event make_event(const sycl::context& context, const ze_event_handle_t& sync_event) {
 #if ICPX_VERSION >= 140000

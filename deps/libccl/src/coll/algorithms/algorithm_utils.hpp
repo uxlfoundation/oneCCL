@@ -26,8 +26,9 @@
 
 #define CCL_COLL_LIST \
     ccl_coll_allgather, ccl_coll_allgatherv, ccl_coll_allreduce, ccl_coll_alltoall, \
-        ccl_coll_alltoallv, ccl_coll_barrier, ccl_coll_bcast, ccl_coll_broadcast, ccl_coll_recv, \
-        ccl_coll_reduce, ccl_coll_reduce_scatter, ccl_coll_send, ccl_coll_scatter
+        ccl_coll_alltoallv, ccl_coll_barrier, ccl_coll_bcast, ccl_coll_broadcast, \
+        ccl_coll_recv, ccl_coll_reduce, ccl_coll_reduce_scatter, \
+        ccl_coll_send, ccl_coll_scatter, ccl_coll_gather
 
 enum ccl_coll_allgather_algo {
     ccl_coll_allgather_undefined = 0,
@@ -110,6 +111,13 @@ enum ccl_coll_broadcast_algo {
     ccl_coll_broadcast_topo
 };
 
+enum ccl_coll_gather_algo {
+    ccl_coll_gather_undefined = 0,
+
+    ccl_coll_gather_direct,
+    ccl_coll_gather_topo
+};
+
 enum ccl_coll_recv_algo {
     ccl_coll_recv_undefined = 0,
 
@@ -149,7 +157,8 @@ enum ccl_coll_send_algo {
 enum ccl_coll_scatter_algo {
     ccl_coll_scatter_undefined = 0,
 
-    ccl_coll_scatter_naive
+    ccl_coll_scatter_naive,
+    ccl_coll_scatter_topo
 };
 
 union ccl_coll_algo {
@@ -161,6 +170,7 @@ union ccl_coll_algo {
     ccl_coll_barrier_algo barrier;
     ccl_coll_bcast_algo bcast;
     ccl_coll_broadcast_algo broadcast;
+    ccl_coll_gather_algo gather;
     ccl_coll_recv_algo recv;
     ccl_coll_reduce_algo reduce;
     ccl_coll_reduce_scatter_algo reduce_scatter;
@@ -188,7 +198,8 @@ enum ccl_coll_type {
     ccl_coll_reduce_scatter,
     ccl_coll_send,
     ccl_coll_scatter,
-    ccl_coll_last_regular = ccl_coll_scatter,
+    ccl_coll_gather,
+    ccl_coll_last_regular = ccl_coll_gather,
 
     ccl_coll_partial,
     ccl_coll_undefined,

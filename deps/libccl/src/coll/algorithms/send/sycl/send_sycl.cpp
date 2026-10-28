@@ -19,6 +19,8 @@
 #include "common/request/request.hpp"
 #include "common/event/impls/host_event.hpp"
 #include "coll/algorithms/send/sycl/send_sycl.hpp"
+#include "coll/algorithms/send/sycl/send_simple.hpp"
+#include "coll/algorithms/send/sycl/send_memcpy.hpp"
 #include "sched/entry/ze/ze_pt2pt_barrier_entry.hpp"
 
 #include <queue>
@@ -108,7 +110,16 @@ static ccl::event send_sycl_single_node(sycl::queue& q,
 
     // for ARC GPUs to do ring LL256
     if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device())) &&
-        !group_impl::is_group_active) {
+        !group_impl::is_group_active()) {
+        if (send_count * ccl::get_datatype_size(dtype) >
+             ccl::global_data::env().sycl_pt2pt_simple_threshold) {
+            if (ccl::global_data::env().sycl_pt2pt_copy_engine) {
+                return send_memcpy(
+                    send_buf, send_count, dtype, peer_rank, comm, global_stream, deps, done);
+            }
+            return send_simple(
+                send_buf, send_count, dtype, peer_rank, comm, global_stream, deps, done);
+        }
         ccl::event e =
             send_ll(send_buf, send_count, dtype, peer_rank, comm, global_stream, deps, done);
         return e;
@@ -241,7 +252,7 @@ static ccl::event send_mt_sycl_single_node(sycl::queue& q,
     LOG_DEBUG("send_mt_sycl: src=", src, " dst=", dst, " global_current_id=", global_id);
 
     // Check if group API is active
-    if (group_impl::is_group_active) {
+    if (group_impl::is_group_active()) {
         LOG_DEBUG("send_mt_sycl: using group API path src=", src, " dst=", dst);
         auto& entry = g.group_buffers[global_id][src][dst];
 
@@ -285,7 +296,6 @@ static ccl::event send_mt_sycl_single_node(sycl::queue& q,
 
     // publish local pointer if needed
     do_ipc_exchangeExt(comm,
-                       g.barrier_waits,
                        g.pt2pt_hash_table,
                        global_stream,
                        { const_cast<void*>(send_buf) },
@@ -357,7 +367,8 @@ ccl::event send_sycl(sycl::queue q,
             return send_mt_sycl_single_node(
                 q, send_buf, send_count, dtype, peer_rank, comm, global_stream, attr, deps, done);
         }
-        else {
+        else if (!group_impl::is_group_active() ||
+                 group_impl::use_group_scale_up(comm, peer_rank, global_stream)) {
             ccl::event e = send_sycl_single_node(
                 q, send_buf, send_count, dtype, peer_rank, comm, global_stream, attr, deps, done);
             if (done) {
@@ -374,8 +385,9 @@ ccl::event send_sycl(sycl::queue q,
         auto sycl_deps = get_sycl_events(deps);
         LOG_DEBUG("scale-out: send_sycl: send_count ", send_count, ", peer_rank=", peer_rank);
         auto sycl_queue = global_stream->get_native_stream();
+        bool use_rdma = transport_rdma_enabled();
         sycl::event result = gpu_send_plain(
-            sycl_queue, send_buf, send_count, peer_rank, tag, dtype, comm, sycl_deps);
+            sycl_queue, send_buf, send_count, peer_rank, tag, dtype, comm, sycl_deps, use_rdma);
         done = true;
         return ccl::event::create_from_native(result);
     }

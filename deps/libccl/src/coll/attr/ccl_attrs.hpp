@@ -23,6 +23,7 @@
 #include "coll/attr/ccl_alltoallv_op_attr.hpp"
 #include "coll/attr/ccl_barrier_op_attr.hpp"
 #include "coll/attr/ccl_bcast_op_attr.hpp"
+#include "coll/attr/ccl_gather_op_attr.hpp"
 #include "coll/attr/ccl_pt2pt_op_attr.hpp"
 #include "coll/attr/ccl_reduce_op_attr.hpp"
 #include "coll/attr/ccl_reduce_scatter_op_attr.hpp"

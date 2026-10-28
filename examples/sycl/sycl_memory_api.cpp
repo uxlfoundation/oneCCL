@@ -131,14 +131,20 @@ int main() {
 
     result = onecclCommWindowRegister(comm, sendbuff, kBytes / 2, &send_window,
                                       ONECCL_WINDOW_COLL_SYMMETRIC);
-    if (result != onecclSuccess) {
+    if (result == onecclNotImplemented) {
+        std::cout << "onecclCommWindowRegister(send) skipped: device API is "
+                     "not supported on this device\n";
+    } else if (result != onecclSuccess) {
         std::cerr << "onecclCommWindowRegister(send) failed: "
                   << onecclGetErrorString(result) << '\n';
     }
 
     result = onecclCommWindowRegister(comm, recvbuff, kBytes / 2, &recv_window,
                                       ONECCL_WINDOW_COLL_SYMMETRIC);
-    if (result != onecclSuccess) {
+    if (result == onecclNotImplemented) {
+        std::cout << "onecclCommWindowRegister(recv) skipped: device API is "
+                     "not supported on this device\n";
+    } else if (result != onecclSuccess) {
         std::cerr << "onecclCommWindowRegister(recv) failed: "
                   << onecclGetErrorString(result) << '\n';
     }

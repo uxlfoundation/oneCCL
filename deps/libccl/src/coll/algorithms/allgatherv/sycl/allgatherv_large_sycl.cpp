@@ -25,9 +25,10 @@ ccl::event allgatherv_large(sycl::queue &q,
                             const ccl::vector_class<size_t> &offsets,
                             ccl::datatype dtype,
                             ccl_comm *comm,
+                            const std::shared_ptr<ccl_comm> p2p_comm,
                             ccl_stream *global_stream,
                             const ccl::vector_class<ccl::event> &deps,
-                            sycl_coll_scaleup_attr coll_attr) {
+                            sycl_scaleup_options coll_attr) {
     if (comm->is_multi_thread_instance() == true) {
         LOG_DEBUG("invoking MT allgatherv_large");
         ccl::global_data::env().sycl_allgatherv_tmp_buf = 1;
@@ -43,7 +44,7 @@ ccl::event allgatherv_large(sycl::queue &q,
     std::shared_ptr<ccl_comm> pair_comm = comm->get_pair_comm();
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
 
-    const size_t comm_size = node_comm->size();
+    const size_t comm_size = p2p_comm->size();
 
     const size_t dsize = ccl::global_data::get().dtypes->get(dtype).size();
     // use full vector (>= 8 bytes) if buffers and data size are 4 byte aligned
@@ -62,7 +63,7 @@ ccl::event allgatherv_large(sycl::queue &q,
                        ((!use_full_vector || !is_aligned) && ccl::global_data::env().sycl_auto_use_tmp_buf);
     // scale-out step can force to use "tmp buffer version" for async support purposes
     is_tmp_used |= (coll_attr.force_use_tmp && ccl::global_data::env().sycl_force_use_tmp_buf_scaleout);
-    is_tmp_used |= !node_comm->get_topo_manager().has_p2p_access();
+    is_tmp_used |= !comm->get_topo_manager().has_p2p_access();
 
     if (is_tmp_used) {
         CCL_THROW_IF_NOT(!ccl::global_data::env().sycl_copy_engine || is_arc,
@@ -98,13 +99,14 @@ ccl::event allgatherv_large(sycl::queue &q,
             if (registered_recv_ptrs.size()) {
                 LOG_DEBUG("allgatherv pointers are registered \n");
                 sycl_ptrs.node_ptrs_wr =
-                    get_ipc_ptrs<void, MAX_NODE_RANKS>(registered_recv_ptrs, comm, node_comm, (void *)recv_buf);
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(registered_recv_ptrs, comm, p2p_comm, (void *)recv_buf);
             }
             else {
+                LOG_DEBUG("arc flow without registerd pointers filling node ptrs wr");
                 std::vector<void *> ptrs{ recv_buf }; // index 0
-                auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
+                auto [sched, exchange_entry] = do_ipc_exchange(p2p_comm.get(), global_stream, ptrs);
 
-                sycl_ptrs.node_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, recv_buf, sched);
+                sycl_ptrs.node_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(p2p_comm, 0, recv_buf, sched);
 
                 delete exchange_entry;
                 delete sched;
@@ -123,18 +125,19 @@ ccl::event allgatherv_large(sycl::queue &q,
             if (registered_recv_ptrs.size() && registered_send_ptrs.size()) {
                 LOG_DEBUG("allgather pointers are registered \n");
                 sycl_ptrs.xelink_ptrs_rd =
-                    get_ipc_ptrs<void, MAX_GPUS>(registered_send_ptrs, comm, even_comm, (void *)send_buf);
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(registered_send_ptrs, comm, even_comm, (void *)send_buf);
                 sycl_ptrs.xelink_ptrs_wr =
-                    get_ipc_ptrs<void, MAX_GPUS>(registered_recv_ptrs, comm, even_comm, (void *)recv_buf);
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(registered_recv_ptrs, comm, even_comm, (void *)recv_buf);
             }
             else {
+                LOG_DEBUG("non arc flow without registerd pointers filling xelink ptrs rd/wr");
                 std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
                 auto p = do_ipc_exchange(comm, global_stream, ptrs);
                 sched = p.first;
                 exchange_entry = p.second;
 
-                sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
-                sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, recv_buf, sched);
+                sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_NODE_RANKS>(even_comm, 0, (void *)send_buf, sched);
+                sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(even_comm, 1, recv_buf, sched);
             }
             // use full vector (>= 8 bytes) if remote buffers and data size are 4 byte aligned
             use_full_vector =
@@ -143,6 +146,7 @@ ccl::event allgatherv_large(sycl::queue &q,
                 all_aligned(sycl_ptrs.xelink_ptrs_wr.data(), even_comm->size(), send_count, dsize, 4);
 
             if (pair_comm->size() > 1) {
+                LOG_DEBUG("pair comm > 1, filling mdfi ptrs rd/wr");
                 assert(pair_comm->size() == MAX_TILES);
                 int peer_pair_rank = pair_comm->rank() ? 0 : 1;
                 if (registered_recv_ptrs.size() && registered_send_ptrs.size()) {
@@ -165,11 +169,11 @@ ccl::event allgatherv_large(sycl::queue &q,
             delete sched;
         }
         else {
-            sycl_ptrs.xelink_ptrs_rd = get_remote_even_tmp_buf(0, comm);
+            sycl_ptrs.xelink_ptrs_rd = get_remote_large_tmp_buf(0, even_comm.get());
             if (pair_comm->size() > 1) {
                 assert(pair_comm->size() == MAX_TILES);
                 int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-                sycl_ptrs.mdfi_ptr_wr = get_remote_pair_tmp_buf(0, comm)[peer_pair_rank];
+                sycl_ptrs.mdfi_ptr_wr = get_remote_large_tmp_buf(0, pair_comm.get())[peer_pair_rank];
             }
         }
     } // if is_arc
@@ -184,6 +188,7 @@ ccl::event allgatherv_large(sycl::queue &q,
                                                   offsets,
                                                   dtype,
                                                   comm,
+                                                  p2p_comm,
                                                   global_stream,
                                                   sycl_ptrs,
                                                   deps,
@@ -198,6 +203,7 @@ ccl::event allgatherv_large(sycl::queue &q,
                                                    offsets,
                                                    dtype,
                                                    comm,
+                                                   p2p_comm,
                                                    global_stream,
                                                    sycl_ptrs,
                                                    deps,

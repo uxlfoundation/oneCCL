@@ -278,7 +278,6 @@ struct AllReduce {
                     gOff,
                     loopSize);
 #endif
-
             const_cast<TransmitT*>(&transmit)->runAllreduce(
                 wireOff, iter, workLeft, workSizeData, gr);
         }
@@ -303,7 +302,8 @@ private:
     }
 
     static WorkSizeDataT calcWorkSize(T* input, T* output, size_t size, int NRanks) {
-        return WorkSizeDataT(NRanks, size, sizeof(T), TransmitT::splitType);
+        return WorkSizeDataT(NRanks, size, sizeof(T),
+                             TransmitT::splitType(TransmitColl::Allreduce));
     }
 
     // do not reorder items

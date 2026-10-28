@@ -49,6 +49,7 @@
 #include "coll/attr/ccl_pt2pt_op_attr.hpp"
 #include "coll/attr/ccl_reduce_op_attr.hpp"
 #include "coll/attr/ccl_reduce_scatter_op_attr.hpp"
+#include "coll/attr/ccl_gather_op_attr.hpp"
 #include "coll/attr/ccl_scatter_op_attr.hpp"
 #include "coll/coll_check.hpp"
 #include "coll/coll_param.hpp"
@@ -73,9 +74,11 @@
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
 #include "coll/algorithms/utils/sycl_selection.hpp"
 #include "coll/algorithms/allreduce/sycl/allreduce_sycl.hpp"
+#include "coll/algorithms/reduce/sycl/reduce_sycl.hpp"
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.hpp"
 #include "coll/algorithms/allgatherv/sycl/allgatherv_sycl.hpp"
 #include "coll/algorithms/alltoall/sycl/alltoall_sycl.hpp"
+#include "coll/algorithms/alltoallv/sycl/alltoallv_sycl.hpp"
 #include "coll/algorithms/broadcast/sycl/broadcast_sycl.hpp"
 #include "coll/algorithms/barrier/sycl/barrier_sycl.hpp"
 #include "coll/algorithms/recv/sycl/recv_sycl.hpp"
@@ -195,7 +198,7 @@ static ccl_request* ccl_coll_create(ccl_coll_param& param, const ccl_coll_attr& 
     // handle as well.
     bool is_queue_in_order = ccl::is_queue_in_order(param.stream);
     // We don't need a barrier for the recieve operation inside a group unless it is the 1st operation in the group
-    if (is_queue_in_order && (!group_impl::is_group_active || group_impl::first_group_op ||
+    if (is_queue_in_order && (!group_impl::is_group_active() || group_impl::first_group_op ||
                               param.ctype != ccl_coll_recv)) {
         // TODO: it would be nice to pass here all the dependencies as parameters to submit_barrier
         // and get a single event to use later.
@@ -247,7 +250,7 @@ static ccl_request* ccl_coll_create(ccl_coll_param& param, const ccl_coll_attr& 
 
     ccl::global_data& data = ccl::global_data::get();
 
-    if (group_impl::is_group_active) {
+    if (group_impl::is_group_active()) {
         LOG_DEBUG("group API is applied for: ", ccl_coll_type_to_str(param.ctype));
     }
 
@@ -1048,6 +1051,47 @@ ccl::status ccl_coll_build_reduce_scatter(ccl_sched* sched,
     return status;
 }
 
+ccl::status ccl_coll_build_gather(ccl_sched* sched,
+                                  ccl_buffer send_buf,
+                                  ccl_buffer recv_buf,
+                                  size_t count,
+                                  const ccl_datatype& dtype,
+                                  int root,
+                                  ccl_comm* comm,
+                                  bool is_scaleout) {
+    ccl::status status = ccl::status::success;
+    CCL_THROW_IF_NOT(
+        root >= 0 && root < comm->size(), "wrong root: ", root, ", comm_size: ", comm->size());
+
+    ccl_selector_param param;
+    param.ctype = ccl_coll_gather;
+    param.count = count;
+    param.dtype = dtype;
+    param.comm = comm;
+    param.stream = sched->coll_param.stream;
+    param.buf = send_buf.get_ptr();
+#ifdef CCL_ENABLE_SYCL
+    param.is_sycl_buf = sched->coll_attr.is_sycl_buf;
+#endif // CCL_ENABLE_SYCL
+    param.hint_algo = sched->hint_algo;
+    param.is_scaleout = is_scaleout;
+
+    auto algo = ccl::global_data::get().algorithm_selector->get<ccl_coll_gather>(param);
+
+    switch (algo) {
+        case ccl_coll_gather_direct:
+            CCL_CALL(
+                ccl_coll_build_direct_gather(sched, send_buf, recv_buf, count, dtype, root, comm));
+            break;
+        default:
+            CCL_FATAL("unexpected gather_algo ", ccl_coll_algorithm_to_str(algo));
+            status = ccl::status::invalid_arguments;
+            break;
+    }
+
+    return status;
+}
+
 ccl::status ccl_coll_build_scatter(ccl_sched* sched,
                                    ccl_buffer send_buf,
                                    ccl_buffer recv_buf,
@@ -1189,9 +1233,10 @@ ccl::event ccl_allgather(const void* send_buf,
         comm, "allgather", ccl::reduction::none, dtype, count, comm_event_session);
 #endif
 
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [send_buf, recv_buf, count, dtype, attr, comm, stream, &deps]() -> ccl::event {
-        auto req = ccl_allgather_impl(send_buf, recv_buf, count, dtype, attr, comm, stream, deps);
+        [send_buf, recv_buf, count, dtype, attr, comm, stream, op_deps]() -> ccl::event {
+        auto req = ccl_allgather_impl(send_buf, recv_buf, count, dtype, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1214,7 +1259,7 @@ ccl::event ccl_allgather(const void* send_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allgatherv_attr>();
         const ccl::vector_class<size_t> recv_counts(comm->size(), count);
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             sycl::queue q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::allgather_sycl(q,
@@ -1226,7 +1271,7 @@ ccl::event ccl_allgather(const void* send_buf,
                                                        comm,
                                                        op_stream,
                                                        dummy_unused_attr,
-                                                       deps,
+                                                       (*op_deps),
                                                        done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -1240,14 +1285,15 @@ ccl::event ccl_allgather(const void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_allgather;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1293,11 +1339,12 @@ ccl::event ccl_allgatherv(const void* send_buf,
         comm, "allgatherv", ccl::reduction::none, dtype, send_count, comm_event_session);
 #endif
 
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [send_buf, send_count, recv_buf, recv_counts, dtype, attr, comm, stream, &deps]()
+        [send_buf, send_count, recv_buf, recv_counts, dtype, attr, comm, stream, op_deps]()
         -> ccl::event {
         auto req = ccl_allgatherv_impl(
-            send_buf, send_count, recv_buf, recv_counts.data(), dtype, attr, comm, stream, deps);
+            send_buf, send_count, recv_buf, recv_counts.data(), dtype, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1323,7 +1370,7 @@ ccl::event ccl_allgatherv(const void* send_buf,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allgatherv_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::allgather_sycl(q,
@@ -1335,7 +1382,7 @@ ccl::event ccl_allgatherv(const void* send_buf,
                                                        comm,
                                                        op_stream,
                                                        dummy_unused_attr,
-                                                       deps,
+                                                       (*op_deps),
                                                        done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -1349,14 +1396,15 @@ ccl::event ccl_allgatherv(const void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_allgatherv;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1403,10 +1451,11 @@ ccl::event ccl_allreduce(const void* send_buf,
         comm, "allreduce", reduction, dtype, count, comm_event_session);
 #endif
 
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [send_buf, recv_buf, count, dtype, reduction, attr, comm, stream, &deps]() -> ccl::event {
+        [send_buf, recv_buf, count, dtype, reduction, attr, comm, stream, op_deps]() -> ccl::event {
         auto req = ccl_allreduce_impl(
-            send_buf, recv_buf, count, dtype, reduction, attr, comm, stream, deps);
+            send_buf, recv_buf, count, dtype, reduction, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1428,7 +1477,7 @@ ccl::event ccl_allreduce(const void* send_buf,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::allreduce_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event = allreduce_sycl(q,
@@ -1440,7 +1489,7 @@ ccl::event ccl_allreduce(const void* send_buf,
                                                   comm,
                                                   const_cast<ccl_stream*>(stream),
                                                   dummy_unused_attr,
-                                                  deps,
+                                                  (*op_deps),
                                                   done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -1454,14 +1503,15 @@ ccl::event ccl_allreduce(const void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_allreduce;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1509,9 +1559,10 @@ ccl::event ccl_alltoall(const void* send_buf,
         comm, "alltoall", ccl::reduction::none, dtype, count, comm_event_session);
 #endif
 
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [send_buf, recv_buf, count, dtype, attr, comm, stream, &deps]() -> ccl::event {
-        auto req = ccl_alltoall_impl(send_buf, recv_buf, count, dtype, attr, comm, stream, deps);
+        [send_buf, recv_buf, count, dtype, attr, comm, stream, op_deps]() -> ccl::event {
+        auto req = ccl_alltoall_impl(send_buf, recv_buf, count, dtype, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1534,7 +1585,7 @@ ccl::event ccl_alltoall(const void* send_buf,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::alltoall_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::alltoall_sycl(q,
@@ -1545,7 +1596,7 @@ ccl::event ccl_alltoall(const void* send_buf,
                                                       comm,
                                                       op_stream,
                                                       dummy_unused_attr,
-                                                      deps,
+                                                      (*op_deps),
                                                       done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -1559,14 +1610,15 @@ ccl::event ccl_alltoall(const void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_alltoall;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1616,23 +1668,74 @@ ccl::event ccl_alltoallv(const void* send_buf,
                                      comm_event_session);
 #endif
 
-    auto collective =
-        [send_buf, send_counts, recv_buf, recv_counts, dtype, attr, comm, stream, &deps]()
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
+    std::function<ccl::event()> collective =
+        [send_buf, send_counts, recv_buf, recv_counts, dtype, attr, comm, stream, op_deps]()
         -> ccl::event {
         auto req = ccl_alltoallv_impl(
-            send_buf, send_counts, recv_buf, recv_counts, dtype, attr, comm, stream, deps);
+            send_buf, send_counts, recv_buf, recv_counts, dtype, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    ccl_selector_param param = ccl_selector_param::create(ccl_coll_alltoallv,
+                                                          0,
+                                                          dtype,
+                                                          comm,
+                                                          const_cast<ccl_stream*>(stream),
+                                                          recv_buf,
+                                                          ccl::reduction::custom,
+                                                          false, // is_vector_buf
+                                                          false, // is_sycl_buf
+                                                          CCL_INVALID_PEER_RANK_IDX, // peer_rank
+                                                          {}, // hint_algo
+                                                          false); // is_scaleout
+
+    if (can_use_sycl_kernels(param)) {
+        size_t total_send_count = std::accumulate(send_counts, send_counts + comm->size(), 0);
+        LOG_DEBUG("|CCL_SYCL| alltoallv selects sycl-kernels total send_count: ",
+                  total_send_count,
+                  ", datatype: ",
+                  dtype);
+
+        ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
+        auto dummy_unused_attr = ccl::create_operation_attr<ccl::alltoallv_attr>();
+        ccl::vector_class<size_t> send_counts_vec(send_counts, send_counts + comm->size());
+        ccl::vector_class<size_t> recv_counts_vec(recv_counts, recv_counts + comm->size());
+        collective = [=]() -> ccl::event {
+            bool done = false;
+            auto q = op_stream->get_native_stream();
+            ccl::event ccl_event = ccl::alltoallv_sycl(q,
+                                                       send_buf,
+                                                       send_counts_vec,
+                                                       recv_buf,
+                                                       recv_counts_vec,
+                                                       dtype,
+                                                       comm,
+                                                       op_stream,
+                                                       dummy_unused_attr,
+                                                       (*op_deps),
+                                                       done);
+            if (done) {
+                if (ccl::global_data::env().enable_op_sync) {
+                    ccl_event.wait();
+                }
+                return ccl_event;
+            }
+            return collective();
+        };
+    }
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_alltoallv;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1674,8 +1777,9 @@ ccl::event ccl_barrier(ccl_comm* comm,
         comm, "barrier", ccl::reduction::none, ccl::datatype::uint8, 0, comm_event_session);
 #endif
 
-    std::function<ccl::event()> collective = [comm, stream, &deps]() -> ccl::event {
-        auto req = ccl_barrier_impl(comm, stream, deps);
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
+    std::function<ccl::event()> collective = [comm, stream, op_deps]() -> ccl::event {
+        auto req = ccl_barrier_impl(comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1701,11 +1805,11 @@ ccl::event ccl_barrier(ccl_comm* comm,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::barrier_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event =
-                ccl::barrier_sycl(q, comm, op_stream, dummy_unused_attr, deps, done);
+                ccl::barrier_sycl(q, comm, op_stream, dummy_unused_attr, (*op_deps), done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
                     ccl_event.wait();
@@ -1718,14 +1822,15 @@ ccl::event ccl_barrier(ccl_comm* comm,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_barrier;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1782,9 +1887,10 @@ ccl::event ccl_broadcast(void* buf,
         comm, "broadcast", ccl::reduction::none, dtype, count, comm_event_session);
 #endif
 
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [buf, count, dtype, root, attr, comm, stream, &deps]() -> ccl::event {
-        auto req = ccl_broadcast_impl(buf, count, dtype, root, attr, comm, stream, deps);
+        [buf, count, dtype, root, attr, comm, stream, op_deps]() -> ccl::event {
+        auto req = ccl_broadcast_impl(buf, count, dtype, root, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1811,11 +1917,11 @@ ccl::event ccl_broadcast(void* buf,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::broadcast_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::broadcast_sycl(
-                q, buf, buf, count, dtype, root, comm, op_stream, dummy_unused_attr, deps, done);
+                q, buf, buf, count, dtype, root, comm, op_stream, dummy_unused_attr, (*op_deps), done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
                     ccl_event.wait();
@@ -1828,14 +1934,15 @@ ccl::event ccl_broadcast(void* buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_bcast;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1881,10 +1988,11 @@ ccl::event ccl_broadcast(void* send_buf,
         comm, "broadcast", ccl::reduction::none, dtype, count, comm_event_session);
 #endif
 
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [send_buf, recv_buf, count, dtype, root, attr, comm, stream, &deps]() -> ccl::event {
+        [send_buf, recv_buf, count, dtype, root, attr, comm, stream, op_deps]() -> ccl::event {
         auto req =
-            ccl_broadcast_impl(send_buf, recv_buf, count, dtype, root, attr, comm, stream, deps);
+            ccl_broadcast_impl(send_buf, recv_buf, count, dtype, root, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -1907,7 +2015,7 @@ ccl::event ccl_broadcast(void* send_buf,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::broadcast_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::broadcast_sycl(q,
@@ -1919,7 +2027,7 @@ ccl::event ccl_broadcast(void* send_buf,
                                                        comm,
                                                        op_stream,
                                                        dummy_unused_attr,
-                                                       deps,
+                                                       (*op_deps),
                                                        done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -1933,14 +2041,15 @@ ccl::event ccl_broadcast(void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_broadcast;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -1988,23 +2097,74 @@ ccl::event ccl_reduce(const void* send_buf,
 #endif
 
     CCL_THROW_RECORDING(stream, "|CCL_SYCL| ccl_reduce does not support sycl_graph recording");
-    auto collective =
-        [send_buf, recv_buf, count, dtype, reduction, root, attr, comm, stream, &deps]()
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
+    std::function<ccl::event()> collective =
+        [send_buf, recv_buf, count, dtype, reduction, root, attr, comm, stream, op_deps]()
         -> ccl::event {
         auto req = ccl_reduce_impl(
-            send_buf, recv_buf, count, dtype, reduction, root, attr, comm, stream, deps);
+            send_buf, recv_buf, count, dtype, reduction, root, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    ccl_selector_param param = ccl_selector_param::create(ccl_coll_reduce,
+                                                          count,
+                                                          dtype,
+                                                          comm,
+                                                          const_cast<ccl_stream*>(stream),
+                                                          recv_buf,
+                                                          reduction,
+                                                          false, // is_vector_buf
+                                                          false, // is_sycl_buf
+                                                          CCL_INVALID_PEER_RANK_IDX, // peer_rank
+                                                          {}, // hint_algo
+                                                          false); // is_scaleout
+    if (can_use_sycl_kernels(param)) {
+        LOG_DEBUG("|CCL_SYCL| reduce selects sycl-kernels count: ", count, ", datatype: ", dtype);
+
+        ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
+        auto dummy_unused_attr = ccl::create_operation_attr<ccl::reduce_attr>();
+        collective = [=]() -> ccl::event {
+            bool done = false;
+            auto q = op_stream->get_native_stream();
+            ccl::event ccl_event = reduce_sycl(q,
+                                               send_buf,
+                                               recv_buf,
+                                               count,
+                                               dtype,
+                                               reduction,
+                                               root,
+                                               comm,
+                                               const_cast<ccl_stream*>(stream),
+                                               dummy_unused_attr,
+                                               (*op_deps),
+                                               done);
+
+            LOG_DEBUG("reduce_sycl has exited - ", done);
+
+            if (done) {
+                if (ccl::global_data::env().enable_op_sync) {
+                    LOG_DEBUG("about to ccl_event.wait();");
+                    ccl_event.wait();
+                    LOG_DEBUG("out of ccl_event.wait();");
+                }
+                LOG_DEBUG("about to return");
+                return ccl_event;
+            }
+            return collective();
+        };
+    }
+#endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_reduce;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -2052,11 +2212,12 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
         comm, "reduce_scatter", reduction, dtype, recv_count, comm_event_session);
 #endif
 
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [send_buf, recv_buf, recv_count, dtype, reduction, attr, comm, stream, &deps]()
+        [send_buf, recv_buf, recv_count, dtype, reduction, attr, comm, stream, op_deps]()
         -> ccl::event {
         auto req = ccl_reduce_scatter_impl(
-            send_buf, recv_buf, recv_count, dtype, reduction, attr, comm, stream, deps);
+            send_buf, recv_buf, recv_count, dtype, reduction, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -2079,7 +2240,7 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
                   dtype);
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::reduce_scatter_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event = reduce_scatter_sycl(q,
@@ -2091,7 +2252,7 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
                                                        comm,
                                                        const_cast<ccl_stream*>(stream),
                                                        dummy_unused_attr,
-                                                       deps,
+                                                       (*op_deps),
                                                        done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -2105,14 +2266,15 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_reduce_scatter;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -2160,10 +2322,11 @@ ccl::event ccl_scatter(const void* send_buf,
 #endif
 
     CCL_THROW_RECORDING(stream, "|CCL_SYCL| ccl_scatter does not support sycl_graph recording");
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> collective =
-        [send_buf, recv_buf, count, dtype, root, attr, comm, stream, &deps]() -> ccl::event {
+        [send_buf, recv_buf, count, dtype, root, attr, comm, stream, op_deps]() -> ccl::event {
         auto req =
-            ccl_scatter_impl(send_buf, recv_buf, count, dtype, root, attr, comm, stream, deps);
+            ccl_scatter_impl(send_buf, recv_buf, count, dtype, root, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -2185,7 +2348,7 @@ ccl::event ccl_scatter(const void* send_buf,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::scatter_attr>();
-        collective = [=, &deps]() -> ccl::event {
+        collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
             ccl::event ccl_event = ccl::scatter_sycl(q,
@@ -2197,7 +2360,7 @@ ccl::event ccl_scatter(const void* send_buf,
                                                      comm,
                                                      op_stream,
                                                      dummy_unused_attr,
-                                                     deps,
+                                                     (*op_deps),
                                                      done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -2211,14 +2374,15 @@ ccl::event ccl_scatter(const void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_scatter;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(collective));
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -2250,6 +2414,72 @@ ccl_request* ccl_scatter_impl(const void* send_buf,
     return req;
 }
 
+ccl::event ccl_gather(const void* send_buf,
+                      void* recv_buf,
+                      size_t count,
+                      ccl::datatype dtype,
+                      int root,
+                      const ccl_coll_attr& attr,
+                      ccl_comm* comm,
+                      const ccl_stream* stream,
+                      const std::vector<ccl::event>& deps) {
+#if defined(CCL_ENABLE_PROFILING)
+    comm_session comm_event_session;
+    profiler_record_comm_event_enter(
+        comm, "gather", ccl::reduction::none, dtype, count, comm_event_session);
+#endif
+
+    CCL_THROW_RECORDING(stream, "|CCL_SYCL| ccl_gather does not support sycl_graph recording");
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
+    std::function<ccl::event()> collective =
+        [send_buf, recv_buf, count, dtype, root, attr, comm, stream, op_deps]() -> ccl::event {
+        auto req =
+            ccl_gather_impl(send_buf, recv_buf, count, dtype, root, attr, comm, stream, (*op_deps));
+        return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
+    };
+
+    ccl_request* req{};
+    ccl::event event = std::unique_ptr<ccl::event_impl>(
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
+        auto ctype = ccl_coll_gather;
+        if (deps.size() != 0) {
+            LOG_WARN("explicit dependencies are not supported for group calls: ",
+                     ccl_coll_type_to_str(ctype));
+        }
+        group_impl::add_operation(
+            ctype, comm, CCL_INVALID_PEER_RANK_IDX, const_cast<ccl_stream*>(stream), std::move(collective));
+        // operation will be started later, currently returning empty event
+    }
+    else {
+        event = collective();
+    }
+#if defined(CCL_ENABLE_PROFILING)
+    profiler_record_comm_event_exit(comm->rank(), comm_event_session);
+#endif
+    return event;
+}
+
+ccl_request* ccl_gather_impl(const void* send_buf,
+                              void* recv_buf,
+                              size_t count,
+                              ccl::datatype dtype,
+                              int root,
+                              const ccl_coll_attr& attr,
+                              ccl_comm* comm,
+                              const ccl_stream* stream,
+                              const std::vector<ccl::event>& deps) {
+    CCL_THROW_RECORDING(stream,
+                        "|CCL_SYCL| sched algorithms do not support sycl_graph recording, "
+                        "please use sycl_algorithms");
+    ccl_coll_param param = ccl_coll_param::create_gather_param(
+        send_buf, recv_buf, count, dtype, root, attr, comm, stream, deps);
+
+    auto req = ccl_coll_create(param, attr);
+    LOG_DEBUG("coll ", ccl_coll_type_to_str(param.ctype), " created, req ", req);
+    return req;
+}
+
 // wrapper for ccl_recv_impl
 ccl::event ccl_recv(void* recv_buf,
                     size_t count,
@@ -2269,9 +2499,10 @@ ccl::event ccl_recv(void* recv_buf,
         CCL_THROW_RECORDING(stream,
                             "|CCL_SYCL| ccl_recv does not support sycl_graph recording on PVC");
     }
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> recv_operation =
-        [recv_buf, count, dtype, peer, attr, comm, stream, &deps]() -> ccl::event {
-        auto req = ccl_recv_impl(recv_buf, count, dtype, peer, attr, comm, stream, deps);
+        [recv_buf, count, dtype, peer, attr, comm, stream, op_deps]() -> ccl::event {
+        auto req = ccl_recv_impl(recv_buf, count, dtype, peer, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 
@@ -2294,7 +2525,7 @@ ccl::event ccl_recv(void* recv_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::pt2pt_attr>();
-        recv_operation = [=, &deps]() -> ccl::event {
+        recv_operation = [=]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = recv_sycl(q,
                                              recv_buf,
@@ -2304,7 +2535,7 @@ ccl::event ccl_recv(void* recv_buf,
                                              comm,
                                              const_cast<ccl_stream*>(stream),
                                              dummy_unused_attr,
-                                             deps,
+                                             (*op_deps),
                                              done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -2318,14 +2549,15 @@ ccl::event ccl_recv(void* recv_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_recv;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(recv_operation));
+        group_impl::add_operation(
+            ctype, comm, peer, const_cast<ccl_stream*>(stream), std::move(recv_operation));
         // operation will be started later, currently returning empty event
     }
     else {
@@ -2376,9 +2608,10 @@ ccl::event ccl_send(const void* send_buf,
         CCL_THROW_RECORDING(stream,
                             "|CCL_SYCL| ccl_send does not support sycl_graph recording on PVC");
     }
+    const std::vector<ccl::event>* op_deps = &group_impl::safe_deps(deps);
     std::function<ccl::event()> send_operation =
-        [send_buf, send_count, dtype, peer_rank, attr, comm, stream, &deps]() -> ccl::event {
-        auto req = ccl_send_impl(send_buf, send_count, dtype, peer_rank, attr, comm, stream, deps);
+        [send_buf, send_count, dtype, peer_rank, attr, comm, stream, op_deps]() -> ccl::event {
+        auto req = ccl_send_impl(send_buf, send_count, dtype, peer_rank, attr, comm, stream, (*op_deps));
         return std::unique_ptr<ccl::event_impl>(new ccl::host_event_impl(req));
     };
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
@@ -2401,7 +2634,7 @@ ccl::event ccl_send(const void* send_buf,
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::pt2pt_attr>();
-        send_operation = [=, &deps]() -> ccl::event {
+        send_operation = [=]() -> ccl::event {
             bool done = false;
             ccl::event ccl_event = send_sycl(q,
                                              send_buf,
@@ -2411,7 +2644,7 @@ ccl::event ccl_send(const void* send_buf,
                                              comm,
                                              const_cast<ccl_stream*>(stream),
                                              dummy_unused_attr,
-                                             deps,
+                                             (*op_deps),
                                              done);
             if (done) {
                 if (ccl::global_data::env().enable_op_sync) {
@@ -2425,14 +2658,15 @@ ccl::event ccl_send(const void* send_buf,
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
     ccl_request* req{};
     ccl::event event = std::unique_ptr<ccl::event_impl>(
-        new ccl::host_event_impl(req, group_impl::is_group_active));
-    if (group_impl::is_group_active) {
+        new ccl::host_event_impl(req, group_impl::is_group_active()));
+    if (group_impl::is_group_active()) {
         auto ctype = ccl_coll_send;
         if (deps.size() != 0) {
             LOG_WARN("explicit dependencies are not supported for group calls: ",
                      ccl_coll_type_to_str(ctype));
         }
-        group_impl::add_operation(ctype, std::move(send_operation));
+        group_impl::add_operation(
+            ctype, comm, peer_rank, const_cast<ccl_stream*>(stream), std::move(send_operation));
         // operation will be started later, currently returning empty event
     }
     else {

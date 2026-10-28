@@ -126,6 +126,17 @@ ccl::status coll_entry::build_sched(ccl_sched* sched, const ccl_coll_param& para
                                                 param.is_scaleout);
             break;
         }
+        case ccl_coll_gather: {
+            res = ccl_coll_build_gather(sched,
+                                        param.send_buf,
+                                        param.recv_buf,
+                                        param.count,
+                                        param.dtype,
+                                        param.root,
+                                        param.comm,
+                                        param.is_scaleout);
+            break;
+        }
         case ccl_coll_scatter: {
             res = ccl_coll_build_scatter(sched,
                                          param.send_buf,

@@ -18,6 +18,7 @@
 
 #include <vector>
 #include <unordered_map>
+#include <memory>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
@@ -86,10 +87,16 @@ public:
     // === Simplified group buffer management ===
     std::vector<std::vector<std::vector<group_buffer_entry>>> group_buffers;
     std::mutex allocation_mutex;
+    std::mutex barrier_waits_mutex;
+    std::mutex rank_info_mutex;
+    std::mutex hostnames_mutex;
+#ifdef CCL_ENABLE_SYCL
+    std::mutex events_mutex;
+#endif
 
     bool is_multi_thread_instance = false;
     // int current_global_id = ccl_comm::invalid_id;
-    std::unordered_map<int, pthread_barrier_t> barrier_waits;
+    std::unordered_map<int, std::unique_ptr<pthread_barrier_t>> barrier_waits;
 
     shared_resources() = default;
     shared_resources(const shared_resources &) = delete;
@@ -106,22 +113,22 @@ public:
     }
 #ifdef CCL_ENABLE_SYCL
     void set_receiver_ready_event(int op_id, const sycl::event &evt) {
-        std::lock_guard<std::mutex> lk(get_resource_mutex(op_id));
+        std::lock_guard<std::mutex> lk(events_mutex);
         receiver_ready_events_map[op_id] = evt;
     }
 
     sycl::event get_receiver_ready_event(int op_id) {
-        std::lock_guard<std::mutex> lk(get_resource_mutex(op_id));
+        std::lock_guard<std::mutex> lk(events_mutex);
         return receiver_ready_events_map.at(op_id);
     }
 #endif // CCL_ENABLE_SYCL
     void resize_rank_info_vec_glob(size_t new_size, int global_id) {
-        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
+        std::lock_guard<std::mutex> lock(rank_info_mutex);
         rank_info_vec_globs[global_id].resize(new_size);
     }
 
     void resize_all_hostnames_raw(size_t new_size, int global_id) {
-        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
+        std::lock_guard<std::mutex> lock(hostnames_mutex);
         all_hostnames_raw_globs[global_id].resize(new_size);
     }
 
@@ -132,32 +139,39 @@ public:
     }
 
     std::vector<char> &get_all_hostnames_raw_glob(int global_id) {
-        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
+        std::lock_guard<std::mutex> lock(hostnames_mutex);
         return all_hostnames_raw_globs[global_id];
     }
 
     rank_info_vec_t &get_rank_info_vec_glob(int global_id) {
-        std::lock_guard<std::mutex> lock(get_resource_mutex(global_id));
+        std::lock_guard<std::mutex> lock(rank_info_mutex);
         return rank_info_vec_globs[global_id];
     }
 
     void init_barrier_wait(int threads_num, int global_id) {
-        std::mutex &mutex = get_resource_mutex(global_id);
-
-        mutex.lock();
-
-        // Check if the barrier has already been initialized
-        if (barrier_initialized_flags.find(global_id) == barrier_initialized_flags.end() ||
-            !barrier_initialized_flags[global_id]) {
-            // Initialize the barrier for the current global_id
-            pthread_barrier_init(&barrier_waits[global_id], NULL, threads_num);
-            // Set the flag to indicate barrier is initialized
-            barrier_initialized_flags[global_id] = true;
+        pthread_barrier_t *barrier_ptr = nullptr;
+        {
+            std::lock_guard<std::mutex> guard(barrier_waits_mutex);
+            if (barrier_initialized_flags.find(global_id) == barrier_initialized_flags.end() ||
+                !barrier_initialized_flags[global_id]) {
+                barrier_waits[global_id] = std::make_unique<pthread_barrier_t>();
+                int rc = pthread_barrier_init(barrier_waits[global_id].get(), nullptr, threads_num);
+                CCL_THROW_IF_NOT(rc == 0, "pthread_barrier_init failed, rc: ", rc);
+                barrier_initialized_flags[global_id] = true;
+            }
+            barrier_ptr = barrier_waits[global_id].get();
         }
 
-        mutex.unlock();
+        pthread_barrier_wait(barrier_ptr);
+    }
 
-        pthread_barrier_wait(&barrier_waits[global_id]);
+    pthread_barrier_t* get_barrier(int global_id) {
+        std::lock_guard<std::mutex> guard(barrier_waits_mutex);
+        auto it = barrier_waits.find(global_id);
+        CCL_THROW_IF_NOT(it != barrier_waits.end() && it->second,
+                         "barrier_waits is not initialized for global_id ",
+                         global_id);
+        return it->second.get();
     }
 
     int get_node_rank(int ranks[2], int pair_comm_size) {

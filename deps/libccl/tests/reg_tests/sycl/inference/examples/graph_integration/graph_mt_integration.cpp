@@ -26,8 +26,10 @@
 struct MTInstanceArgs {
     size_t comm_rank;
     size_t comm_size;
-    MTInstanceArgs(size_t comm_rank, size_t comm_size)
-            : comm_rank(comm_rank),
+    Args cmd_args;
+    MTInstanceArgs(const Args &cmd_args, size_t comm_rank, size_t comm_size)
+            : cmd_args(cmd_args),
+              comm_rank(comm_rank),
               comm_size(comm_size) {}
 };
 
@@ -43,14 +45,16 @@ void run_mt_thread(MTInstanceArgs instance_args) {
     auto devices = select_devices();
     auto context = sycl::context(devices);
 
-    TestInstanceAllreduce test_allreduce(msg_size,
+    TestInstanceAllreduce test_allreduce(instance_args.cmd_args,
+                                         msg_size,
                                          instance_args.comm_size,
                                          instance_args.comm_rank,
                                          devices,
                                          context,
                                          create_threaded_kvs,
                                          ccl::create_communicatorExt);
-    TestInstanceReduceScatter test_reduce_scatter(msg_size,
+    TestInstanceReduceScatter test_reduce_scatter(instance_args.cmd_args,
+                                                  msg_size,
                                                   instance_args.comm_size,
                                                   instance_args.comm_rank,
                                                   devices,
@@ -90,7 +94,7 @@ void run_mt_thread(MTInstanceArgs instance_args) {
     }
 }
 
-void run_mt_tests() {
+void run_mt_tests(const Args &args) {
     const size_t stress_repetitions = 5;
     const size_t nof_threads = 4;
 
@@ -98,7 +102,7 @@ void run_mt_tests() {
     threads.reserve(nof_threads);
 
     for (size_t rank = 0; rank < nof_threads; ++rank) {
-        MTInstanceArgs instance_args(rank, nof_threads);
+        MTInstanceArgs instance_args(args, rank, nof_threads);
         threads.push_back(std::thread(run_mt_thread, instance_args));
     }
     for (auto& thread : threads) {
@@ -107,7 +111,16 @@ void run_mt_tests() {
 }
 
 int main(int argc, char* argv[]) {
-    run_mt_tests();
+    Args args(argc, argv);
+    if (args.print_help) {
+        std::cout << "Usage:" << std::endl;
+        std::cout << "./graph_integration <arguments>" << std::endl << std::endl;
+        std::cout << "Available arguments:" << std::endl;
+        std::cout << "\t--help: print help and exit" << std::endl;
+        std::cout << "\t--native: forces native graph recording" << std::endl;
+        return 0;
+    }
+    run_mt_tests(args);
 
     return 0;
 }

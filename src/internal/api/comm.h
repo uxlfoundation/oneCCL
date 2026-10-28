@@ -43,6 +43,11 @@ struct onecclComm {
     onecclResult_t (*alltoall)(const void *sendbuff, void *recvbuff,
                                size_t sendcount, onecclDataType_t datatype,
                                onecclComm_t comm, void *stream);
+    onecclResult_t (*alltoallv)(const void *sendbuff,
+                                const size_t *send_counts,
+                                void *recvbuff, const size_t *recv_counts,
+                                onecclDataType_t datatype, onecclComm_t comm,
+                                void *stream);
     onecclResult_t (*broadcast)(const void *sendbuff, void *recvbuff,
                                 size_t count, onecclDataType_t datatype,
                                 int root, onecclComm_t comm, void *stream);
@@ -55,6 +60,9 @@ struct onecclComm {
                                      onecclDataType_t datatype,
                                      onecclRedOp_t redop, onecclComm_t comm,
                                      void *stream);
+    onecclResult_t (*scatter)(const void *sendbuff, void *recvbuff,
+                              size_t count, onecclDataType_t datatype,
+                              int root, onecclComm_t comm, void *stream);
     onecclResult_t (*send)(const void *sendbuff, size_t count,
                            onecclDataType_t datatype, int peer,
                            onecclComm_t comm, void *stream);
@@ -78,6 +86,11 @@ struct onecclComm {
                                            onecclWindowFlags_t flags);
     onecclResult_t (*comm_window_deregister)(onecclComm_t comm,
                                              onecclWindow_t window);
+    onecclResult_t (*dev_comm_create)(onecclComm_t comm,
+                                      const onecclDevCommRequirements_t *reqs,
+                                      onecclDevComm_t *dev_comm);
+    onecclResult_t (*dev_comm_destroy)(onecclComm_t comm,
+                                       const onecclDevComm_t *dev_comm);
     onecclResult_t (*create_pre_mul_sum)(onecclRedOp_t* redop, void* scalar,
                                          onecclDataType_t datatype,
                                          onecclScalarResidence_t residence,

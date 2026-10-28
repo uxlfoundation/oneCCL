@@ -39,7 +39,15 @@ public:
     constexpr static size_t nSlot = 8;
     constexpr static size_t ringSize = ProtoT::wireTransSize * nSlot;
     constexpr static size_t maxLaunch = 1;
-    constexpr static SplitType splitType = SplitType::NoOverlap;
+    static SplitType splitType(TransmitColl coll) {
+        // TwoShots is only used for allreduce.
+        switch (coll) {
+            case TransmitColl::Allreduce:
+                return SplitType::NoOverlap;
+            default:
+                CCL_THROW("TwoShotsTransmit::splitType: unhandled TransmitColl");
+        }
+    }
 
     typedef T (*twoshotsPtr)[nSlot][ProtoT::wireTransElems];
 
@@ -171,7 +179,6 @@ public:
             }
             ProtoT::insertFlags(v[0], flag);
 
-#pragma unroll
             for (int i = 0; i < NRanks - 1; ++i)
                 ProtoT::sendMessages(gatherSinks[i][x_id][tStep % nSlot], v[0]);
         }

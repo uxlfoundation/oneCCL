@@ -147,12 +147,12 @@ sycl::event arc_ll256_allreduce(const void *src,
                                 ccl::datatype dtype,
                                 ccl::reduction reduction,
                                 ccl_comm *comm,
+                                std::shared_ptr<ccl_comm> p2p_comm,
                                 ccl_stream *global_stream) {
     sycl::event sycl_e;
 
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
-    const int comm_size = node_comm->size();
-    const int comm_rank = node_comm->rank();
+    const int comm_size = p2p_comm->size();
+    const int comm_rank = p2p_comm->rank();
 
     //std::cout << "enter " << __func__ << ", rank: " << world_rank <<  ", count: " << count << std::endl;
 
@@ -165,7 +165,7 @@ sycl::event arc_ll256_allreduce(const void *src,
 
     if (ccl::global_data::env().sycl_ll_buffer_global) {
         const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
-        sycl::event barrier_event = invoke_barrier(node_comm, q, {}, is_cpu_barrier);
+        sycl::event barrier_event = invoke_barrier(p2p_comm, q, {}, is_cpu_barrier);
     }
 
     /*
@@ -211,7 +211,7 @@ sycl::event arc_ll256_allreduce(const void *src,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     sycl_e = q.submit([&](auto &h) {
@@ -228,22 +228,23 @@ sycl::event arc_ll256_allreduce(const void *src,
         if (ccl::global_data::env().sycl_ll_buffer_global) {
             // use large kernel persistent buffers
             for (int i = 0; i < local_world_size; i++) {
-                local_peer_bufs[i] = (char *)get_remote_node_tmp_buf(0, comm)[i];
+                local_peer_bufs[i] = (char *)get_remote_large_tmp_buf(0, p2p_comm.get())[i];
             }
             //char *local_tmp_buf = local_peer_bufs[local_world_rank];
-            local_tmp_buf = (char *)get_tmp_buf(0, comm);
+            local_tmp_buf = (char *)get_large_tmp_buf(0, comm);
             size_t persist_buf_size =
                 ccl::global_data::env().sycl_tmp_buf_size / ccl_large_tmp_bufs::buf_count;
             GATHER_BUF_OFFSET = persist_buf_size;
         }
         else {
             // use small kernel persistent buffers
-            auto [local_small_buf, remote_ptrs] = node_comm->get_all_tmp_bufs(true);
+            // algo does not support record-replay, no reason to get `tmp_bufs_gpu`
+            auto [local_small_buf, remote_ptrs] = p2p_comm->get_all_tmp_bufs(true);
             for (int i = 0; i < local_world_size; i++) {
                 local_peer_bufs[i] = (char *)remote_ptrs[i];
             }
             local_tmp_buf = (char *)local_small_buf;
-            GATHER_BUF_OFFSET = node_comm->get_tmp_buf_size() / 2;
+            GATHER_BUF_OFFSET = p2p_comm->get_tmp_buf_size() / 2;
         }
 
         /*
@@ -450,7 +451,7 @@ sycl::event arc_ll256_allreduce(const void *src,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     if (reduction == ccl::reduction::avg) {
@@ -461,7 +462,7 @@ sycl::event arc_ll256_allreduce(const void *src,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     return sycl_e;
@@ -473,8 +474,9 @@ ccl::event arc_allreduce(const void *src,
                          ccl::datatype dtype,
                          ccl::reduction reduction,
                          ccl_comm *comm,
+                         std::shared_ptr<ccl_comm> p2p_comm,
                          ccl_stream *global_stream) {
-    auto e = arc_ll256_allreduce(src, dst, count, dtype, reduction, comm, global_stream);
+    auto e = arc_ll256_allreduce(src, dst, count, dtype, reduction, comm, p2p_comm, global_stream);
 
     return ccl::event::create_from_native(e);
 }

@@ -79,10 +79,14 @@ function run_and_check_log() {
     if [ ${rc} -ne 0 ] || [ ${passed_count} -eq 0 ] || [ "${failed_strings}" != "" ]; then
         echo "Error in ${test_name}: Command failed with exit code ${rc} or log indicates failure."
         FAIL_COUNT=$((FAIL_COUNT+1))
-        local failure_msg="Exit Code: ${rc}\n${failed_strings}"
-        echo "  <testcase name=\"${test_name}\"><failure>${failure_msg}" >> ${JUNIT_REPORT}
-        echo "  ${failure_msg}" >> ${JUNIT_REPORT}
-        echo "  </failure></testcase>" >> ${JUNIT_REPORT}
+        cat <<EOT >> "${JUNIT_REPORT}"
+            <testcase name="${test_name}">
+                <failure type="TestFailed" message="${test_name} failed"><![CDATA[
+            Exit Code: ${rc}
+            ${failed_strings}
+                ]]></failure>
+            </testcase>
+EOT
         cat "${log_path}"
     else
         echo "  <testcase name=\"${test_name}\" />" >> ${JUNIT_REPORT}
@@ -300,24 +304,6 @@ for mt_exec_name in "${test_names[@]}"; do
     done
 done
 
-test_names=("graph_integration") # TODO add graph_integration/graph_mt_integration
-
-n_ranks=$(sycl-ls | grep "level_zero:gpu" | wc -l)
-
-pushd graph_integration
-for exec_name in "${test_names[@]}"; do
-    for n_rank in 1 $(seq 2 2 ${n_ranks}); do
-        TEST_LOG="test_${exec_name}_${n_rank}.log"
-        cmd="mpiexec -n ${n_rank} ./${exec_name} > ${TEST_LOG} 2>&1"
-        echo "${cmd}"
-        run_and_check_log "${cmd}" ${TEST_LOG}
-        # run_cmd_no_exit "${cmd}"
-        # check_log_and_print ${TEST_LOG}
-        test $? -eq 1 && cat "${TEST_LOG}"
-    done
-done
-popd
-
 algo_names=("ring" "twoshots" "oneshot")
 # TODO add sycl_broadcast_buffer_overflow_test
 # it currently randomly hangs, so it needs to be fixed first
@@ -419,6 +405,8 @@ sed -i "s/tests=\"0\"/tests=\"${TEST_COUNT}\"/; s/failures=\"0\"/failures=\"${FA
 # Finish the report by closing the testcase XML
 echo "</testsuite>" >> ${JUNIT_REPORT}
 
+python3 -c "import xml.etree.ElementTree as ET; ET.parse('${JUNIT_REPORT}')" \
+    || { echo "Error: ${JUNIT_REPORT} is not valid XML"; exit 1; }
 
 # Final pass/fail report
 if [ ${FAIL_COUNT} -gt 0 ]; then

@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "coll_type.hpp"
+
 struct alltoallv_strategy_impl {
     std::vector<size_t> send_counts;
     std::vector<size_t> recv_counts;
@@ -32,6 +34,10 @@ struct alltoallv_strategy_impl {
 
     static constexpr const char* class_name() {
         return "alltoallv";
+    }
+
+    static constexpr coll_type class_id() {
+        return coll_type::alltoallv;
     }
 
     size_t get_send_multiplier() {

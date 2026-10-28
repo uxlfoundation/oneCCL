@@ -11,7 +11,7 @@ make_common_actions ${SCRIPT_DIR} ${TEST_LOG}
 
 tests="allgatherv alltoallv"
 tests+=" broadcast custom_allreduce external_kvs"
-tests+=" priority_allreduce reduce reduce_scatter"
+tests+=" priority_allreduce reduce reduce_scatter scatter"
 
 proc_counts="4"
 worker_counts="1 2"
@@ -46,7 +46,8 @@ do
                         fi
 
                         if [[ ${test} != "allgatherv" ]] && [[ ${test} != "allgather" ]] &&
-                            [[ ${test} != "reduce_scatter" ]] && [[ ${in_place} = "1" ]]
+                            [[ ${test} != "reduce_scatter" ]] && [[ ${test} != "scatter" ]] &&
+                            [[ ${in_place} = "1" ]]
                         then
                             continue
                         fi

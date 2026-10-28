@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+
+  "global_config": {
+    "p2p_domain_level":      "node"
+  },
+
+  "notes": {
+    "_note": "Vocabulary reference. The engine ignores everything under notes — this block is documentation for policy authors. Wired collectives are listed under their own `collective=<name>` roots below.",
+
+    "p2p_domains":        ["auto", "node", "numa", "switch", "none"],
+    "phases":             ["scaleup", "scaleout"],
+    "filters":            ["msg_size<N", "count<N", "comm_size<N|=pow2|=any", "phase=scaleup|scaleout", "p2p_domain=node|tile|none", "dtype=float16|bfloat16|float32|...", "atl_transport=mpi|ofi", "has_p2p_access=yes|no", "is_multi_thread=yes|no", "is_arc=yes|no", "is_recording=yes|no"],
+
+    "scaleup_protocols":  ["sycl_ll", "sycl_simple"],
+    "scaleup_algorithms": ["ring", "oneshot", "twoshots"],
+    "scaleup_knobs":      ["line_size=128|256", "chunk_bytes=<N>"],
+
+    "scaleout_algorithms": {
+      "allgather":      ["direct", "ring", "chunked", "proxy_ring"],
+      "allreduce":      ["direct", "ring", "rabenseifner", "proxy_direct", "proxy_ring"],
+      "reduce_scatter": ["direct", "ring", "proxy_ring"],
+      "reduce":         ["direct"],
+      "scatter":        ["direct", "chunked"],
+      "alltoall":       ["direct", "gdr_only_pairwise", "scatter", "numa_gdr_split", "fallback"],
+      "alltoallv":      ["direct", "gdr_only_pairwise", "scatter", "numa_gdr_split", "fallback"]
+    },
+    "_note_chunked": "For allgather and scatter, `chunked` names the sub-kernel used by the multi-domain / multi-node dispatcher within the `direct` scaleout algo (single-shot vs pipelined-over-chunks). Env fallback: sycl_<coll>_small_threshold (allgather) / sycl_scatter_scaleout_small_threshold.",
+    "_note_msg_size": "msg_size is PER-RANK bytes (count * dtype_size). Do NOT pre-multiply by comm_size — every threshold in sycl_selection.cpp / *_sycl.cpp is per-rank; the tree encodes those values verbatim.",
+    "_note_is_recording": "Under SYCL-graph capture (is_recording=yes) the runtime tuners throw unless the algorithm is `direct` (or `scatter` for alltoall via proxy). resolve() validates this after traversal and drops any other decision — the caller falls back to the legacy dispatcher rather than triggering the throw. Author-facing takeaway: safe to gate large-msg branches on `is_recording=no`.",
+    "_note_atl_transport": "MPI vs OFI transport is a wired filter axis but has no runtime hint on ccl_selector_param yet — atl_transport=<v> branches never match, and only `atl_transport=any` (the else) will fire. Kept in the schema so author-authored files stay valid; a follow-up wires the hint.",
+    "scaleout_knobs":     ["chunk_bytes=<N>"]
+  },
+
+  "collective=allgather": {
+    "_note": "REFERENCE ONLY. Serves both ccl::allgather and ccl::allgatherv — SelectionEngine::resolve(ctype) maps ccl_coll_allgatherv → this root. The shipped scaleout branches encode only the lower `ring` edge; the real logic (sycl_selection.cpp:560-583) is a band where `direct` also wins on the upper side, and `ring` is skipped entirely when atl_transport != mpi. Consult the source when authoring a real policy.",
+
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "is_arc=yes": {
+          "is_multi_thread=yes": { "protocol=sycl_ll":     { "algorithm=ring":    { "line_size=256": {} } } },
+          "has_p2p_access=no":   { "protocol=sycl_ll":     { "algorithm=ring":    { "line_size=256": {} } } },
+          "msg_size<=131072":    { "protocol=sycl_ll":     { "algorithm=oneshot": { "line_size=256": {} } } },
+          "msg_size=any":        { "protocol=sycl_simple": { "algorithm=ring":    {} } }
+        },
+        "is_arc=no": {
+          "has_p2p_access=no":     { "protocol=sycl_ll":     { "algorithm=ring":    { "line_size=256": {} } } },
+          "msg_size<=131072":      { "protocol=sycl_ll":     { "algorithm=oneshot": {} } },
+          "msg_size<=1048576":     { "protocol=sycl_simple": { "algorithm=oneshot": {} } },
+          "msg_size=any":          { "protocol=sycl_simple": { "algorithm=ring":    {} } }
+        }
+      },
+
+      "phase=scaleout": {
+        "has_p2p_access=no":   { "msg_size=any":     { "algorithm=ring":   { "chunk_bytes=8388608": {} } } },
+        "is_multi_thread=yes": { "msg_size=any":     { "algorithm=ring":   { "chunk_bytes=8388608": {} } } },
+        "comm_size<4":         {
+          "msg_size<=524288":  { "algorithm=direct": {} },
+          "msg_size=any":      { "algorithm=ring":   { "chunk_bytes=8388608": {} } }
+        },
+        "msg_size<=524288":    { "algorithm=direct": {} },
+        "msg_size=any":        { "algorithm=ring":   { "chunk_bytes=8388608": {} } }
+      }
+    }
+  },
+
+  "collective=allreduce": {
+    "_note": "REFERENCE ONLY — does not reproduce sycl_allreduce_auto_select_tune_attr(). Missing axes: dtype (fp16/bf16 have different msg_size regimes), the `comm_size > 2` guard on rabenseifner, the comm_size>16→direct / comm_size>64→transport-dependent cutoffs, and the size/comm-dependent chunk_bytes tiering. Use as a starting point when authoring; consult sycl_selection.cpp:300-395 for the current defaults.",
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "is_arc=yes": {
+          "is_multi_thread=yes": { "protocol=sycl_ll":     { "algorithm=ring":     { "line_size=256": {} } } },
+          "has_p2p_access=no":   { "protocol=sycl_ll":     { "algorithm=ring":     { "line_size=256": {} } } },
+          "msg_size<=256":       { "protocol=sycl_ll":     { "algorithm=oneshot":  { "line_size=256": {} } } },
+          "msg_size<=2048":      { "protocol=sycl_ll":     { "algorithm=twoshots": { "line_size=256": {} } } },
+          "msg_size=any":        { "protocol=sycl_simple": { "algorithm=ring":     {} } }
+        },
+        "has_p2p_access=no":     { "protocol=sycl_ll":     { "algorithm=ring":     { "line_size=256": {} } } },
+        "msg_size<=256":         { "protocol=sycl_ll":     { "algorithm=oneshot":  {} } },
+        "msg_size<=2048":        { "protocol=sycl_ll":     { "algorithm=twoshots": {} } },
+        "msg_size<=524288":      { "protocol=sycl_simple": { "algorithm=oneshot":  {} } },
+        "msg_size=any":          { "protocol=sycl_simple": { "algorithm=ring":     {} } }
+      },
+      "phase=scaleout": {
+        "_note": "REFERENCE ONLY — the shipped branches below are a simplified subset of allreduce_auto_select_tune_attr(). See parent `_note` for the axes this tree cannot express.",
+        "has_p2p_access=no":  { "msg_size=any":     { "algorithm=ring":         { "chunk_bytes=8388608": {} } } },
+        "is_multi_thread=yes":{ "msg_size=any":     { "algorithm=ring":         { "chunk_bytes=8388608": {} } } },
+        "msg_size<=4194304":  { "algorithm=direct": {} },
+        "comm_size=pow2":     {
+          "msg_size=any":     { "algorithm=rabenseifner": { "chunk_bytes=8388608": {} } }
+        },
+        "msg_size=any":       { "algorithm=ring":         { "chunk_bytes=8388608": {} } }
+      }
+    }
+  },
+
+  "collective=reduce_scatter": {
+    "_note": "REFERENCE ONLY — simplified subset of sycl_reduce_scatter_auto_select_tune_attr(). Consult sycl_selection.cpp when authoring a real policy.",
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "is_arc=yes":       { "protocol=sycl_ll":     { "algorithm=ring":    { "line_size=256": {} } } },
+        "has_p2p_access=no":{ "protocol=sycl_ll":     { "algorithm=ring":    { "line_size=256": {} } } },
+        "msg_size<=256":    { "protocol=sycl_ll":     { "algorithm=oneshot": {} } },
+        "msg_size<=2097152":{ "protocol=sycl_simple": { "algorithm=oneshot": {} } },
+        "msg_size=any":     { "protocol=sycl_simple": { "algorithm=ring":    {} } }
+      },
+      "phase=scaleout": {
+        "has_p2p_access=no":  { "msg_size=any":     { "algorithm=ring":   { "chunk_bytes=8388608": {} } } },
+        "is_multi_thread=yes":{ "msg_size=any":     { "algorithm=ring":   { "chunk_bytes=8388608": {} } } },
+        "msg_size<=1048576":  { "algorithm=direct": {} },
+        "msg_size=any":       { "algorithm=ring":   { "chunk_bytes=8388608": {} } }
+      }
+    }
+  },
+
+  "collective=broadcast": {
+    "_note": "Broadcast fast path has only one scaleout implementation (direct MPI/OFI broadcast). The `phase=scaleout` block is intentionally empty — no algorithm to override — and stays as a placeholder for future expansion if a second scaleout path is added.",
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "is_arc=yes":       { "protocol=sycl_ll":     { "algorithm=ring":    { "line_size=256": {} } } },
+        "msg_size<=524288": { "protocol=sycl_simple": { "algorithm=oneshot": {} } },
+        "msg_size=any":     { "protocol=sycl_simple": { "algorithm=ring":    {} } }
+      },
+      "phase=scaleout": {}
+    }
+  },
+
+  "collective=reduce": {
+    "_note": "Single-algorithm collective — reduce's fast path is Arc-only LL256 ring for scaleup, single `direct` scaleout. The runtime consults the JSON, validates the requested algorithm matches what runs, and warns on unrecognized names. No override is possible today. The block is populated for author reference and future extensibility (a new scaleout algo would just add another leaf).",
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "is_arc=yes":   { "protocol=sycl_ll": { "algorithm=ring": { "line_size=256": {} } } },
+        "msg_size=any": { "protocol=sycl_ll": { "algorithm=ring": { "line_size=256": {} } } }
+      },
+      "phase=scaleout": {
+        "msg_size=any": { "algorithm=direct": {} }
+      }
+    }
+  },
+
+  "collective=scatter": {
+    "_note": "Scaleup is validate-only (only `sycl_simple`; no LL kernel). Scaleout picks between two kernel implementations of the `direct` algo: `direct` = _small_msg (single-shot), `chunked` = _large_msg (pipelined over chunks). Env fallback: CCL_SYCL_SCATTER_SCALEOUT_SMALL_THRESHOLD.",
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "msg_size=any": { "protocol=sycl_simple": { "algorithm=ring": {} } }
+      },
+      "phase=scaleout": {
+        "msg_size<=131072": { "algorithm=direct":  {} },
+        "msg_size=any":     { "algorithm=chunked": {} }
+      }
+    }
+  },
+
+  "collective=alltoall": {
+    "_note": "REFERENCE ONLY. Scaleout override fires only when p2p_comm->size()==1 (single-domain). Multi-domain alltoall hardcodes numa_pairwise_rdma_oneshot and never consults tune_attr. The branches shown are the `sycl_enable_direct_gpu_rdma` regime only — MPI transport picks `direct`, OFI uses `fallback`; the schema can't express that (see notes._note_atl_transport).",
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "is_arc=yes":       { "protocol=sycl_ll":     { "algorithm=ring": { "line_size=256": {} } } },
+        "msg_size<=2048":   { "protocol=sycl_ll":     { "algorithm=oneshot": {} } },
+        "msg_size=any":     { "protocol=sycl_simple": { "algorithm=ring": {} } }
+      },
+      "phase=scaleout": {
+        "msg_size<=268435456": { "algorithm=scatter":           {} },
+        "msg_size=any":        { "algorithm=gdr_only_pairwise": {} }
+      }
+    }
+  },
+
+  "collective=alltoallv": {
+    "_note": "REFERENCE ONLY — same caveats as collective=alltoall. Unlike alltoall, alltoallv's multi-domain path DOES call alltoall_select_tune_attr, so the scaleout override fires in every case — BUT the comm_size filter here compares against the *global* comm size (world), not r2r_comm size.",
+    "p2p_domain=any": {
+      "phase=scaleup": {
+        "is_arc=yes":       { "protocol=sycl_ll":     { "algorithm=ring": { "line_size=256": {} } } },
+        "msg_size<=2048":   { "protocol=sycl_ll":     { "algorithm=oneshot": {} } },
+        "msg_size=any":     { "protocol=sycl_simple": { "algorithm=ring": {} } }
+      },
+      "phase=scaleout": {
+        "msg_size<=268435456": { "algorithm=scatter":           {} },
+        "msg_size=any":        { "algorithm=gdr_only_pairwise": {} }
+      }
+    }
+  }
+}

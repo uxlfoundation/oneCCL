@@ -20,6 +20,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <cstdint>
+#include <memory>
 #include <system_error>
 
 #include <sycl/sycl.hpp>
@@ -38,8 +39,20 @@
 #include "sched/entry/factory/entry_factory.hpp"
 #include "ccl_api_functions_generators.hpp"
 #include "common/global/global.hpp"
+
 #include "common/api_wrapper/mpi_api_wrapper.hpp"
 #include "MT/shared_resource.hpp"
+
+class sycl_scaleup_options {
+public:
+    sycl_scaleup_options() noexcept = default;
+
+    explicit sycl_scaleup_options(bool force_tmp, bool wait_deps = false) noexcept
+        : wait_on_deps(wait_deps), force_use_tmp(force_tmp) {}
+
+    bool wait_on_deps  = false;
+    bool force_use_tmp = false;
+};
 
 namespace syclext = sycl::ext::oneapi;
 namespace syclexp = sycl::ext::oneapi::experimental;
@@ -291,7 +304,7 @@ void pipe_prep(size_t min_msg_count,
                size_t pipeline_chunk_size,
                size_t &nchunks);
 
-sycl::event pipe_sendrecv(sycl::queue &q,
+sycl::event pipe_sendrecv(sycl::queue q,
                           const void *send_buf,
                           size_t send_count,
                           int dest,
@@ -306,7 +319,7 @@ sycl::event pipe_sendrecv(sycl::queue &q,
                           const ccl::vector_class<sycl::event> &deps,
                           bool use_rdma = false);
 
-sycl::event sendrecv_rdma(sycl::queue &q,
+sycl::event sendrecv_rdma(sycl::queue q,
                           const void *send_buf,
                           size_t send_count,
                           int dest,
@@ -326,7 +339,8 @@ sycl::event gpu_send_plain(sycl::queue &q,
                            int sendtag,
                            ccl::datatype dtype,
                            ccl_comm *comm,
-                           const ccl::vector_class<sycl::event> &deps);
+                           const ccl::vector_class<sycl::event> &deps,
+                           bool use_rdma);
 
 sycl::event gpu_recv_plain(sycl::queue &q,
                            void *recv_buf,
@@ -335,12 +349,11 @@ sycl::event gpu_recv_plain(sycl::queue &q,
                            int recvtag,
                            ccl::datatype dtype,
                            ccl_comm *comm,
-                           const ccl::vector_class<sycl::event> &deps);
+                           const ccl::vector_class<sycl::event> &deps,
+                           bool use_rdma);
 
 void do_ipc_exchangeExt(
-    // shared_resources &resources,
     ccl_comm *comm,
-    std::unordered_map<int, pthread_barrier_t> &barrier_waits,
     std::unordered_map<int, std::unordered_map<int, std::vector<void *>>> &hash_table,
     ccl_stream *stream,
     std::vector<void *> ptrs,
@@ -396,15 +409,9 @@ ccl_kernel_barrier_data &get_kernel_barrier_data(ccl_comm *comm);
 
 size_t *get_sync_ptr(bool is_next, ccl_comm *comm = nullptr);
 
-void *get_tmp_buf(int index, ccl_comm *comm = nullptr);
+void *get_large_tmp_buf(int index, ccl_comm *comm = nullptr);
 
-std::array<void *, MAX_NODE_RANKS> get_remote_node_tmp_buf(int index, ccl_comm *comm = nullptr);
-
-std::array<void *, MAX_NODE_RANKS> get_remote_numa_tmp_buf(int index, ccl_comm *comm = nullptr);
-
-std::array<void *, MAX_GPUS> get_remote_even_tmp_buf(int index, ccl_comm *comm = nullptr);
-
-std::array<void *, MAX_TILES> get_remote_pair_tmp_buf(int index, ccl_comm *comm = nullptr);
+std::array<void *, MAX_NODE_RANKS> get_remote_large_tmp_buf(int index, ccl_comm *comm = nullptr);
 
 size_t get_tmp_buf_size_per_rank();
 
@@ -414,6 +421,11 @@ sycl::event invoke_p2p_barrier(const std::shared_ptr<ccl_comm> comm,
                                sycl::queue q,
                                const std::vector<sycl::event> &dep_events,
                                bool use_cpu);
+
+sycl::event invoke_p2p_barrier_pair(const std::shared_ptr<ccl_comm> comm,
+                                    int peer_rank,
+                                    sycl::queue q,
+                                    const std::vector<sycl::event> &dep_events);
 int get_num_lce();
 
 sycl::queue get_mce_queue(sycl::queue q);

@@ -43,18 +43,19 @@ SYCL_ALLGATHERV_FUNCTIONS(medium)
 namespace ccl {
 namespace v1 {
 
-ccl::event allgather_sycl_single_node(sycl::queue& q,
-                                      const void* send_buf,
-                                      size_t send_count,
-                                      void* recv_buf,
-                                      const ccl::vector_class<size_t>& recv_counts,
-                                      const ccl::vector_class<size_t>& offsets,
-                                      ccl::datatype dtype,
-                                      ccl_comm* comm,
-                                      ccl_stream* global_stream,
-                                      const vector_class<event>& deps,
-                                      bool& done,
-                                      sycl_coll_scaleup_attr coll_attr = {});
+ccl::event allgather_scaleup_sycl(sycl::queue& q,
+                                  const void* send_buf,
+                                  size_t send_count,
+                                  void* recv_buf,
+                                  const ccl::vector_class<size_t>& recv_counts,
+                                  const ccl::vector_class<size_t>& offsets,
+                                  ccl::datatype dtype,
+                                  ccl_comm* comm,
+                                  std::shared_ptr<ccl_comm> p2p_comm,
+                                  ccl_stream* global_stream,
+                                  const vector_class<event>& deps,
+                                  bool& done,
+                                  sycl_scaleup_options coll_attr = {});
 
 ccl::event allgather_sycl(sycl::queue q,
                           const void* send_buf,
@@ -79,7 +80,8 @@ ccl::event allgatherv_small(sycl::queue& q,
                             ccl::datatype dtype,
                             ccl_comm* comm,
                             ccl_stream* global_stream,
-                            const ccl::vector_class<ccl::event>& deps);
+                            const ccl::vector_class<ccl::event>& deps,
+                            bool& done);
 
 ccl::event allgatherv_large(sycl::queue& q,
                             const void* send_buf,
@@ -89,22 +91,25 @@ ccl::event allgatherv_large(sycl::queue& q,
                             const ccl::vector_class<size_t>& offsets,
                             ccl::datatype dtype,
                             ccl_comm* comm,
+                            std::shared_ptr<ccl_comm> p2p_comm,
                             ccl_stream* global_stream,
                             const ccl::vector_class<ccl::event>& deps,
-                            sycl_coll_scaleup_attr coll_attr = {});
+                            sycl_scaleup_options coll_attr = {});
 
-// ring with LL protocols
-ccl::event allgatherv_ll_ring(sycl::queue& q,
-                              const void* send_buf,
-                              size_t send_count,
-                              void* recv_buf,
-                              const ccl::vector_class<size_t>& recv_counts,
-                              const ccl::vector_class<size_t>& offsets,
-                              ccl::datatype dtype,
-                              ccl_comm* comm,
-                              ccl_stream* global_stream,
-                              const ccl::vector_class<ccl::event>& deps,
-                              bool& done);
+// LL protocols (templated on transmit: RingTransmit or OneShotTransmit)
+template <template <typename, template <typename, int> class, bool, int> class Transmit>
+ccl::event allgatherv_ll(sycl::queue& q,
+                         const void* send_buf,
+                         size_t send_count,
+                         void* recv_buf,
+                         const ccl::vector_class<size_t>& recv_counts,
+                         const ccl::vector_class<size_t>& offsets,
+                         ccl::datatype dtype,
+                         ccl_comm* comm,
+                         std::shared_ptr<ccl_comm> p2p_comm,
+                         ccl_stream* global_stream,
+                         const ccl::vector_class<ccl::event>& deps,
+                         bool& done);
 
 ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
                                     const void* send_buf,
@@ -117,7 +122,7 @@ ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
                                     const ccl::vector_class<ccl::event>& deps,
                                     bool original_deps,
                                     bool& done,
-                                    sycl_allgatherv_tune_attr tune_attr,
+                                    sycl_scaleout_tune_attr tune_attr,
                                     bool copy_to_host = false,
                                     bool is_cpu_buffers = false,
                                     void* aux_buf = nullptr);

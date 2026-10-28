@@ -103,6 +103,7 @@ ccl::event allreduce_large(const void *send_buf,
                            ccl::datatype dtype,
                            ccl::reduction reduction,
                            ccl_comm *comm,
+                           const std::shared_ptr<ccl_comm> p2p_comm,
                            ccl_stream *global_stream,
                            const ccl::vector_class<ccl::event> &deps) {
     if (comm->is_multi_thread_instance() == true) {
@@ -121,8 +122,7 @@ ccl::event allreduce_large(const void *send_buf,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
 
     // BMG
-    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family) && pair_comm->size() == 1) {
-        std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family)) {
         // The BMG su_ring path uses reduce_pair_dispatch for the in-flight reduction, which does not apply the
         // per-rank scalar multiply.
         // For custom (pre_mul_sum) reductions, stage the input into recv_buf with the scalar applied, then run
@@ -136,7 +136,7 @@ ccl::event allreduce_large(const void *send_buf,
         if (reduce_has_pre_operation) {
             sycl::queue q = global_stream->get_native_stream();
             ccl::event preop_event = stage_and_apply_custom_preop(q, recv_buf, send_buf, count, dtype,
-                                                                  reduction, node_comm->get_tmp_buf_size(),
+                                                                  reduction, p2p_comm->get_tmp_buf_size(),
                                                                   get_sycl_events(deps));
             transport_send_buf = recv_buf;
             transport_reduction = ccl::reduction::sum;
@@ -146,13 +146,13 @@ ccl::event allreduce_large(const void *send_buf,
             reduce_has_pre_operation ? transport_deps_local : deps;
         bool is_tmp_used = ccl::global_data::env().sycl_allreduce_tmp_buf ||
                            reduce_has_pre_operation ||
-                           !node_comm->get_topo_manager().has_p2p_access();
+                           !comm->get_topo_manager().has_p2p_access();
         if (is_tmp_used) {
             LOG_DEBUG("invoking allreduce_large_su_ring_write_no_ipc");
             auto lambda = [&]<typename T>() {
                 return allreduce_large_su_ring_write_no_ipc<T>(
                     transport_send_buf, recv_buf, count, dtype, transport_reduction,
-                    comm, global_stream, transport_deps);
+                    comm, p2p_comm, global_stream, transport_deps);
             };
             sycl::event e = invoke_collective_sycl(lambda, dtype);
             return ccl::event::create_from_native(e);
@@ -164,18 +164,18 @@ ccl::event allreduce_large(const void *send_buf,
                 comm->get_registered_ptrs(recv_buf, count * ccl_dtype.size());
             if (registered_send_ptrs.size() && registered_recv_ptrs.size()) {
                 sycl_ptrs.node_ptrs_rd = get_ipc_ptrs<void, MAX_NODE_RANKS>(
-                    registered_send_ptrs, comm, node_comm, (void *)send_buf);
+                    registered_send_ptrs, comm, p2p_comm, (void *)send_buf);
                 sycl_ptrs.node_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(
-                    registered_recv_ptrs, comm, node_comm, (void *)recv_buf);
+                    registered_recv_ptrs, comm, p2p_comm, (void *)recv_buf);
             }
             else {
                 std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
                 auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
 
                 sycl_ptrs.node_ptrs_rd =
-                    get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 0, (void *)send_buf, sched);
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(p2p_comm, 0, (void *)send_buf, sched);
                 sycl_ptrs.node_ptrs_wr =
-                    get_ipc_ptrs<void, MAX_NODE_RANKS>(node_comm, 1, recv_buf, sched);
+                    get_ipc_ptrs<void, MAX_NODE_RANKS>(p2p_comm, 1, recv_buf, sched);
 
                 delete exchange_entry;
                 delete sched;
@@ -187,6 +187,7 @@ ccl::event allreduce_large(const void *send_buf,
                                                   dtype,
                                                   reduction,
                                                   comm,
+                                                  p2p_comm,
                                                   global_stream,
                                                   sycl_ptrs,
                                                   deps);
@@ -225,9 +226,9 @@ ccl::event allreduce_large(const void *send_buf,
         std::vector<void *> registered_recv_ptrs =
             comm->get_registered_ptrs(recv_buf, count * ccl_dtype.size());
         if (registered_send_ptrs.size() && registered_recv_ptrs.size()) {
-            sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(
+            sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_NODE_RANKS>(
                 registered_send_ptrs, comm, even_comm, (void *)send_buf);
-            sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_GPUS>(
+            sycl_ptrs.xelink_ptrs_wr = get_ipc_ptrs<void, MAX_NODE_RANKS>(
                 registered_recv_ptrs, comm, even_comm, (void *)recv_buf);
             // use full vector (>= 8 bytes) if remote buffers are 4 byte aligned
             use_full_vector =
@@ -254,9 +255,9 @@ ccl::event allreduce_large(const void *send_buf,
             auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
 
             sycl_ptrs.xelink_ptrs_rd =
-                get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
+                get_ipc_ptrs<void, MAX_NODE_RANKS>(even_comm, 0, (void *)send_buf, sched);
             sycl_ptrs.xelink_ptrs_wr =
-                get_ipc_ptrs<void, MAX_GPUS>(even_comm, 1, (void *)recv_buf, sched);
+                get_ipc_ptrs<void, MAX_NODE_RANKS>(even_comm, 1, (void *)recv_buf, sched);
             // use full vector (>= 8 bytes) if remote buffers are 4 byte aligned
             use_full_vector =
                 use_full_vector &&
@@ -283,13 +284,13 @@ ccl::event allreduce_large(const void *send_buf,
         // 0 index is used for tmp work buffer and
         // 1 index is used to copy input data
         // 2 index is used to copy output data
-        sycl_ptrs.xelink_ptrs_rd = get_remote_even_tmp_buf(1, comm);
-        sycl_ptrs.xelink_ptrs_wr = get_remote_even_tmp_buf(2, comm);
+        sycl_ptrs.xelink_ptrs_rd = get_remote_large_tmp_buf(1, even_comm.get());
+        sycl_ptrs.xelink_ptrs_wr = get_remote_large_tmp_buf(2, even_comm.get());
         if (pair_comm->size() > 1) {
             assert(pair_comm->size() == MAX_TILES);
             int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-            sycl_ptrs.mdfi_ptr_rd = get_remote_pair_tmp_buf(1, comm)[peer_pair_rank];
-            sycl_ptrs.mdfi_ptr_wr = get_remote_pair_tmp_buf(2, comm)[peer_pair_rank];
+            sycl_ptrs.mdfi_ptr_rd = get_remote_large_tmp_buf(1, pair_comm.get())[peer_pair_rank];
+            sycl_ptrs.mdfi_ptr_wr = get_remote_large_tmp_buf(2, pair_comm.get())[peer_pair_rank];
         }
     }
 

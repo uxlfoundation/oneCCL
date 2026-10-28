@@ -1,4 +1,7 @@
-## Pull Request Description
+
+> [!WARNING]
+> On PR open (including draft PRs), GitHub Actions overwrites the PR title/body with the first commit message (subject/body). Text entered in the PR form is not preserved.
+---
 
 ## Author Checklist
 * [ ] Provide PR Description \

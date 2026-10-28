@@ -65,7 +65,7 @@ void topo_manager::allgather(int size,
     }
 
     // Wait for all threads to store their data
-    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
+    pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(global_current_id));
 }
 
 void topo_manager::build_host_info(int size, int rank, int global_current_id) {
@@ -76,7 +76,7 @@ void topo_manager::build_host_info(int size, int rank, int global_current_id) {
 
     ccl::global_data::get().shared_data->resize_all_hostnames_raw(max_hostname_len * comm_size,
                                                                   global_current_id);
-    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
+    pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(global_current_id));
 
     char my_hostname[max_hostname_len] = { 0 };
     gethostname(my_hostname, max_hostname_len - 1);
@@ -178,7 +178,7 @@ void topo_manager::base_init(int size,
               ccl::global_data::get().shared_data->get_rank_info_vec_glob(global_current_id).data(),
               sizeof(rank_info),
               global_current_id);
-    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
+    pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(global_current_id));
     for (size_t idx = 0;
          idx <
          ccl::global_data::get().shared_data->get_rank_info_vec_glob(global_current_id).size();
@@ -198,7 +198,7 @@ void topo_manager::base_init(int size,
                 h_idx,
                 ccl::global_data::get().shared_data->get_rank_info_vec_glob(global_current_id)));
             pthread_barrier_wait(
-                &ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
+                ccl::global_data::get().shared_data->get_barrier(global_current_id));
         }
     }
     else {
@@ -292,7 +292,7 @@ void topo_manager::ze_base_init(int size,
                   ", number of node devices: ",
                   node_devices.size());
     }
-    pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[global_current_id]);
+    pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(global_current_id));
 
     if (comm_rank == 0) {
         LOG_INFO("MT ze_rank_info_vec: ", ccl::to_string(ze_rank_info_vec, host_info_vec));

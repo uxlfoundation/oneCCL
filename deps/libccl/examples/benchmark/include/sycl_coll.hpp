@@ -22,6 +22,7 @@
 #include <string>
 
 #include "coll.hpp"
+#include "coll_type.hpp"
 #include "sycl_base.hpp" /* from examples/include */
 
 #ifdef CCL_ENABLE_SYCL
@@ -48,6 +49,9 @@ struct sycl_base_coll : base_coll, private strategy {
         if (base_coll::get_max_elem_count() == 0) {
             return;
         }
+        bool is_scatter = coll_strategy::class_id() == coll_type::scatter;
+        bool inplace = base_coll::get_inplace();
+        auto& comms = transport.get_comms();
         for (size_t rank_idx = 0; rank_idx < base_coll::get_ranks_per_proc(); rank_idx++) {
             if (base_coll::get_sycl_mem_type() == SYCL_MEM_USM) {
                 allocators.push_back(buf_allocator<Dtype>(streams[rank_idx].get_native()));
@@ -66,15 +70,34 @@ struct sycl_base_coll : base_coll, private strategy {
                 for (size_t idx = 0; idx < base_coll::get_buf_count(); idx++) {
                     void* send_buf = nullptr;
                     void* recv_buf = nullptr;
-                    if (!base_coll::get_inplace()) {
+                    if (is_scatter) {
+                        // Scatter is asymmetric:
+                        // - only root owns/reads the full count*nranks send buffer
+                        // - every rank receives count elements
+                        // - in-place root recv aliases into send at root*count,
+                        //   resolved later in start_internal
+                        bool is_root = comms[rank_idx].rank() == COLL_ROOT;
+
+                        bool need_send = is_root;
+                        bool need_recv = !inplace || !is_root;
+
+                        if (need_send) {
+                            send_buf = allocator.allocate(send_count, usm_alloc_type);
+                        }
+
+                        if (need_recv) {
+                            recv_buf = allocator.allocate(recv_count, usm_alloc_type);
+                        }
+                    }
+                    else if (!inplace) {
                         send_buf = allocator.allocate(send_count, usm_alloc_type);
                         recv_buf = allocator.allocate(recv_count, usm_alloc_type);
                     }
                     else {
-                        bool is_allgatherv = strcmp(coll_strategy::class_name(), "allgatherv") == 0;
-                        bool is_allgather = strcmp(coll_strategy::class_name(), "allgather") == 0;
+                        bool is_allgatherv = coll_strategy::class_id() == coll_type::allgatherv;
+                        bool is_allgather = coll_strategy::class_id() == coll_type::allgather;
                         bool is_reduce_scatter =
-                            strcmp(coll_strategy::class_name(), "reduce_scatter") == 0;
+                            coll_strategy::class_id() == coll_type::reduce_scatter;
                         if (is_allgatherv || is_allgather) {
                             // send_buf will be set when the count is known, since the offset is unknown at this point.
                             send_buf = nullptr;
@@ -179,8 +202,8 @@ struct sycl_base_coll : base_coll, private strategy {
 
         for (size_t b_idx = 0; b_idx < base_coll::get_buf_count(); b_idx++) {
             if (base_coll::get_sycl_mem_type() == SYCL_MEM_USM) {
-                if ((strcmp(coll_strategy::class_name(), "allgatherv") == 0 ||
-                     strcmp(coll_strategy::class_name(), "allgather") == 0) &&
+                if ((coll_strategy::class_id() == coll_type::allgatherv ||
+                     coll_strategy::class_id() == coll_type::allgather) &&
                     base_coll::get_inplace()) {
                     // for inplace allgather(v), the input data needs to be at an index comm_rank*send_count
                     // of the send_buffer rather than at index 0 for the non-inplace case

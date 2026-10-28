@@ -115,6 +115,15 @@ ccl::status ccl_coll_build_reduce_scatter(ccl_sched* sched,
                                           bool is_scaleout,
                                           bool from_allreduce = false);
 
+ccl::status ccl_coll_build_gather(ccl_sched* sched,
+                                  ccl_buffer send_buf,
+                                  ccl_buffer recv_buf,
+                                  size_t count,
+                                  const ccl_datatype& dtype,
+                                  int root,
+                                  ccl_comm* comm,
+                                  bool is_scaleout);
+
 ccl::status ccl_coll_build_scatter(ccl_sched* sched,
                                    ccl_buffer send_buf,
                                    ccl_buffer recv_buf,
@@ -330,6 +339,26 @@ ccl_request* ccl_reduce_scatter_impl(const void* send_buf,
                                      ccl_comm* comm,
                                      const ccl_stream* stream,
                                      const std::vector<ccl::event>& deps);
+
+ccl::event ccl_gather(const void* send_buf,
+                      void* recv_buf,
+                      size_t count,
+                      ccl::datatype dtype,
+                      int root,
+                      const ccl_coll_attr& attr,
+                      ccl_comm* comm,
+                      const ccl_stream* stream,
+                      const std::vector<ccl::event>& deps);
+
+ccl_request* ccl_gather_impl(const void* send_buf,
+                              void* recv_buf,
+                              size_t count,
+                              ccl::datatype dtype,
+                              int root,
+                              const ccl_coll_attr& attr,
+                              ccl_comm* comm,
+                              const ccl_stream* stream,
+                              const std::vector<ccl::event>& deps);
 
 ccl::event ccl_scatter(const void* send_buf,
                        void* recv_buf,

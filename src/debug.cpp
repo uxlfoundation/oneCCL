@@ -48,6 +48,11 @@ int get_log_level_from_env() {
     if (strcasecmp(env_str, "trace") == 0) {
         return ONECCL_LOG_TRACE;
     }
+    // "debug" is a valid oneCCL v1 level; v2 has nothing between info and
+    // trace, so keep the extra detail the user asked for
+    if (strcasecmp(env_str, "debug") == 0) {
+        return ONECCL_LOG_TRACE;
+    }
     if (strcasecmp(env_str, "info") == 0) {
         return ONECCL_LOG_INFO;
     }

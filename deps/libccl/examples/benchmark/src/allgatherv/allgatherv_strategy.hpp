@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "coll_type.hpp"
+
 struct allgatherv_strategy_impl {
     std::vector<size_t> recv_counts;
 
@@ -30,6 +32,10 @@ struct allgatherv_strategy_impl {
 
     static constexpr const char* class_name() {
         return "allgatherv";
+    }
+
+    static constexpr coll_type class_id() {
+        return coll_type::allgatherv;
     }
 
     size_t get_send_multiplier() {

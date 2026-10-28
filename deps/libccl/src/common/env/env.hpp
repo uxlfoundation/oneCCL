@@ -35,6 +35,7 @@
 #include "sched/entry/ze/ze_primitives.hpp"
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 #include "topology/topo_manager.hpp"
+#include "coll/algorithms/utils/p2p_domain.hpp"
 
 #include "common/env/vars.hpp"
 #include "common/env/vars_experimental.hpp"
@@ -71,6 +72,24 @@ enum class process_launcher_mode {
     none
 };
 
+enum class graph_type {
+    auto_type,
+    native,
+    sycl
+};
+
+enum class ccl_overlapping_collectives {
+    enable_always,
+    enable_except_native_graph,
+    disable
+};
+
+enum class host_task_type {
+    auto_type,
+    event,
+    eventless
+};
+
 enum ccl_selection_border_type {
     ccl_selection_border_left,
     ccl_selection_border_right,
@@ -102,6 +121,13 @@ public:
     void parse();
     void print(int rank, bool is_profile_mode, bool is_mt_enabled = false);
     void set_internal_env();
+    // Runs after ze_data is initialized (post api_wrappers_init). Applies
+    // device-family-dependent defaults for env vars whose fallback differs
+    // between GPU families (e.g. sycl_broadcast_ring is on-by-default on ARC).
+    // A user-supplied env value — detected via getenv() != nullptr, since
+    // env_parser only writes the field when the variable is present — always
+    // wins over the device default.
+    void adjust_device_defaults();
 
     bool was_printed;
 #if defined(CCL_ENABLE_PROFILING)
@@ -171,6 +197,7 @@ public:
     std::string recv_algo_raw;
     std::string reduce_algo_raw;
     std::string reduce_scatter_algo_raw;
+    std::string gather_algo_raw;
     std::string scatter_algo_raw;
     std::string send_algo_raw;
     // scale-out selection part
@@ -185,8 +212,10 @@ public:
     std::string recv_scaleout_algo_raw;
     std::string reduce_scaleout_algo_raw;
     std::string reduce_scatter_scaleout_algo_raw;
+    std::string gather_scaleout_algo_raw;
     std::string scatter_scaleout_algo_raw;
     std::string send_scaleout_algo_raw;
+    std::string selection_policy_path;
     bool enable_unordered_coll;
 
     bool enable_fusion;
@@ -207,6 +236,7 @@ public:
     ccl_staging_buffer staging_buffer;
     bool enable_op_sync;
     bool enable_op_sycl_serialize;
+    ccl_overlapping_collectives overlapping_collectives;
     bool enable_hostname_sharing;
     bool enable_init_hostname_sharing;
     std::string occp_server_hostname;
@@ -252,7 +282,12 @@ public:
     bool sycl_allreduce_simple_read;
     size_t sycl_allreduce_chunking_threshold;
     std::string sycl_allreduce_ll_algo;
-    size_t sycl_allreduce_oneshot_threshold;
+
+    size_t sycl_reduce_ll_threshold;
+    bool sycl_reduce_simple_read;
+    size_t sycl_reduce_chunking_threshold;
+    size_t sycl_reduce_scaleout_threshold;
+    std::string sycl_reduce_ll_algo;
 
     bool sycl_reduce_scatter_tmp_buf;
     size_t sycl_reduce_scatter_small_threshold;
@@ -261,6 +296,7 @@ public:
     std::string sycl_reduce_scatter_scaleout_algo;
     size_t sycl_reduce_scatter_ll_threshold;
     size_t sycl_reduce_scatter_simple_threshold;
+    std::string sycl_reduce_scatter_ll_algo;
 
     bool sycl_allgatherv_tmp_buf;
     size_t sycl_allgatherv_small_threshold;
@@ -269,6 +305,7 @@ public:
     std::string sycl_allgatherv_scaleout_algo;
     size_t sycl_allgatherv_ll_threshold;
     bool sycl_allgatherv_ll_enable;
+    std::string sycl_allgatherv_ll_algo;
     size_t sycl_allgatherv_simple_threshold;
     bool sycl_allgatherv_scaleout_overlap;
     size_t sycl_allgatherv_scaleout_comm_size;
@@ -277,7 +314,39 @@ public:
     bool sycl_broadcast_tmp_buf;
     size_t sycl_broadcast_small_threshold;
     size_t sycl_broadcast_scaleout_threshold;
+    bool sycl_broadcast_ring;
+    bool sycl_broadcast_ring_auto;
+    size_t sycl_broadcast_chunking_threshold;
+    bool sycl_broadcast_ring_copy_engine;
+
+    // Master switch for broadcast-scaleout, using Scatter-AllGather (SAG).
+    // Default OFF (legacy chunked broadcast). Only when
+    // this is 1 does sycl_broadcast_scatter_allgather_threshold matter.
+    int sycl_broadcast_scatter_allgather_enable;
+    // Message-size gate, checked ONLY when
+    // sycl_broadcast_scatter_allgather_enable is 1.
+    size_t sycl_broadcast_scatter_allgather_threshold;
+    // Force-mode switch for broadcast Scatter-AllGather (SAG). When 0
+    // (default), unsupported shapes return done=false and the caller may use
+    // the legacy broadcast path. When 1, unsupported shapes throw so benchmarks
+    // cannot silently measure fallback.
+    bool sycl_broadcast_scatter_allgather_force;
+    // Max local P2P-domain size for automatic Scatter-AllGather (SAG)
+    // selection. When 0 (default), this guard is disabled. When >0, normal
+    // mode returns done=false only when the local P2P-domain size exceeds this
+    // value, so the caller uses the legacy broadcast path instead. Force mode
+    // (sycl_broadcast_scatter_allgather_force) ignores this guard so
+    // experiments can measure the raw SAG behavior instead of the guarded
+    // production-style selection.
+    int sycl_broadcast_scatter_allgather_max_ppn;
     size_t sycl_allgatherv_chunking_threshold;
+
+    bool sycl_scatter_large_tmp_buf;
+    size_t sycl_scatter_small_threshold;
+    size_t sycl_scatter_scaleout_threshold;
+    size_t sycl_scatter_scaleout_small_threshold;
+    bool sycl_scatter_scaleout_overlap;
+    size_t sycl_scatter_scaleout_overlap_buf_size;
 
     std::string sycl_alltoall_scaleout_algo;
     bool sycl_enable_arc_alltoall_ll;
@@ -303,6 +372,9 @@ public:
 #endif // CCL_ENABLE_ESIMD
     bool sycl_full_vector;
     bool sycl_force_recording_path;
+    graph_type sycl_graph_type;
+    bool sycl_oneshot_allgather_wa;
+    host_task_type sycl_host_task_type;
     bool sycl_kernel_memcpy_upsize;
     size_t sycl_tmp_buf_size;
     size_t sycl_scaleout_host_buf_size;
@@ -316,18 +388,41 @@ public:
     bool sycl_enable_pipeline_gpu_rdma;
     bool sycl_enable_direct_gpu_rdma;
     int sycl_pipeline_gpu_rdma;
+    bool sycl_enable_alltoall_scaleout_proxy;
+    bool sycl_enable_allreduce_scaleout_proxy;
+    bool sycl_enable_reduce_scatter_scaleout_proxy;
+    bool sycl_enable_allgatherv_scaleout_proxy;
     bool sycl_sub_communicator;
     bool sycl_force_pcie;
     bool sycl_ll_buffer_global;
     ccl::utils::alloc_mode sycl_scaleout_buf_alloc_mode;
     bool sycl_pt2pt_read;
     bool sycl_pt2pt_enable;
+    size_t sycl_pt2pt_simple_threshold;
+    bool sycl_pt2pt_copy_engine;
     bool sycl_simple_single_kernel;
     size_t sycl_num_threads;
     size_t sycl_work_group_size;
-
+    size_t sycl_rate_limit_bytes_per_sec;
+    size_t sycl_rate_limit_burst_bytes;
+    size_t sycl_rate_limit_max_acquire_bytes;
+    size_t sycl_rate_limit_refill_interval_ns;
+    size_t sycl_rate_limit_device_clock_hz;
+    size_t sycl_rate_limit_burst_divisor;
+    size_t sycl_rate_limit_backoff_cycles;
+    size_t sycl_rate_limit_stats;
     // Finalize event tracking garbage collection threshold
     size_t finalize_event_gc_threshold;
+
+    ccl_p2p_domain_level sycl_p2p_level;
+    size_t sycl_p2p_level_threshold;
+    size_t sycl_p2p_level_allreduce_threshold;
+    size_t sycl_p2p_level_allgatherv_threshold;
+    size_t sycl_p2p_level_reduce_scatter_threshold;
+    size_t sycl_p2p_level_alltoall_small_threshold;
+    size_t sycl_p2p_level_alltoall_threshold;
+    size_t sycl_p2p_level_broadcast_threshold;
+    size_t sycl_gpus_per_switch;
 #endif // CCL_ENABLE_SYCL
 
     bool allreduce_nreduce_buffering;
@@ -432,6 +527,7 @@ public:
     type2_tune_mode type2_mode;
     std::string drmfd_dev_render_dir_path;
     std::string drmfd_dev_render_suffix;
+    bool enable_ze_ce;                      // CCL_ENABLE_ZE_CE
 #endif // CCL_ENABLE_SYCL
     bool ipc_allgatherv_wa;
 
@@ -469,6 +565,9 @@ public:
     static std::map<ccl_staging_buffer, std::string> staging_buffer_names;
     static std::map<backend_mode, std::string> backend_names;
     static std::map<process_launcher_mode, std::string> process_launcher_names;
+    static std::map<graph_type, std::string> graph_type_names;
+    static std::map<ccl_overlapping_collectives, std::string> overlapping_collective_names;
+    static std::map<host_task_type, std::string> host_task_type_names;
 
     int env_2_worker_affinity(int local_proc_idx, int local_proc_count);
     int env_2_worker_mem_affinity(int local_proc_count);
