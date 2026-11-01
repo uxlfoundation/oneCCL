@@ -1,0 +1,72 @@
+ze_result_t; zeMemGetIpcHandle; 3
+ze_result_t; zeMemOpenIpcHandle; 5
+ze_result_t; zeMemCloseIpcHandle; 2
+
+ze_result_t; zeEventPoolGetIpcHandle; 2
+ze_result_t; zeEventPoolOpenIpcHandle; 3
+ze_result_t; zeEventPoolCloseIpcHandle; 1
+
+ze_result_t; zeMemAllocShared; 7
+ze_result_t; zeMemAllocDevice; 6
+ze_result_t; zeMemAllocHost; 5
+ze_result_t; zeMemFree; 2
+
+int; PMPI_Barrier; 1
+
+ze_result_t; zeInit; 1
+
+ze_result_t; zeModuleCreate; 5
+ze_result_t; zeModuleGetNativeBinary; 2
+ze_result_t; zeModuleDestroy; 1
+
+ze_result_t; zeKernelCreate; 3
+ze_result_t; zeKernelDestroy; 1
+ze_result_t; zeKernelSetArgumentValue; 3
+ze_result_t; zeKernelSuggestGroupSize; 7
+ze_result_t; zeKernelSetGroupSize; 4
+ze_result_t; zeKernelSetIndirectAccess; 2
+
+ze_result_t; zeCommandQueueCreate; 4
+ze_result_t; zeCommandQueueDestroy; 1
+ze_result_t; zeCommandQueueExecuteCommandLists; 4
+ze_result_t; zeCommandQueueSynchronize; 2
+
+ze_result_t; zeCommandListCreate; 4
+ze_result_t; zeCommandListCreateImmediate; 4
+ze_result_t; zeCommandListDestroy; 1
+ze_result_t; zeCommandListClose; 1
+ze_result_t; zeCommandListReset; 1
+
+ze_result_t; zeCommandListAppendMemoryCopy; 7
+ze_result_t; zeCommandListAppendMemoryFill; 8
+ze_result_t; zeCommandListAppendMemoryCopyRegion; 12
+ze_result_t; zeCommandListAppendMemAdvise; 5
+ze_result_t; zeCommandListAppendLaunchKernel; 6
+ze_result_t; zeCommandListAppendWaitOnEvents; 3
+ze_result_t; zeCommandListAppendSignalEvent; 2
+ze_result_t; zeCommandListAppendEventReset; 2
+ze_result_t; zeCommandListAppendBarrier; 4
+
+ze_result_t; zeEventCreate; 3
+ze_result_t; zeEventDestroy; 1
+ze_result_t; zeEventQueryKernelTimestamp; 2
+ze_result_t; zeEventHostSignal; 1
+ze_result_t; zeEventHostSynchronize; 2
+ze_result_t; zeEventHostReset; 1
+
+ze_result_t; zeEventPoolCreate; 5
+ze_result_t; zeEventPoolDestroy; 1
+
+ze_result_t; zeFenceCreate; 3
+ze_result_t; zeFenceDestroy; 1
+ze_result_t; zeFenceHostSynchronize; 2
+ze_result_t; zeFenceReset; 1
+
+ze_result_t; zeDeviceGetCommandQueueGroupProperties; 3
+ze_result_t; zeMemGetAllocProperties; 4
+ze_result_t; zeMemGetAddressRange; 4
+
+ze_result_t; zeEventQueryStatus; 1
+ze_result_t; zeFenceQueryStatus; 1
+
+
