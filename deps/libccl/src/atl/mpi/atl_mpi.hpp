@@ -140,6 +140,13 @@ public:
                             const size_t* offsets,
                             atl_req_t& req) override;
 
+    atl_status_t scatter(atl_ep_t& ep,
+                         const void* send_buf,
+                         void* recv_buf,
+                         size_t send_len,
+                         int root,
+                         atl_req_t& req) override;
+
     atl_status_t allreduce(atl_ep_t& ep,
                            const void* send_buf,
                            void* recv_buf,
@@ -151,7 +158,7 @@ public:
     atl_status_t alltoall(atl_ep_t& ep,
                           const void* send_buf,
                           void* recv_buf,
-                          int len,
+                          size_t len,
                           atl_req_t& req) override;
 
     atl_status_t alltoallv(atl_ep_t& ep,

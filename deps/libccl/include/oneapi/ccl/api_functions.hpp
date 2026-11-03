@@ -545,7 +545,11 @@ void CCL_API comm_deregister(const communicator& comm, void* handle);
  * @param comm communicator to register the window with
  * @param buffer pointer to the memory buffer
  * @param size size of the buffer in bytes
- * @return opaque window handle
+ * @return window object; deregisters when it goes out of scope
+ *
+ * v1 ABI, do not change: the mangled name does not encode the return type, so
+ * returning anything but window silently breaks 2022.1.0 callers (sret pointer
+ * vs register). For the device-API handle use comm_window_register_v2().
  */
 window CCL_API comm_window_register(const communicator& comm,
                                     void* buffer,
@@ -555,11 +559,103 @@ window CCL_API comm_window_register(const communicator& comm,
 /**
  * \ingroup window
  * \brief Deregister a previously registered memory window
- * @param comm communicator the window was registered with
- * @param win window to deregister (will be reset after deregistration)
+ * @param comm communicator the window was registered with (unused)
+ * @param win window to deregister
  */
 void CCL_API comm_window_deregister(const communicator& comm, window& win);
+
+/**
+ * \ingroup window
+ * \brief Register a memory window and return a device-usable handle
+ * @param comm communicator to register the window with
+ * @param buffer pointer to the memory buffer
+ * @param size size of the buffer in bytes
+ * @return opaque window handle, or nullptr if the device API is unavailable
+ *
+ * Separate name because C++ cannot overload on return type.
+ */
+window_t CCL_API comm_window_register_v2(const communicator& comm,
+                                         void* buffer,
+                                         size_t size,
+                                         int win_flags);
+
+/**
+ * \ingroup window
+ * \brief Deregister a window registered with comm_window_register_v2()
+ * @param comm communicator the window was registered with
+ * @param win window handle to deregister (will be set to nullptr)
+ */
+void CCL_API comm_window_deregister(const communicator& comm, window_t& win);
+
+/**
+ * \ingroup window
+ * \brief Host-side ccl::get_peer_pointer() — device pointer to a peer's buffer
+ *        within a registered window.
+ *
+ * @param win    registered window handle
+ * @param offset byte offset within the peer's buffer, below the window size
+ * @param peer   peer's rank in the world communicator
+ * @param out_ptr [out] receives the device pointer, or nullptr if peer is unreachable
+ */
+void CCL_API get_peer_device_pointer(window_t win, size_t offset, int peer, void** out_ptr);
+
+/**
+ * \ingroup window
+ * \brief Host-side ccl::get_lsa_pointer() — device pointer to a peer's buffer,
+ *        addressed by LSA team rank.
+ *
+ * @param win      registered window handle
+ * @param offset   byte offset within the peer's buffer, below the window size
+ * @param lsa_peer peer's rank within the LSA team (0 .. lsa_size-1)
+ * @param out_ptr  [out] receives the device pointer, or nullptr if peer is unreachable
+ */
+void CCL_API get_lsa_device_pointer(window_t win, size_t offset, int lsa_peer, void** out_ptr);
+
+/**
+ * \ingroup window
+ * \brief Host-side ccl::get_local_pointer() — device pointer to this rank's own
+ *        buffer within a registered window.
+ *
+ * @param win    registered window handle
+ * @param offset byte offset within the local buffer, below the window size
+ * @param out_ptr [out] receives the device pointer, or nullptr on error
+ */
+void CCL_API get_local_device_pointer(window_t win, size_t offset, void** out_ptr);
+
 /** @} */ // end of window
+/******************** DEVICE COMMUNICATOR ********************/
+
+/** @defgroup dev_comm
+ * @{
+ */
+
+/**
+ * \ingroup dev_comm
+ * \brief Create a device communicator for use in SYCL kernels.
+ *
+ * Allocates the barrier resources in device memory and fills in the caller's
+ * dev_comm_t, which is then captured by value into kernels. Collective — all
+ * ranks must participate.
+ *
+ * @param comm host communicator
+ * @param reqs pointer to resource requirements (barrier count, etc.)
+ * @param out_dev_comm [out] device communicator to fill in
+ */
+void CCL_API dev_comm_create(const communicator& comm,
+                             const dev_comm_requirements* reqs,
+                             dev_comm_t* out_dev_comm);
+
+/**
+ * \ingroup dev_comm
+ * \brief Free the resources of a device communicator.
+ *
+ * @param comm host communicator
+ * @param dev_comm device communicator to tear down; null, or one never created,
+ *                 is a no-op
+ */
+void CCL_API dev_comm_destroy(const communicator& comm, const dev_comm_t* dev_comm);
+
+/** @} */ // end of dev_comm
 
 /******************** OPERATION ********************/
 
@@ -2228,6 +2324,120 @@ event CCL_API reduce_scatter(const BufferObjectType& send_buf,
                              const vector_class<event>& deps = {});
 
 /** @} */ // end of reduce_scatter
+
+/** @defgroup gather
+ * \ingroup operation
+ * @{
+ */
+
+/**
+ * \brief Gather is a root-based collective communication operation.
+ *        Every rank contributes @c count elements from @c send_buf.
+ *        After the call, root holds @c comm_size * @c count elements in
+ *        @c recv_buf, with rank @c i's contribution at offset @c i * @c count.
+ *        On non-root ranks, @c recv_buf is unused and may be nullptr.
+ *
+ * @param send_buf [in] the buffer with @c count elements of @c dtype to contribute
+ * @param recv_buf [out] on root: buffer to store @c comm_size * @c count elements;
+ *                 ignored on non-root ranks
+ * @param count [in] the number of elements each rank contributes
+ * @param dtype [in] the datatype of elements in @c send_buf and @c recv_buf
+ * @param root [in] the rank that collects the data
+ * @param comm [in] the communicator for which the operation will be performed
+ * @param stream [in] abstraction over a device queue constructed via ccl::create_stream
+ * @param attr [in] optional attributes to customize operation
+ * @param deps [in] an optional vector of the events that the operation should depend on
+ * @return @ref ccl::event an object to track the progress of the operation
+ */
+event CCL_API gather(const void* send_buf,
+                     void* recv_buf,
+                     size_t count,
+                     datatype dtype,
+                     int root,
+                     const communicator& comm,
+                     const stream& stream,
+                     const gather_attr& attr = default_gather_attr,
+                     const vector_class<event>& deps = {});
+
+/*!
+ * \overload
+ */
+event CCL_API gather(const void* send_buf,
+                     void* recv_buf,
+                     size_t count,
+                     datatype dtype,
+                     int root,
+                     const communicator& comm,
+                     const gather_attr& attr = default_gather_attr,
+                     const vector_class<event>& deps = {});
+
+/*!
+ * \overload
+ *
+ * Type-safe version.
+ */
+
+template <class BufferType,
+          class = typename std::enable_if<is_native_type_supported<BufferType>(), event>::type>
+event CCL_API gather(const BufferType* send_buf,
+                     BufferType* recv_buf,
+                     size_t count,
+                     int root,
+                     const communicator& comm,
+                     const stream& stream,
+                     const gather_attr& attr = default_gather_attr,
+                     const vector_class<event>& deps = {});
+
+/*!
+ * \overload
+ *
+ * Type-safe version.
+ */
+
+template <class BufferType,
+          class = typename std::enable_if<is_native_type_supported<BufferType>(), event>::type>
+event CCL_API gather(const BufferType* send_buf,
+                     BufferType* recv_buf,
+                     size_t count,
+                     int root,
+                     const communicator& comm,
+                     const gather_attr& attr = default_gather_attr,
+                     const vector_class<event>& deps = {});
+
+/*!
+ * \overload
+ *
+ * Type-safe version.
+ */
+
+template <class BufferObjectType,
+          class = typename std::enable_if<is_class_supported<BufferObjectType>(), event>::type>
+event CCL_API gather(const BufferObjectType& send_buf,
+                     BufferObjectType& recv_buf,
+                     size_t count,
+                     int root,
+                     const communicator& comm,
+                     const stream& stream,
+                     const gather_attr& attr = default_gather_attr,
+                     const vector_class<event>& deps = {});
+
+/*!
+ * \overload
+ *
+ * Type-safe version.
+ */
+
+template <class BufferObjectType,
+          class = typename std::enable_if<is_class_supported<BufferObjectType>(), event>::type>
+event CCL_API gather(const BufferObjectType& send_buf,
+                     BufferObjectType& recv_buf,
+                     size_t count,
+                     int root,
+                     const communicator& comm,
+                     const gather_attr& attr = default_gather_attr,
+                     const vector_class<event>& deps = {});
+
+/** @} */ // end of gather
 
 /** @defgroup scatter
  * \ingroup operation

@@ -20,6 +20,6 @@ includedir=${prefix}/include/
 Name: oneAPI Collective Communications Library (oneCCL)
 Description: oneCCL provides an efficient implementation of communication patterns used in deep learning.
 URL: https://github.com/oneapi-src/oneCCL
-Version: 2022.1.2
+Version: 2022.2.0
 Libs: -L${libdir} -lccl -lsycl
 Cflags: -I${includedir}

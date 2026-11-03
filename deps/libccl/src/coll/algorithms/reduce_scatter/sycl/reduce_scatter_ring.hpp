@@ -22,6 +22,11 @@
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_sycl.hpp"
 #include "coll/coll_util.hpp"
 
+#include "proxy/proxy_types.hpp"
+#include "proxy/proxy_staging.hpp"
+#include "proxy/host_initiated/cmd_ring_host.hpp"
+#include "proxy/host_initiated/cmd_persistent_kernel.hpp"
+
 namespace ccl {
 namespace v1 {
 
@@ -91,8 +96,8 @@ inline sycl::event reduce_scatter_ring_blocking_impl(sycl::queue &q,
 
     // tag creation
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-    ccl_sched_id_t pt2pt_sched_id = atl_comm->tag_creator->get_pt2pt_sched_id();
-    int64_t tag = atl_comm->tag_creator->create(0 /* rank */, comm->get_comm_id(), pt2pt_sched_id, 0);
+    ccl_sched_id_t sched_id = comm->get_sched_id(true, false);
+    int64_t tag = atl_comm->tag_creator->create(0 /* rank */, comm->get_comm_id(), sched_id, 0);
 
     int ep_idx = 0;
     int iter = 0;
@@ -214,7 +219,7 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
                                                         ccl_comm *comm,
                                                         const vector_class<event> &deps,
                                                         bool original_deps,
-                                                        sycl_reduce_scatter_tune_attr tune_attr,
+                                                        sycl_scaleout_tune_attr tune_attr,
                                                         bool &done) {
     sycl::event sycl_e;
     int world = comm->size();
@@ -224,7 +229,7 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
     ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     // tuning parameters
-    size_t pipeline_chunk_size = tune_attr.pipeline_chunk_size;
+    size_t pipeline_chunk_size = tune_attr.pipeline_chunk_size();
 
     // prepare ring block counts/sizes, the last block handles the remainder
     size_t main_block_count = count / world;
@@ -262,8 +267,9 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
         dep_events.push_back(std::move(sycl_e));
     }
 
-    // use an out-of-order queue
-    sycl::queue q_worker(q.get_context(), q.get_device());
+    // use an out-of-order queue for GPU pipelining only
+    bool use_ooq = !ccl::global_data::env().sycl_enable_pipeline_gpu_rdma;
+    sycl::queue q_worker = use_ooq ? sycl::queue(q.get_context(), q.get_device()) : q;
 
     // left and right neighbour
     int right = (rank + 1) % world;
@@ -348,8 +354,10 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
                 q_worker, send_offset_ptr, recv_ptr, out_ptr, recv_block_count, reduction_op, { sendrecv_e });
         }
 
-        dep_events.clear();
-        dep_events.push_back(std::move(sycl_e));
+        if (use_ooq) {
+            dep_events.clear();
+            dep_events.push_back(std::move(sycl_e));
+        }
 
         // shift buffers
         send_ptr = recv_ptr;
@@ -362,7 +370,9 @@ inline sycl::event reduce_scatter_ring_nonblocking_impl(sycl::queue &q,
     }
 
     // submit to in-order queue
-    sycl_e = submit_wait_on_events(q, dep_events);
+    if (use_ooq) {
+        sycl_e = submit_wait_on_events(q, dep_events);
+    }
 
     if (world > 2 || in_place) {
         if (to_free) {
@@ -392,7 +402,7 @@ inline sycl::event reduce_scatter_ring_nonblocking(sycl::queue &q,
                                                    ccl_comm *comm,
                                                    const vector_class<event> &deps,
                                                    bool original_deps,
-                                                   sycl_reduce_scatter_tune_attr &tune_attr,
+                                                   sycl_scaleout_tune_attr &tune_attr,
                                                    bool &done) {
     size_t total_count = recv_count * comm->size();
 
@@ -409,7 +419,7 @@ inline sycl::event reduce_scatter_ring(sycl::queue &q,
                                        ccl_comm *comm,
                                        const vector_class<event> &deps,
                                        bool original_deps,
-                                       sycl_reduce_scatter_tune_attr &tune_attr,
+                                       sycl_scaleout_tune_attr &tune_attr,
                                        bool &done) {
     auto lambda = [&]<typename T>() {
         if (ccl::global_data::env().enable_op_sync && transport_rdma_enabled()) {
@@ -421,6 +431,267 @@ inline sycl::event reduce_scatter_ring(sycl::queue &q,
     };
 
     return invoke_scaleout_collective(lambda, dtype);
+}
+
+// proxy service implementation
+inline void reduce_scatter_proxy_ring_blocking_impl(ccl_proxy_context& ctx,
+                                                    const void *send_buf,
+                                                    void *recv_buf,
+                                                    size_t count,
+                                                    ccl::datatype dtype,
+                                                    ccl::reduction reduction,
+                                                    ccl_comm *comm,
+                                                    void *aux_buffer,
+                                                    size_t pipeline_chunk_size) {
+    int world = comm->size();
+    int rank = comm->rank();
+
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+
+    const bool is_rdma_supported = ctx.staging->m_is_rdma_supported;
+    const size_t num_work_groups = ctx.num_work_groups;
+
+    // prepare ring block counts/sizes
+    size_t main_block_count = count / world;
+    size_t last_block_count = main_block_count + count % world;
+    size_t main_block_size = main_block_count * ccl_dtype.size();
+    size_t last_block_size = last_block_count * ccl_dtype.size();
+
+    bool in_place =
+        ccl::is_reduce_scatter_inplace(send_buf, recv_buf, main_block_count, ccl_dtype.size(), rank, world);
+
+    LOG_DEBUG("reduce_scatter_proxy_ring_blocking_impl: rank ",
+              rank,
+              "/",
+              world,
+              ", count ",
+              count,
+              ", main_block_count ",
+              main_block_count,
+              ", last_block_count ",
+              last_block_count,
+              ", in_place ",
+              in_place,
+              ", chunk_size ",
+              pipeline_chunk_size);
+
+    // Obtain a buffer for intermediate reduction results.
+    // A non-null aux_buffer means the caller pre-allocated dedicated device
+    // memory for this op. The caller owns a lifetime.
+    // A null aux_buffer means we acquire a slot from the communicator's
+    // scaleout device-buffer pre-allocated pool ourselves.
+    const bool from_pool = (aux_buffer == nullptr);
+    if (from_pool) {
+        aux_buffer = comm->get_scaleout_device_buf(*ctx.queue);
+    }
+    void *buffers[2] = { aux_buffer, (char *)aux_buffer + last_block_size };
+
+    // left and right neighbour
+    const int right = (rank + 1) % world;
+    const int left = (rank - 1 + world) % world;
+
+    // starting indexes
+    int s = (rank - 1 + world) % world;
+    int r = (s - 1 + world) % world;
+
+    // send/recv pointers
+    void *send_ptr, *recv_ptr, *out_ptr;
+    size_t send_block_count, recv_block_count;
+    size_t send_block_size, recv_block_size;
+
+    // tag creation
+    int ep_idx = 0;
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    ccl_sched_id_t pt2pt_sched_id = atl_comm->tag_creator->get_pt2pt_sched_id();
+    int64_t tag = atl_comm->tag_creator->create(0 /* rank */, comm->get_comm_id(), pt2pt_sched_id, 0);
+
+    int iter = 0;
+    int index = 0;
+    while (iter < world - 1) {
+        send_block_count = (s == (world - 1)) ? last_block_count : main_block_count;
+        recv_block_count = (r == (world - 1)) ? last_block_count : main_block_count;
+        send_block_size = send_block_count * ccl_dtype.size();
+        recv_block_size = recv_block_count * ccl_dtype.size();
+
+        // recv -> reduce -> send
+        if (iter == 0) {
+            send_ptr = (char *)send_buf + s * main_block_size;
+        }
+        // for the last iteration, reduce directly to the recv_buf
+        if (iter == world - 2) {
+            recv_ptr = !in_place ? recv_buf : buffers[index];
+            out_ptr = recv_buf;
+        }
+        else {
+            recv_ptr = buffers[index];
+            out_ptr = recv_ptr;
+        }
+
+        // communication phase
+        atl_req_t send_req, recv_req;
+        if (is_rdma_supported) {
+            ATL_CALL_THROW_IF_ERROR(atl_comm->recv(ep_idx, recv_ptr, recv_block_size, left, tag, recv_req));
+            ATL_CALL_THROW_IF_ERROR(atl_comm->send(ep_idx, send_ptr, send_block_size, right, tag, send_req));
+            ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
+        }
+        else {
+            ccl_proxy_staging::do_sendrecv(ctx.staging,
+                                           send_ptr,
+                                           send_block_size,
+                                           right,
+                                           recv_ptr,
+                                           recv_block_size,
+                                           left,
+                                           pipeline_chunk_size,
+                                           comm,
+                                           tag);
+        }
+
+        // get the pointer for the current block to reduce with received data
+        void *send_offset_ptr = (char *)send_buf + r * main_block_size;
+        // submit command to persistent kernel (unified API handles splitting internally)
+        // and wait for the reduction to complete before sending the next ring block
+        ctx.producer->submit_and_wait(ccl_ring_cmd_type::reduce,
+                                     send_offset_ptr,
+                                     out_ptr,
+                                     recv_ptr,
+                                     static_cast<uint32_t>(recv_block_count),
+                                     dtype,
+                                     num_work_groups);
+
+        if (is_rdma_supported) {
+            // wait for send to finish is not time critical
+            ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, send_req));
+        }
+
+        // shift buffers
+        send_ptr = recv_ptr;
+        index = index ^ 1;
+
+        // next iteration
+        s = r;
+        r = (r - 1 + world) % world;
+        iter++;
+    }
+
+    // Release the pool slot we acquired above.
+    // A caller-preallocated aux_buffer is left for the caller to free.
+    if (from_pool) {
+        comm->put_scaleout_device_buf(aux_buffer);
+    }
+}
+
+// proxy service implementation with simplified interface
+inline void reduce_scatter_proxy_ring_blocking(ccl_proxy_context& ctx,
+                                               const void *send_buf,
+                                               void *recv_buf,
+                                               size_t recv_count,
+                                               ccl::datatype dtype,
+                                               ccl::reduction reduction,
+                                               ccl_comm *comm,
+                                               void *aux_buffer,
+                                               size_t pipeline_chunk_size) {
+    size_t total_count = recv_count * comm->size();
+    reduce_scatter_proxy_ring_blocking_impl(ctx,
+                                            send_buf,
+                                            recv_buf,
+                                            total_count,
+                                            dtype,
+                                            reduction,
+                                            comm,
+                                            aux_buffer,
+                                            pipeline_chunk_size);
+}
+
+// Proxy service wrapper for ring reduce-scatter
+inline void proxy_reduce_scatter_ring(const ccl_proxy_op& op, ccl_proxy_context& ctx) {
+    const size_t chunk_size = op.pipeline_chunk_size
+        ? op.pipeline_chunk_size
+        : ccl::global_data::env().sycl_max_pipeline_chunk_size;
+
+    reduce_scatter_proxy_ring_blocking(ctx,
+                                       op.src,
+                                       op.dst,
+                                       op.count,
+                                       op.dtype,
+                                       op.reduction,
+                                       op.comm,
+                                       op.aux_dev,
+                                       chunk_size);
+}
+
+// Persistent-kernel based reduce-scatter ring scale-out algorithm
+inline sycl::event reduce_scatter_scaleout_sycl_proxy_ring(
+    sycl::queue& q,
+    const void* send_buf,
+    void* recv_buf,
+    size_t recv_count,
+    ccl::datatype dtype,
+    ccl::reduction reduction,
+    ccl_comm* comm,
+    const ccl::vector_class<ccl::event>& deps,
+    sycl_scaleout_tune_attr tune_attr,
+    bool& done) {
+    bool is_recording = use_recording_path(q);
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+
+    std::vector<sycl::event> dep_events = get_sycl_events(deps);
+
+    const int rank = comm->rank();
+    const int comm_size = comm->size();
+
+    const size_t block_count = recv_count;
+    const size_t block_size = block_count * ccl_dtype.size();
+
+    // Provide dedicated device double-buffer memory when a block does not fit in
+    // half a scaleout pool slot (see allreduce_scaleout_sycl_proxy_ring).
+    bool to_free = false;
+    void* aux_buffer = nullptr;
+    if (block_size > comm->get_scaleout_device_buf_size() / 2) {
+        CCL_THROW_IF_NOT(!is_recording, "large-block allocation does not support recording");
+        aux_buffer = sycl::malloc_device(block_size * 2, q);
+        to_free = true;
+    }
+
+    // Decide work-group count based on the (uniform) ring block size
+    const size_t num_work_groups = select_persistent_work_group_num(block_size);
+
+    LOG_DEBUG("reduce_scatter_scaleout_sycl_proxy_ring: rank ",
+              rank,
+              "/",
+              comm_size,
+              ", recv_count ",
+              recv_count,
+              ", block_count ",
+              block_count,
+              ", num_work_groups ",
+              num_work_groups);
+
+    ccl_proxy_op op{ ccl_proxy_op_type::reduce_scatter_ring,
+                     (void*)send_buf,
+                     recv_buf,
+                     /*count=*/recv_count,
+                     dtype,
+                     reduction,
+                     comm,
+                     /*aux=*/aux_buffer };
+    op.pipeline_chunk_size = tune_attr.pipeline_chunk_size();
+    op.num_work_groups = num_work_groups;
+
+    sycl::event scaleout_event = submit_and_launch_persistent_kernel(q, op, dep_events);
+
+    // Free the large-block fallback allocation once the kernel has finished.
+    if (to_free) {
+        scaleout_event = q.submit([=](sycl::handler& h) {
+            h.depends_on(scaleout_event);
+            h.host_task([=]() {
+                sycl::free(aux_buffer, q);
+            });
+        });
+    }
+
+    done = true;
+    return scaleout_event;
 }
 
 } // namespace v1

@@ -16,7 +16,7 @@
 
 #pragma once
 
-#if defined(CCL_ENABLE_MPI)
+#if defined(CCL_ENABLE_OMP)
 
 #include "coll/coll_param.hpp"
 #include "oneapi/ccl.hpp"
@@ -64,4 +64,4 @@ void openmp_api_fini();
 
 } // namespace ccl
 
-#endif //CCL_ENABLE_MPI
+#endif //CCL_ENABLE_OMP

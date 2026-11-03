@@ -141,6 +141,15 @@
                                       const ccl::reduce_scatter_attr& attr, \
                                       const ccl::vector_class<ccl::event>& deps = {}) = 0; \
 \
+    virtual ccl::event gather(const void* send_buf, \
+                              void* recv_buf, \
+                              size_t count, \
+                              ccl::datatype dtype, \
+                              int root, \
+                              const ccl::stream::impl_value_t& stream, \
+                              const ccl::gather_attr& attr, \
+                              const ccl::vector_class<ccl::event>& deps = {}) = 0; \
+\
     virtual ccl::event scatter(const void* send_buf, \
                                void* recv_buf, \
                                size_t count, \
@@ -291,6 +300,16 @@
                                       const ccl::stream::impl_value_t& stream, \
                                       const ccl::reduce_scatter_attr& attr, \
                                       const ccl::vector_class<ccl::event>& deps) { \
+        CCL_THROW(std::string(__FUNCTION__) + " - not implemented"); \
+    }; \
+\
+    virtual ccl::event gather(const type* send_buf, \
+                              type* recv_buf, \
+                              size_t count, \
+                              int root, \
+                              const ccl::stream::impl_value_t& stream, \
+                              const ccl::gather_attr& attr, \
+                              const ccl::vector_class<ccl::event>& deps = {}) { \
         CCL_THROW(std::string(__FUNCTION__) + " - not implemented"); \
     }; \
 \
@@ -453,6 +472,16 @@
         CCL_THROW(std::string(__FUNCTION__) + " - not implemented"); \
     }; \
 \
+    virtual ccl::event gather(const type& send_buf, \
+                              type& recv_buf, \
+                              size_t count, \
+                              int root, \
+                              const ccl::stream::impl_value_t& stream, \
+                              const ccl::gather_attr& attr, \
+                              const ccl::vector_class<ccl::event>& deps = {}) { \
+        CCL_THROW(std::string(__FUNCTION__) + " - not implemented"); \
+    }; \
+\
     virtual ccl::event scatter(const type& send_buf, \
                                type& recv_buf, \
                                size_t count, \
@@ -609,6 +638,18 @@
                               const ccl::vector_class<ccl::event>& deps) override { \
         return get_impl()->reduce_scatter_impl( \
             send_buf, recv_buf, recv_count, dtype, reduction, stream, attr, deps); \
+    } \
+\
+    ccl::event gather(const void* send_buf, \
+                      void* recv_buf, \
+                      size_t count, \
+                      ccl::datatype dtype, \
+                      int root, \
+                      const ccl::stream::impl_value_t& stream, \
+                      const ccl::gather_attr& attr, \
+                      const ccl::vector_class<ccl::event>& deps = {}) override { \
+        return get_impl()->gather_impl( \
+            send_buf, recv_buf, count, dtype, root, stream, attr, deps); \
     } \
 \
     ccl::event scatter(const void* send_buf, \
@@ -804,6 +845,16 @@
             send_buf, recv_buf, recv_count, reduction, stream, attr, deps); \
     } \
 \
+    ccl::event gather(const type* send_buf, \
+                      type* recv_buf, \
+                      size_t count, \
+                      int root, \
+                      const ccl::stream::impl_value_t& stream, \
+                      const ccl::gather_attr& attr, \
+                      const ccl::vector_class<ccl::event>& deps) override { \
+        return get_impl()->gather_impl(send_buf, recv_buf, count, root, stream, attr, deps); \
+    } \
+\
     ccl::event scatter(const type* send_buf, \
                        type* recv_buf, \
                        size_t count, \
@@ -966,6 +1017,16 @@
             send_buf, recv_buf, recv_count, reduction, stream, attr, deps); \
     } \
 \
+    ccl::event gather(const type& send_buf, \
+                      type& recv_buf, \
+                      size_t count, \
+                      int root, \
+                      const ccl::stream::impl_value_t& stream, \
+                      const ccl::gather_attr& attr, \
+                      const ccl::vector_class<ccl::event>& deps) override { \
+        return get_impl()->gather_impl(send_buf, recv_buf, count, root, stream, attr, deps); \
+    } \
+\
     ccl::event scatter(const type& send_buf, \
                        type& recv_buf, \
                        size_t count, \
@@ -1123,6 +1184,15 @@
                                    const ccl::vector_class<ccl::event>& deps); \
 \
     template <class buffer_type> \
+    ccl::event gather_impl(const buffer_type* send_buf, \
+                           buffer_type* recv_buf, \
+                           size_t count, \
+                           int root, \
+                           const ccl::stream::impl_value_t& stream, \
+                           const ccl::gather_attr& attr, \
+                           const ccl::vector_class<ccl::event>& deps); \
+\
+    template <class buffer_type> \
     ccl::event scatter_impl(const buffer_type* send_buf, \
                             buffer_type* recv_buf, \
                             size_t count, \
@@ -1256,6 +1326,15 @@
                                    const ccl::stream::impl_value_t& stream, \
                                    const ccl::reduce_scatter_attr& attr, \
                                    const ccl::vector_class<ccl::event>& deps); \
+\
+    ccl::event gather_impl(const void* send_buf, \
+                           void* recv_buf, \
+                           size_t count, \
+                           ccl::datatype dtype, \
+                           int root, \
+                           const ccl::stream::impl_value_t& stream, \
+                           const ccl::gather_attr& attr, \
+                           const ccl::vector_class<ccl::event>& deps); \
 \
     ccl::event scatter_impl(const void* send_buf, \
                             void* recv_buf, \
@@ -1424,6 +1503,15 @@
                                    const ccl::vector_class<ccl::event>& deps); \
 \
     template <class buffer_type> \
+    ccl::event gather_impl(const buffer_type& send_buf, \
+                           buffer_type& recv_buf, \
+                           size_t count, \
+                           int root, \
+                           const ccl::stream::impl_value_t& stream, \
+                           const ccl::gather_attr& attr, \
+                           const ccl::vector_class<ccl::event>& deps); \
+\
+    template <class buffer_type> \
     ccl::event scatter_impl(const buffer_type& send_buf, \
                             buffer_type& recv_buf, \
                             size_t count, \
@@ -1530,6 +1618,14 @@
                                                 int root, \
                                                 const ccl::stream::impl_value_t& stream, \
                                                 const ccl::reduce_attr& attr, \
+                                                const ccl::vector_class<ccl::event>& deps); \
+\
+    template ccl::event comm_class::gather_impl(const type& send_buf, \
+                                                type& recv_buf, \
+                                                size_t count, \
+                                                int root, \
+                                                const ccl::stream::impl_value_t& stream, \
+                                                const ccl::gather_attr& attr, \
                                                 const ccl::vector_class<ccl::event>& deps); \
 \
     template ccl::event comm_class::scatter_impl(const type& send_buf, \
@@ -1654,6 +1750,13 @@
         const ccl::stream::impl_value_t& stream, \
         const ccl::reduce_scatter_attr& attr, \
         const ccl::vector_class<ccl::event>& deps); \
+    template ccl::event comm_class::gather_impl(const type* send_buf, \
+                                                type* recv_buf, \
+                                                size_t count, \
+                                                int root, \
+                                                const ccl::stream::impl_value_t& stream, \
+                                                const ccl::gather_attr& attr, \
+                                                const ccl::vector_class<ccl::event>& deps); \
     template ccl::event comm_class::scatter_impl(const type* send_buf, \
                                                  type* recv_buf, \
                                                  size_t count, \

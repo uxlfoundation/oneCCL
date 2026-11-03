@@ -376,6 +376,23 @@ pt2pt_attr::get() const {
 }
 
 /**
+ * gather attributes definition
+ */
+template <operation_attr_id attrId, class Value>
+CCL_API typename detail::ccl_api_type_attr_traits<operation_attr_id, attrId>::return_type
+gather_attr::set(const Value& v) {
+    return static_cast<ccl_operation_attr_impl_t*>(get_impl().get())
+        ->set_attribute_value(v, detail::ccl_api_type_attr_traits<operation_attr_id, attrId>{});
+}
+
+template <operation_attr_id attrId>
+CCL_API const typename detail::ccl_api_type_attr_traits<operation_attr_id, attrId>::return_type&
+gather_attr::get() const {
+    return get_impl().get()->get_attribute_value(
+        detail::ccl_api_type_attr_traits<operation_attr_id, attrId>{});
+}
+
+/**
  * scatter attributes definition
  */
 template <operation_attr_id attrId, class Value>

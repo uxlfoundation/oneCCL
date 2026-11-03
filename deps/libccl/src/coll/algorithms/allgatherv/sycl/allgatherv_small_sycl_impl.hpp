@@ -141,7 +141,8 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
                                  ccl::datatype dtype,
                                  ccl_comm* comm,
                                  ccl_stream* global_stream,
-                                 const ccl::vector_class<ccl::event>& deps) {
+                                 const ccl::vector_class<ccl::event>& deps,
+                                 bool& done) {
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const size_t dsize = ccl_dtype.size();
 
@@ -186,10 +187,10 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     // VS : vec_size, SGS : sub_group_size, LB : use_local_barrier, GB : use_global_barrier
-    auto gather_invoke = [=, &q]<int VS, int SGS, int LB, int GB>(std::vector<sycl::event> sycl_deps) {
+    auto gather_invoke = [=, &q, &done]<int VS, int SGS, int LB, int GB>(std::vector<sycl::event> sycl_deps) {
         constexpr int use_block = 1;
         constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
         const size_t kernel_threads_copy = send_count / vec_size + send_count % vec_size;
@@ -198,17 +199,22 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
         const size_t kernel_threads = std::max({ kernel_threads_copy, kernel_threads_main, kernel_threads_last });
         const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
 
+        done = true;
         // total number of hw threads is a multiple of sub_group
         CCL_THROW_IF_NOT(hw_threads % SGS == 0);
         // if synchronization is there, make sure sycl threads can be contained within hw threads
         if (LB == 1 || GB == 1) {
             if (kernel_size > hw_threads) {
-                CCL_THROW("sycl threads : ",
+                // cannot fit the synchronized single-kernel path; signal caller to fall back
+                LOG_DEBUG("sycl threads : ",
                           kernel_size,
                           " > hw threads : ",
                           hw_threads,
                           " is not allowed in allgatherv small for count :",
-                          count);
+                          count,
+                          ". Falling back to allgatherv large kernel");
+                done = false;
+                return sycl::event{};
             }
         }
 
@@ -260,7 +266,7 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
         return local_event;
     };
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     // three phases of allgather: local copy to tmp, comm_barrier, gather
     // VS : vec_size
@@ -344,7 +350,7 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
         kernel_event = memcpy_gather.template operator()<vec_size>();
     }
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     return ccl::event::create_from_native(kernel_event);
 }
@@ -363,7 +369,8 @@ ccl::event allgatherv_small_impl(sycl::queue& q,
                                                   ccl::datatype dtype, \
                                                   ccl_comm* comm, \
                                                   ccl_stream* global_stream, \
-                                                  const ccl::vector_class<ccl::event>& deps)
+                                                  const ccl::vector_class<ccl::event>& deps, \
+                                                  bool& done)
 
 extern TEMPLATE_ALLGATHERV_SMALL(short);
 extern TEMPLATE_ALLGATHERV_SMALL(int8_t);

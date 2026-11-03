@@ -16,6 +16,9 @@
 
 #pragma once
 
+#include "proxy/proxy_types.hpp"
+#include "proxy/host_initiated/cmd_persistent_kernel.hpp"
+
 // pairwise exchange for all ranks inside a numa comm
 static sycl::event exchange_numa_self(sycl::queue q,
                                       ccl_comm* global_comm,
@@ -197,20 +200,17 @@ ccl::event alltoall_sycl_numa_pairwise_rdma(sycl::queue& q,
     return ccl::event::create_from_native(sycl_e);
 }
 
-// pairwise exchange starts in numa comm
-// and then pairwise to all other ranks outside of the numa comm
-ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
-                                                    const void* send_buf,
-                                                    void* recv_buf,
-                                                    size_t count,
-                                                    ccl::datatype dtype,
-                                                    ccl_comm* comm,
-                                                    ccl_stream* global_stream,
-                                                    const ccl::vector_class<ccl::event>& deps,
-                                                    bool batch_mode,
-                                                    bool& done) {
-    ccl_comm* node_comm = comm->get_node_comm().get();
-    ccl_comm* numa_comm = comm->get_numa_comm().get();
+// host_task scale-out exchange of alltoall_sycl_numa_pairwise_rdma_oneshot:
+// pairwise to all ranks outside of the numa comm, barrier after each chunk
+// TODO: may be merged with alltoall_scatter_exchange_host
+sycl::event alltoall_numa_pairwise_exchange_host(sycl::queue& q,
+                                                 const void* send_buf,
+                                                 void* recv_buf,
+                                                 size_t count,
+                                                 ccl::datatype dtype,
+                                                 ccl_comm* comm,
+                                                 int peer_start,
+                                                 const std::vector<sycl::event>& dep_events) {
     uint32_t world = comm->size();
     uint32_t rank = comm->rank();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
@@ -219,40 +219,8 @@ ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
     int pof2 = is_pof2(world);
     sycl::event sycl_e;
 
-    done = true;
-
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
     ccl_sched_id_t sched_id = comm->get_sched_id(true, false);
-    std::vector<sycl::event> dep_events = get_sycl_events(deps);
-
-    int node_size = node_comm->size();
-    int numa_size = numa_comm->size();
-    int num_numas = node_size / numa_size;
-    int my_numa_id = rank / numa_size;
-
-    /* scale up */
-    if (numa_comm->size() > 1) {
-        int first_numa_rank = numa_comm->get_global_rank(0);
-        sycl::queue scaleup_q = q;
-        ccl::event up_e = alltoall_sycl_single_node(scaleup_q,
-                                                    (char*)send_buf + first_numa_rank * size,
-                                                    (char*)recv_buf + first_numa_rank * size,
-                                                    count,
-                                                    dtype,
-                                                    comm,
-                                                    true,
-                                                    0,
-                                                    global_stream,
-                                                    deps,
-                                                    done);
-    }
-    else {
-        // copy self
-        sycl::event copy_e = q.submit([=](sycl::handler& h) {
-            h.depends_on(dep_events);
-            h.memcpy((char*)recv_buf + rank * size, (char*)send_buf + rank * size, size);
-        });
-    }
 
     /* Do the pairwise exchanges */
     size_t block = size;
@@ -262,7 +230,6 @@ ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
     size_t progress = 0;
     int c = 0;
     while (progress < size) {
-        //fprintf(stderr, "[%d] progress: %ld\n", rank, progress);
         size_t tocopy = progress + block < size ? block : size - progress;
         sycl_e = q.submit([=](sycl::handler& h) {
             h.depends_on(dep_events);
@@ -270,7 +237,7 @@ ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
                 std::vector<atl_req_t> reqs(world * 2);
                 int nreqs = 0;
                 // posed all recvs
-                for (int i = numa_size; i < world; i++) {
+                for (int i = peer_start; i < world; i++) {
                     int src;
                     if (pof2) {
                         src = rank ^ i;
@@ -290,7 +257,7 @@ ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
                 }
 
                 // posed all sends
-                for (int i = numa_size; i < world; i++) {
+                for (int i = peer_start; i < world; i++) {
                     int dst;
                     if (pof2) {
                         dst = rank ^ i;
@@ -325,6 +292,106 @@ ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
         c++;
     }
 
+    return sycl_e;
+}
+
+// pairwise exchange starts in p2p_comm comm
+// and then pairwise to all other ranks outside of the p2p_comm comm
+//
+// with use_proxy, the scale-out exchange runs on the proxy thread instead of in a
+// host_task on the caller's queue
+ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
+                                                    const void* send_buf,
+                                                    void* recv_buf,
+                                                    size_t count,
+                                                    ccl::datatype dtype,
+                                                    ccl_comm* comm,
+                                                    std::shared_ptr<ccl_comm> p2p_comm,
+                                                    std::shared_ptr<ccl_comm> r2r_comm,
+                                                    ccl_stream* global_stream,
+                                                    const ccl::vector_class<ccl::event>& deps,
+                                                    bool batch_mode,
+                                                    bool use_proxy,
+                                                    bool& done) {
+    uint32_t world = comm->size();
+    uint32_t rank = comm->rank();
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    size_t size = count * ccl_dtype.size();
+
+    done = true;
+
+    std::vector<sycl::event> dep_events = get_sycl_events(deps);
+    int p2p_size = p2p_comm->size();
+
+    // The exchange skips peers i < peer_start (== p2p_size) of its `rank ^ i` enumeration,
+    // assuming those are exactly the ranks the scale-up phase handled. That only holds for
+    // a power-of-two world (`rank ^ i` is a permutation of [0, world)) and a power-of-two
+    // p2p_size (XOR with i < p2p_size then stays inside the p2p domain). Otherwise peers
+    // are silently exchanged twice or not at all.
+    CCL_THROW_IF_NOT(is_pof2(world) && is_pof2(p2p_size),
+                     "alltoall numa pairwise requires power-of-two comm sizes, got world ",
+                     world,
+                     " p2p_comm ",
+                     p2p_size);
+
+    LOG_DEBUG("alltoall_sycl_numa_pairwise_rdma_oneshot: rank ",
+              rank,
+              "/",
+              world,
+              ", count ",
+              count,
+              ", p2p_size ",
+              p2p_size,
+              ", use_proxy ",
+              use_proxy);
+
+    /* scale up */
+    if (p2p_size > 1) {
+        int first_numa_rank = p2p_comm->get_global_rank(0);
+        sycl::queue scaleup_q = q;
+        ccl::event up_e = alltoall_scaleup_sycl(scaleup_q,
+                                                (char*)send_buf + first_numa_rank * size,
+                                                (char*)recv_buf + first_numa_rank * size,
+                                                count,
+                                                dtype,
+                                                comm,
+                                                p2p_comm,
+                                                true, /* is_numa */
+                                                0,
+                                                global_stream,
+                                                deps,
+                                                done);
+    }
+    else {
+        // copy self
+        sycl::event copy_e = q.submit([=](sycl::handler& h) {
+            h.depends_on(dep_events);
+            h.memcpy((char*)recv_buf + rank * size, (char*)send_buf + rank * size, size);
+        });
+    }
+
+    /* scale out */
+    sycl::event sycl_e;
+    if (use_proxy) {
+        ccl_proxy_op op{ ccl_proxy_op_type::alltoall_pairwise,
+                         (void*)send_buf,
+                         recv_buf,
+                         count,
+                         dtype,
+                         ccl::reduction::sum, // unused by alltoall
+                         comm,
+                         /*aux=*/nullptr };
+        op.peer_start = p2p_size;
+        // No on-device compute remains, so a single sync-only work-group is fine.
+        op.sync_only = true;
+
+        sycl_e = submit_and_launch_persistent_kernel(q, op, dep_events);
+    }
+    else {
+        sycl_e = alltoall_numa_pairwise_exchange_host(
+            q, send_buf, recv_buf, count, dtype, comm, p2p_size, dep_events);
+    }
+
     return ccl::event::create_from_native(sycl_e);
 }
 
@@ -338,7 +405,7 @@ ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot_split(sycl::queue& q,
                                                           const ccl::vector_class<ccl::event>& deps,
                                                           bool batch_mode,
                                                           bool& done) {
-    ccl_comm* node_comm = comm->get_node_comm().get();
+    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
     ccl_comm* numa_comm = comm->get_numa_comm().get();
     ccl_comm* numa_r2r_comm = comm->get_numa_r2r_comm().get();
     uint32_t world = comm->size();
@@ -368,17 +435,18 @@ ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot_split(sycl::queue& q,
         int first_numa_rank = numa_comm->get_global_rank(0);
         sycl::queue scaleup_q = q;
         int first_rank = node_comm->get_global_rank(0);
-        ccl::event up_e = alltoall_sycl_single_node(scaleup_q,
-                                                    (char*)send_buf + first_rank * size,
-                                                    (char*)recv_buf + first_rank * size,
-                                                    count,
-                                                    dtype,
-                                                    comm,
-                                                    true,
-                                                    numa_split_count,
-                                                    global_stream,
-                                                    deps,
-                                                    done);
+        ccl::event up_e = alltoall_scaleup_sycl(scaleup_q,
+                                                (char*)send_buf + first_rank * size,
+                                                (char*)recv_buf + first_rank * size,
+                                                count,
+                                                dtype,
+                                                comm,
+                                                node_comm,
+                                                true,
+                                                numa_split_count,
+                                                global_stream,
+                                                deps,
+                                                done);
     }
     else {
         // copy self
@@ -572,18 +640,17 @@ ccl::event alltoall_sycl_global_pairwise_rdma(sycl::queue& q,
     return ccl::event::create_from_native(sycl_e);
 }
 
+// host_task scale-out exchange of alltoall_sycl_scatter_rdma:
 // post all recv, and post all sends and wait all in the end
 // no throttling
-ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
-                                      const void* send_buf,
-                                      void* recv_buf,
-                                      size_t count,
-                                      ccl::datatype dtype,
-                                      ccl_comm* comm,
-                                      ccl_stream* global_stream,
-                                      const ccl::vector_class<ccl::event>& deps,
-                                      bool& done) {
-    ccl_comm* node_comm = comm->get_node_comm().get();
+sycl::event alltoall_scatter_exchange_host(sycl::queue& q,
+                                           const void* send_buf,
+                                           void* recv_buf,
+                                           size_t count,
+                                           ccl::datatype dtype,
+                                           ccl_comm* comm,
+                                           int peer_start,
+                                           const std::vector<sycl::event>& dep_events) {
     uint32_t world = comm->size();
     uint32_t rank = comm->rank();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
@@ -591,18 +658,6 @@ ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
     int ep_idx = 0;
     int pof2 = is_pof2(world);
     sycl::event sycl_e;
-
-    done = true;
-
-    std::vector<sycl::event> dep_events = get_sycl_events(deps);
-
-    // copy to self
-    sycl::event copy_e = q.submit([=](sycl::handler& h) {
-        h.depends_on(dep_events);
-        h.memcpy((char*)recv_buf + rank * size, (char*)send_buf + rank * size, size);
-    });
-    dep_events.clear();
-    dep_events.push_back(std::move(copy_e));
 
     std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
     ccl_sched_id_t sched_id = comm->get_sched_id(true, false);
@@ -614,6 +669,7 @@ ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
     }
     size_t progress = 0;
     int c = 0;
+    int start = peer_start;
     while (progress < size) {
         size_t tocopy = progress + block < size ? block : size - progress;
         sycl_e = q.submit([=](sycl::handler& h) {
@@ -622,7 +678,7 @@ ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
                 std::vector<atl_req_t> reqs(world * 2);
                 int nreqs = 0;
                 // posed all recvs
-                for (int i = 1; i < world; i++) {
+                for (int i = start; i < world; i++) {
                     int src;
                     if (pof2) {
                         src = rank ^ i;
@@ -642,7 +698,7 @@ ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
                 }
 
                 // posed all sends
-                for (int i = 1; i < world; i++) {
+                for (int i = start; i < world; i++) {
                     int dst;
                     if (pof2) {
                         dst = rank ^ i;
@@ -669,7 +725,7 @@ ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
                     }
                 }
                 // barrier
-                {
+                if (0) {
                     atl_req_t req;
                     atl_comm->barrier(ep_idx, req);
                     ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, req));
@@ -678,6 +734,80 @@ ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
         });
         progress += tocopy;
         c++;
+    }
+
+    return sycl_e;
+}
+
+// scatter: no scaleup, all scaleout
+//
+// with use_proxy, the exchange runs on the proxy thread instead of in a host_task on
+// the caller's queue
+ccl::event alltoall_sycl_scatter_rdma(sycl::queue& q,
+                                      const void* send_buf,
+                                      void* recv_buf,
+                                      size_t count,
+                                      ccl::datatype dtype,
+                                      ccl_comm* comm,
+                                      ccl_stream* global_stream,
+                                      const ccl::vector_class<ccl::event>& deps,
+                                      bool use_proxy,
+                                      bool& done) {
+    uint32_t rank = comm->rank();
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    size_t size = count * ccl_dtype.size();
+
+    done = true;
+
+    std::vector<sycl::event> dep_events = get_sycl_events(deps);
+
+    // for small message sizes, using transport instead of
+    // launching a copy kernel which has higher overhead
+    bool fuse = (size <= 262144) ? true : false;
+
+    LOG_DEBUG("alltoall_sycl_scatter_rdma: rank ",
+              rank,
+              "/",
+              comm->size(),
+              ", count ",
+              count,
+              ", fuse ",
+              fuse,
+              ", use_proxy ",
+              use_proxy);
+
+    // copy to self
+    if (!fuse) {
+        sycl::event copy_e = q.submit([=](sycl::handler& h) {
+            h.depends_on(dep_events);
+            h.memcpy((char*)recv_buf + rank * size, (char*)send_buf + rank * size, size);
+        });
+        dep_events.clear();
+        dep_events.push_back(std::move(copy_e));
+    }
+
+    // ranks [0, peer_start) are handled here rather than by the exchange
+    int peer_start = fuse ? 0 : 1;
+
+    sycl::event sycl_e;
+    if (use_proxy) {
+        ccl_proxy_op op{ ccl_proxy_op_type::alltoall_pairwise,
+                         (void*)send_buf,
+                         recv_buf,
+                         count,
+                         dtype,
+                         ccl::reduction::sum, // unused by alltoall
+                         comm,
+                         /*aux=*/nullptr };
+        op.peer_start = peer_start;
+        // No on-device compute remains, so a single sync-only work-group is fine.
+        op.sync_only = true;
+
+        sycl_e = submit_and_launch_persistent_kernel(q, op, dep_events);
+    }
+    else {
+        sycl_e = alltoall_scatter_exchange_host(
+            q, send_buf, recv_buf, count, dtype, comm, peer_start, dep_events);
     }
 
     return ccl::event::create_from_native(sycl_e);
@@ -692,10 +822,11 @@ ccl::event alltoall_sycl_pairwise_rdma(sycl::queue& q,
                                        size_t count,
                                        ccl::datatype dtype,
                                        ccl_comm* comm,
+                                       std::shared_ptr<ccl_comm> p2p_comm,
+                                       std::shared_ptr<ccl_comm> r2r_comm,
                                        ccl_stream* global_stream,
                                        const ccl::vector_class<ccl::event>& deps,
                                        bool& done) {
-    ccl_comm* node_comm = comm->get_node_comm().get();
     uint32_t world = comm->size();
     uint32_t rank = comm->rank();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
@@ -705,6 +836,7 @@ ccl::event alltoall_sycl_pairwise_rdma(sycl::queue& q,
 
     done = true;
 
+    LOG_DEBUG("pairwise on rank: ", rank, " comm size: ", world);
 #if 1
     sycl::queue scaleout_q =
         sycl::queue(q.get_context(), q.get_device(), sycl::property::queue::in_order{});
@@ -730,19 +862,21 @@ ccl::event alltoall_sycl_pairwise_rdma(sycl::queue& q,
     }
 
     /* scale up */
-    if (node_comm->size() > 1) {
+    if (p2p_comm->size() > 1) {
         sycl::queue scaleup_q = q;
-        ccl::event up_e = alltoall_sycl_single_node(scaleup_q,
-                                                    (char*)send_buf + first_node_rank * size,
-                                                    (char*)recv_buf + first_node_rank * size,
-                                                    count,
-                                                    dtype,
-                                                    node_comm,
-                                                    false,
-                                                    0,
-                                                    global_stream,
-                                                    deps,
-                                                    done);
+        int first_node_rank = p2p_comm->get_global_rank(0);
+        ccl::event up_e = alltoall_scaleup_sycl(scaleup_q,
+                                                (char*)send_buf + first_node_rank * size,
+                                                (char*)recv_buf + first_node_rank * size,
+                                                count,
+                                                dtype,
+                                                comm,
+                                                p2p_comm,
+                                                false,
+                                                0,
+                                                global_stream,
+                                                deps,
+                                                done);
     }
     else {
         // copy self
@@ -794,4 +928,112 @@ ccl::event alltoall_sycl_pairwise_rdma(sycl::queue& q,
     sycl::event sycl_e = submit_wait_on_events(q, dep_events);
 
     return ccl::event::create_from_native(sycl_e);
+}
+
+/* ======== Proxy-service exchange ======== */
+
+// Pairwise exchange body used by the use_proxy paths of
+// alltoall_sycl_numa_pairwise_rdma_oneshot and alltoall_sycl_scatter_rdma. It is the
+// host_task body of their non-proxy exchanges, moved onto the proxy thread: the
+// exchange is pure host ATL traffic, so no command-ring work is issued here.
+//
+// Ranks [0, peer_start) are handled by the caller (scale-up phase, or the self-copy
+// on the caller's queue), so the loop starts at peer_start.
+void alltoall_proxy_pairwise_exchange(const void* send_buf,
+                                      void* recv_buf,
+                                      size_t count,
+                                      ccl::datatype dtype,
+                                      ccl_comm* comm,
+                                      int peer_start) {
+    uint32_t world = comm->size();
+    uint32_t rank = comm->rank();
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    size_t size = count * ccl_dtype.size();
+    int ep_idx = 0;
+    int pof2 = is_pof2(world);
+
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    // Obtained here rather than passed in from the caller: get_sched_id() only
+    // bumps a per-communicator counter, and the proxy thread is the sole consumer
+    // of the host op queue, so this is the only thread advancing it for this comm.
+    ccl_sched_id_t sched_id = comm->get_sched_id(true, false);
+
+    LOG_DEBUG("alltoall_proxy_pairwise_exchange: rank ",
+              rank,
+              "/",
+              world,
+              ", count ",
+              count,
+              ", peer_start ",
+              peer_start);
+
+    /* Do the pairwise exchanges */
+    size_t block = size;
+    if (size > 512 * 1024 * 1024) {
+        block /= 2;
+    }
+    size_t progress = 0;
+    int c = 0;
+    while (progress < size) {
+        size_t tocopy = progress + block < size ? block : size - progress;
+
+        std::vector<atl_req_t> reqs(world * 2);
+        int nreqs = 0;
+        // post all recvs
+        for (int i = peer_start; i < world; i++) {
+            int src;
+            if (pof2) {
+                src = rank ^ i;
+            }
+            else {
+                src = (rank - i + world) % world;
+            }
+
+            int64_t recv_tag =
+                atl_comm->tag_creator->create(src, comm->get_comm_id(), sched_id, c + 1);
+            ATL_CALL_THROW_IF_ERROR(atl_comm->recv(ep_idx,
+                                                   (char*)recv_buf + src * size + progress,
+                                                   tocopy,
+                                                   src,
+                                                   recv_tag,
+                                                   reqs[nreqs++]));
+        }
+
+        // post all sends
+        for (int i = peer_start; i < world; i++) {
+            int dst;
+            if (pof2) {
+                dst = rank ^ i;
+            }
+            else {
+                dst = (rank + i) % world;
+            }
+
+            int64_t send_tag =
+                atl_comm->tag_creator->create(rank, comm->get_comm_id(), sched_id, c + 1);
+            ATL_CALL_THROW_IF_ERROR(atl_comm->send(ep_idx,
+                                                   (char*)send_buf + dst * size + progress,
+                                                   tocopy,
+                                                   dst,
+                                                   send_tag,
+                                                   reqs[nreqs++]));
+        }
+
+        // waitall
+        for (int i = 0; i < nreqs; i++) {
+            ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, reqs[i]));
+        }
+
+        progress += tocopy;
+        c++;
+    }
+}
+
+// Proxy service wrapper shared by both alltoall algorithms - hence the single
+// alltoall_pairwise op type. They differ only in the host-side setup that runs before
+// the launch (scale-up phase vs. fused self-copy), which is already reflected in
+// op.peer_start by the time we get here.
+void proxy_alltoall_pairwise(const ccl_proxy_op& op, ccl_proxy_context& /*ctx*/) {
+    alltoall_proxy_pairwise_exchange(
+        op.src, op.dst, op.count, op.dtype, op.comm, op.peer_start);
 }

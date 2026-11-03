@@ -21,6 +21,7 @@
 #include "common/global/global.hpp"
 #include "common/log/log.hpp"
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_ring.hpp"
+#include "coll/algorithms/alltoall/sycl/alltoall_large_ce.hpp"
 
 template <typename DataType, size_t vec_size>
 class oneccl_alltoall_write_aligned {};
@@ -152,6 +153,7 @@ std::vector<sycl::event> alltoall_vec_write_aligned_with_ce(
     sycl::event e;
     const bool use_barrier = ccl::global_data::env().sycl_alltoall_use_barrier;
     const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
+    LOG_DEBUG("CE-based\n");
     for (int i = 0; i < comm_size; i++) {
         // scatter the ranks
         int peer = (rank + i) % comm_size;
@@ -170,7 +172,7 @@ std::vector<sycl::event> alltoall_vec_write_aligned_with_ce(
 template <size_t vec_size, typename DataType>
 std::vector<sycl::event> alltoall_vec_write_aligned_with_eu(
     sycl::queue &queue,
-    const std::shared_ptr<ccl_comm> node_comm,
+    const std::shared_ptr<ccl_comm> p2p_comm,
     const std::array<DataType *, MAX_NODE_RANKS> &send_bufs,
     std::array<DataType *, MAX_NODE_RANKS> &recv_bufs,
     const size_t per_rank_count,
@@ -194,6 +196,7 @@ std::vector<sycl::event> alltoall_vec_write_aligned_with_eu(
     sycl::nd_range<1> nd_range(kernel_size, wg_size);
     const size_t sg_size = 16;
 
+    LOG_DEBUG("EU-based for count: ", per_rank_count);
     DataType *send_ptr = send_bufs[rank];
     DataType *recv_buf_ptrs[MAX_NODE_RANKS];
     size_t offset_ptrs[MAX_NODE_RANKS];
@@ -222,7 +225,7 @@ std::vector<sycl::event> alltoall_vec_write_aligned_with_eu(
 template <size_t vec_size, typename DataType>
 std::vector<sycl::event> alltoall_vec_write_aligned(
     sycl::queue &queue,
-    const std::shared_ptr<ccl_comm> node_comm,
+    const std::shared_ptr<ccl_comm> p2p_comm,
     const std::array<DataType *, MAX_NODE_RANKS> &send_bufs,
     std::array<DataType *, MAX_NODE_RANKS> &recv_bufs,
     const size_t per_rank_count,
@@ -236,7 +239,7 @@ std::vector<sycl::event> alltoall_vec_write_aligned(
     // for BMG on PCIe systems
     if (is_arc) {
         return alltoall_vec_write_aligned_with_eu<vec_size, DataType>(queue,
-                                                                      node_comm,
+                                                                      p2p_comm,
                                                                       send_bufs,
                                                                       recv_bufs,
                                                                       per_rank_count,
@@ -377,7 +380,7 @@ bool check_all_aligned(std::array<size_t, MAX_NODE_RANKS> &peel_front_count,
 
 template <size_t vec_size, typename DataType>
 std::vector<sycl::event> alltoall_vec_write(sycl::queue &queue,
-                                            const std::shared_ptr<ccl_comm> node_comm,
+                                            const std::shared_ptr<ccl_comm> p2p_comm,
                                             const std::array<DataType *, MAX_NODE_RANKS> &send_bufs,
                                             std::array<DataType *, MAX_NODE_RANKS> &recv_bufs,
                                             const size_t per_rank_count,
@@ -392,11 +395,19 @@ std::vector<sycl::event> alltoall_vec_write(sycl::queue &queue,
     bool is_arc = is_arc_card(ccl::global_data::get().ze_data->devices[0].family);
     // for BMG on PCIe systems
     if (is_arc) {
-        const bool use_memcpy = ccl::global_data::env().sycl_alltoall_copy_engine;
+        bool use_memcpy = ccl::global_data::env().sycl_alltoall_copy_engine;
+        // when to use EU:
+        // only two ranks, or peers actually share a PCIe switch
+        if (use_memcpy) {
+            if (p2p_comm->size() == 2 ||
+                (p2p_comm->has_pcie_switch() && !p2p_comm->is_cross_pcie_switch()))
+                use_memcpy = false;
+        }
+
         // copy engine can handle alignment internally
         if (use_memcpy) {
             return alltoall_vec_write_aligned_with_ce<vec_size, DataType>(queue,
-                                                                          node_comm,
+                                                                          p2p_comm,
                                                                           send_bufs,
                                                                           recv_bufs,
                                                                           per_rank_count,
@@ -433,7 +444,7 @@ std::vector<sycl::event> alltoall_vec_write(sycl::queue &queue,
         // aligned data, no reason to peel
         // fallback to simpler implementation for performance reasons
         return alltoall_vec_write_aligned<vec_size, DataType>(
-            queue, node_comm, send_bufs, recv_bufs, per_rank_count, offsets, rank, comm_size, dep);
+            queue, p2p_comm, send_bufs, recv_bufs, per_rank_count, offsets, rank, comm_size, dep);
     }
 
     size_t aligned_loop_count = per_rank_count / vec_size;
@@ -821,7 +832,7 @@ std::vector<sycl::event> alltoall_vec_read(sycl::queue &queue,
 template <size_t vec_size, typename DataType>
 std::vector<sycl::event> alltoall_large_vec_size_impl(
     sycl::queue &queue,
-    const std::shared_ptr<ccl_comm> node_comm,
+    const std::shared_ptr<ccl_comm> p2p_comm,
     const std::array<DataType *, MAX_NODE_RANKS> &send_bufs,
     std::array<DataType *, MAX_NODE_RANKS> &recv_bufs,
     const size_t count,
@@ -833,7 +844,7 @@ std::vector<sycl::event> alltoall_large_vec_size_impl(
     switch (ccl::global_data::env().sycl_alltoall_protocol) {
         case ccl_sycl_alltoall_protocol::read: {
             return alltoall_vec_read<vec_size>(queue,
-                                               node_comm,
+                                               p2p_comm,
                                                send_bufs,
                                                recv_bufs,
                                                count,
@@ -844,7 +855,7 @@ std::vector<sycl::event> alltoall_large_vec_size_impl(
         }
         case ccl_sycl_alltoall_protocol::write: {
             return alltoall_vec_write<vec_size>(queue,
-                                                node_comm,
+                                                p2p_comm,
                                                 send_bufs,
                                                 recv_bufs,
                                                 count,
@@ -869,6 +880,7 @@ ccl::event alltoall_large_impl(const void *send_buf,
                                std::vector<size_t> &offsets,
                                ccl::datatype dtype,
                                ccl_comm *comm,
+                               const std::shared_ptr<ccl_comm> p2p_comm,
                                ccl_stream *global_stream,
                                const ccl::vector_class<ccl::event> &deps) {
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
@@ -879,8 +891,8 @@ ccl::event alltoall_large_impl(const void *send_buf,
     sycl::queue q = global_stream->get_native_stream();
 
     std::vector<void *> ptrs{ (void *)send_buf, (T *)recv_buf }; // index 0 and 1
-    const size_t rank = node_comm->rank();
-    const size_t comm_size = node_comm->size();
+    const size_t rank = p2p_comm->rank();
+    const size_t comm_size = p2p_comm->size();
 
     std::array<T *, MAX_NODE_RANKS> send_pointers;
     std::array<T *, MAX_NODE_RANKS> recv_pointers;
@@ -889,9 +901,9 @@ ccl::event alltoall_large_impl(const void *send_buf,
 
     if (comm->is_multi_thread_instance() == true) {
         do_ipc_exchangeExt(
-            comm, g->barrier_waits, g->hash_table, global_stream, ptrs, comm->global_current_id);
+            comm, g->hash_table, global_stream, ptrs, comm->global_current_id);
         send_pointers = get_ipc_ptrsExt<T, MAX_NODE_RANKS>(*g.get(),
-                                                           node_comm,
+                                                           p2p_comm,
                                                            // g->barrier_waits,
                                                            g->hash_table,
                                                            0,
@@ -912,7 +924,7 @@ ccl::event alltoall_large_impl(const void *send_buf,
                                                            comm->get_pair_comm());
         if (comm->is_multi_thread_instance()) {
             pthread_barrier_wait(
-                &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+                ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
         }
     }
     else {
@@ -924,34 +936,83 @@ ccl::event alltoall_large_impl(const void *send_buf,
         if (registered_send_ptrs.size() && registered_recv_ptrs.size()) {
             LOG_DEBUG("alltoall pointers are registered \n");
             send_pointers = get_ipc_ptrs<T, MAX_NODE_RANKS>(
-                registered_send_ptrs, comm, node_comm, (void *)send_buf);
+                registered_send_ptrs, comm, p2p_comm, (void *)send_buf);
             recv_pointers = get_ipc_ptrs<T, MAX_NODE_RANKS>(
-                registered_recv_ptrs, comm, node_comm, (void *)recv_buf);
+                registered_recv_ptrs, comm, p2p_comm, (void *)recv_buf);
         }
         else {
-            auto [sched, exchange_entry] = do_ipc_exchange(comm, global_stream, ptrs);
-            send_pointers = get_ipc_ptrs<T, MAX_NODE_RANKS>(node_comm, 0, (void *)send_buf, sched);
-            recv_pointers = get_ipc_ptrs<T, MAX_NODE_RANKS>(node_comm, 1, (void *)recv_buf, sched);
+            auto [sched, exchange_entry] = do_ipc_exchange(p2p_comm.get(), global_stream, ptrs);
+            send_pointers = get_ipc_ptrs<T, MAX_NODE_RANKS>(p2p_comm, 0, (void *)send_buf, sched);
+            recv_pointers = get_ipc_ptrs<T, MAX_NODE_RANKS>(p2p_comm, 1, (void *)recv_buf, sched);
         }
     }
-    auto dep = invoke_barrier(node_comm, q, dep_events, is_cpu_barrier);
 
-    constexpr size_t vec_size =
-        std::max(static_cast<size_t>(8 / sizeof(T)), static_cast<size_t>(1));
+    bool use_copy_engine = ccl::global_data::env().enable_ze_ce;
+    if(use_copy_engine)
+    {
+        // device must be ARC card, and the backend must be level zero.
+        // if tmp buffer is used, we dont use copy engine for now
+        const bool is_arc = is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()));
+        const bool is_tmp_used = ccl::global_data::env().sycl_alltoall_tmp_buf;
+        if(!is_arc || is_tmp_used || q.get_backend() != sycl::backend::ext_oneapi_level_zero)
+        {
+            LOG_ERROR("copy engine based alltoall is only supported for ARC cards with level zero backend and without tmp buffer, disabling copy engine, fallback to default implementation");
+            use_copy_engine = false;
+        }
+    }
 
-    std::vector<sycl::event> kernel_events =
-        alltoall_large_vec_size_impl<vec_size>(q,
-                                               node_comm,
-                                               send_pointers,
-                                               recv_pointers,
-                                               count,
-                                               offsets,
-                                               rank,
-                                               comm_size,
-                                               dep,
-                                               comm->is_multi_thread_instance());
+    if (use_copy_engine) {
+        LOG_INFO("using copy engine for large alltoall");
 
-    sycl::event barrier_event2 = invoke_barrier(node_comm, q, kernel_events, is_cpu_barrier);
+        // Create void* copies of the pointers for copy engine
+        std::array<void *, MAX_NODE_RANKS> send_pointers_void;
+        std::array<void *, MAX_NODE_RANKS> recv_pointers_void;
+        std::transform(
+            send_pointers.begin(), send_pointers.end(), send_pointers_void.begin(), [](T *ptr) {
+                return static_cast<void *>(ptr);
+            });
+        std::transform(
+            recv_pointers.begin(), recv_pointers.end(), recv_pointers_void.begin(), [](T *ptr) {
+                return static_cast<void *>(ptr);
+            });
 
-    return ccl::event::create_from_native(barrier_event2);
+        ccl::event ccl_event = alltoall_large_copy_engine(q,
+                                                          comm,
+                                                          send_pointers_void,
+                                                          recv_pointers_void,
+                                                          count,
+                                                          dtype,
+                                                          offsets,
+                                                          rank,
+                                                          comm_size,
+                                                          comm->is_multi_thread_instance());
+        LOG_DEBUG("alltoall selects large copy engine kernel: count: ",
+                  count,
+                  " datatype: ",
+                  dtype,
+                  " done");
+
+        return ccl_event;
+    }
+    else {
+        auto dep = invoke_barrier(p2p_comm, q, dep_events, is_cpu_barrier);
+
+        constexpr size_t vec_size =
+            std::max(static_cast<size_t>(8 / sizeof(T)), static_cast<size_t>(1));
+
+        std::vector<sycl::event> kernel_events =
+            alltoall_large_vec_size_impl<vec_size>(q,
+                                                   p2p_comm,
+                                                   send_pointers,
+                                                   recv_pointers,
+                                                   count,
+                                                   offsets,
+                                                   rank,
+                                                   comm_size,
+                                                   dep,
+                                                   comm->is_multi_thread_instance());
+        sycl::event barrier_event2 = invoke_barrier(p2p_comm, q, kernel_events, is_cpu_barrier);
+
+        return ccl::event::create_from_native(barrier_event2);
+    }
 }

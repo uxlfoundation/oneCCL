@@ -439,6 +439,17 @@ constexpr const char* CCL_REDUCE = "CCL_REDUCE";
 constexpr const char* CCL_REDUCE_SCATTER = "CCL_REDUCE_SCATTER";
 
 /**
+ * @brief Set gather algorithm
+ *
+ * @details
+ * GATHER algorithms
+ *  - direct   Based on send/recv primitives; root posts recv from each rank
+ *
+ * By-default: "direct"
+ */
+constexpr const char* CCL_GATHER = "CCL_GATHER";
+
+/**
  * @brief Set scatter algorithm
  *
  * @details
@@ -617,6 +628,25 @@ constexpr const char* CCL_REDUCE_SCALEOUT = "CCL_REDUCE_SCALEOUT";
  * By-default: "naive"
  */
 constexpr const char* CCL_REDUCE_SCATTER_SCALEOUT = "CCL_REDUCE_SCATTER_SCALEOUT";
+/**
+ * @brief Set gather scaleout algorithm
+ *
+ * @details
+ * GATHER scaleout algorithms
+ *  - direct   Based on send/recv primitives
+ *
+ * By-default: "direct"
+ */
+constexpr const char* CCL_GATHER_SCALEOUT = "CCL_GATHER_SCALEOUT";
+/**
+ * @brief Set scatter scaleout algorithm
+ *
+ * @details
+ * SCATTER scaleout algorithms
+ *  - naive    Root sends one block per non-root rank; no staging buffers
+ *
+ * By-default: "naive"
+ */
 constexpr const char* CCL_SCATTER_SCALEOUT = "CCL_SCATTER_SCALEOUT";
 /** @} */
 

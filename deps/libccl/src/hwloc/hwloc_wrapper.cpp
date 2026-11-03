@@ -350,6 +350,206 @@ int ccl_hwloc_wrapper::get_numa_node_by_pci(int domain, int bus, int dev, int fu
     return numa_node;
 }
 
+
+#define BDF_ENCODE(d,b,dev,f) \
+    ((((uint32_t)(d)   & 0xFFFF) << 16) | \
+     (((uint32_t)(b)   & 0xFF)   << 8)  | \
+     (((uint32_t)(dev) & 0x1F)   << 3)  | \
+     ((uint32_t)(f)    & 0x7))
+
+static inline
+uint64_t encode_bdf(uint8_t bus, uint8_t device, uint8_t function) {
+    return ((uint64_t)bus << 8) | (device << 3) | function;
+}
+
+int ccl_hwloc_wrapper::is_likely_pcie_switch(hwloc_obj_t obj)
+{
+    if (obj->type != HWLOC_OBJ_BRIDGE ||
+        obj->attr->bridge.upstream_type != HWLOC_OBJ_BRIDGE_PCI) {
+        return 0;
+    }
+    LOG_DEBUG("Checking PCIe bridge",
+             std::hex,
+             " [",
+             (uint32_t)obj->attr->pcidev.domain,
+             ":",
+             (uint32_t)obj->attr->pcidev.bus,
+             ":",
+             (uint32_t)obj->attr->pcidev.dev,
+             ":",
+             (uint32_t)obj->attr->pcidev.func,
+             "]");
+
+    unsigned base_class = obj->attr->pcidev.class_id;
+
+    LOG_DEBUG("check base class: ", std::hex, base_class);
+    // Must be a bridge
+    if (base_class != 0x0604)
+        return 0;
+
+    // Intel bridge is not really a PCIe switch
+    if (obj->attr->pcidev.vendor_id == 0x8086)
+        return 0;
+
+    return obj->io_arity > 1;
+}
+
+// this only works with root privilege
+uint64_t ccl_hwloc_wrapper::read_dsn_from_config(hwloc_obj_t obj) {
+    // Read the PCIe Device Serial Number extended capability from config space.
+    // Extended capabilities start at offset 0x100.
+    // DSN capability ID = 0x0003.
+    // Layout: [31:20]=next_cap_offset [19:16]=version [15:0]=cap_id
+    // DSN data: 4 bytes at cap_offset+4 (lower), 4 bytes at cap_offset+8 (upper)
+
+    char path[512];
+    snprintf(path, sizeof(path), "/sys/bus/pci/devices/%04x:%02x:%02x.%x",
+             (uint32_t)obj->attr->pcidev.domain, (uint32_t)obj->attr->pcidev.bus, (uint32_t)obj->attr->pcidev.dev, (uint32_t)obj->attr->pcidev.func);
+   const std::string sysfs_device_path = std::string(path);
+
+    std::string config_path = sysfs_device_path + "/config";
+    LOG_DEBUG("DSN: ", config_path, std::hex, " vendor id: ", obj->attr->pcidev.vendor_id);
+    FILE* f = fopen(config_path.c_str(), "rb");
+    if (!f) {
+        return 0;
+    }
+
+    // Seek to extended capabilities area
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return 0;
+    }
+    long file_size = ftell(f);
+    if (file_size < 0x110) {
+        // Config space too small for extended capabilities
+        fclose(f);
+        return 0;
+    }
+
+    // Walk the extended capability linked list starting at offset 0x100
+    uint32_t cap_offset = 0x100;
+    while (cap_offset >= 0x100 && cap_offset < (uint32_t)file_size - 4) {
+        uint32_t header = 0;
+        if (fseek(f, cap_offset, SEEK_SET) != 0) {
+            break;
+        }
+        if (fread(&header, sizeof(header), 1, f) != 1) {
+            break;
+        }
+
+        uint16_t cap_id = header & 0xFFFF;
+        uint32_t next_offset = (header >> 20) & 0xFFF;
+
+        if (cap_id == 0x0003) {
+            // Found DSN capability. Read 8-byte serial number.
+            uint32_t dsn_lo = 0, dsn_hi = 0;
+            if (fseek(f, cap_offset + 4, SEEK_SET) != 0) {
+                break;
+            }
+            if (fread(&dsn_lo, sizeof(dsn_lo), 1, f) != 1) {
+                break;
+            }
+            if (fread(&dsn_hi, sizeof(dsn_hi), 1, f) != 1) {
+                break;
+            }
+            fclose(f);
+            auto dsn = (static_cast<uint64_t>(dsn_hi) << 32) | dsn_lo;
+            LOG_DEBUG("Found device serial number: ",
+                      std::hex,
+                      dsn,
+                      " for pcie switch [",
+                      (uint32_t)obj->attr->pcidev.bus,
+                      (uint32_t)obj->attr->pcidev.dev,
+                      (uint32_t)obj->attr->pcidev.func);
+            return dsn;
+        }
+
+        if (next_offset == 0 || next_offset <= cap_offset) {
+            break; // End of list or invalid
+        }
+        cap_offset = next_offset;
+    }
+
+    fclose(f);
+    return 0;
+}
+
+ssize_t ccl_hwloc_wrapper::get_pcie_switch_by_pci(int domain, int bus, int dev, int func) {
+    ssize_t pcie_switch_color = CCL_HWLOC_INVALID_NUMA_NODE;
+
+    if (!is_initialized()) {
+        LOG_WARN("hwloc is not initialized, cannot get PCIe switch topology for PCI device: [",
+                 domain,
+                 ":",
+                 bus,
+                 ":",
+                 dev,
+                 ":",
+                 func,
+                 "]");
+        return pcie_switch_color;
+    }
+
+    hwloc_obj_t io_device = hwloc_get_pcidev_by_busid(topology, domain, bus, dev, func);
+    if (!io_device) {
+        LOG_WARN("failed to get PCI device: [", domain, ":", bus, ":", dev, ":", func, "]");
+        return pcie_switch_color;
+    }
+
+    hwloc_obj_t obj = io_device->parent;
+
+    while (obj) {
+        if (is_likely_pcie_switch(obj)) 
+            break;
+        obj = obj->parent;
+    }
+
+    if (!obj) {
+        LOG_DEBUG("failed to get PCIe switch for: [", domain, ":", bus, ":", dev, ":", func, "]");
+        return pcie_switch_color;
+    }
+
+    uint64_t dsn = read_dsn_from_config(obj);
+
+    // if dsn can be queried, use the serial number directly
+    char *use_dsn_str = getenv("CCL_USE_DSN");
+    int use_dsn = 0;
+    if (use_dsn_str)
+        use_dsn = atoi(use_dsn_str);
+    if (use_dsn && dsn != 0) {
+        pcie_switch_color = dsn;
+    }
+    else {
+        pcie_switch_color = encode_bdf(obj->attr->pcidev.bus, obj->attr->pcidev.dev, obj->attr->pcidev.func);
+    }
+
+    LOG_INFO("PCI device [",
+             std::hex,
+             domain,
+             ":",
+             bus,
+             ":",
+             dev,
+             ":",
+             func,
+             "] is on pcie switch ",
+             pcie_switch_color,
+             " [",
+             (uint32_t)obj->attr->pcidev.domain,
+             ":",
+             (uint32_t)obj->attr->pcidev.bus,
+             ":",
+             (uint32_t)obj->attr->pcidev.dev,
+             ":",
+             (uint32_t)obj->attr->pcidev.func,
+             "]",
+             " DSN:",
+             dsn
+             );
+
+    return pcie_switch_color;
+}
+
 void ccl_hwloc_wrapper::membind_thread(int numa_node) {
     if (!is_initialized()) {
         LOG_WARN("hwloc is not initialized, skip thread membind for NUMA node ", numa_node);

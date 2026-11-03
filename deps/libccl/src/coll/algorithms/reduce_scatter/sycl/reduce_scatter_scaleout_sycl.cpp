@@ -16,6 +16,8 @@
 
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_ring.hpp"
+#include "proxy/proxy.hpp"
+#include "coll/algorithms/utils/host_task.hpp"
 
 //  ATL_CALL_THROW_IF_ERROR function is in 'small_refactors' branch. No need to merge to master
 #define ATL_CALL_THROW_IF_ERROR(func) \
@@ -98,35 +100,20 @@ ccl::event reduce_scatter_scaleout_sycl_simple(sycl::queue& q,
     ctimer.start(0);
 #endif // PRINT_TIMING
 
-    op_end = q.submit([=](sycl::handler& h) {
-        h.depends_on(op_end);
-        h.host_task([=]() {
-            // call ccl::wrapper for MPI/OFI.
-            int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
-            atl_req_t req;
-            std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-            ATL_CALL_THROW_IF_ERROR(atl_comm->reduce_scatter(ep_idx,
-                                                             scaleout_send_buf,
-                                                             scaleout_recv_buf,
-                                                             recv_count,
-                                                             ccl_dtype.atl_datatype(),
-                                                             static_cast<atl_reduction_t>(reduction),
-                                                             req));
+    op_end = ccl_host_task(q, {op_end}, [=]() {
+        // call ccl::wrapper for MPI/OFI.
+        int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+        atl_req_t req;
+        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+        ATL_CALL_THROW_IF_ERROR(atl_comm->reduce_scatter(ep_idx,
+                                                         scaleout_send_buf,
+                                                         scaleout_recv_buf,
+                                                         recv_count,
+                                                         ccl_dtype.atl_datatype(),
+                                                         static_cast<atl_reduction_t>(reduction),
+                                                         req));
 
-            ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, req));
-            if (!req.is_completed) {
-                // We do not want to call check() in a loop (because we would call MPI_Test repeatedly). Call MPI_Wait() instead.
-                ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, req));
-                if (!req.is_completed)
-                    ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, req));
-                // TODO: if it is determined that running atl_comm->allreduce from inside allreduce_entry (i.e. the sched) is WAY faster than running it from out here, how about checking how the schedule does progress()?
-                //       allreduce_entry::update() does a simple check():     atl_status_t atl_status = comm->get_atl_comm()->check(sched->bin->get_atl_ep(), req);
-                //       Experimentally, it doesn't seem to make any difference.
-            }
-            else {
-                // The operation was probably blocking, since it finished really quickly
-            }
-        });
+        atl_comm->check_wait_throw(ep_idx, req);
     });
 
 #ifdef PRINT_TIMING
@@ -167,22 +154,77 @@ ccl::event reduce_scatter_scaleout_sycl(sycl::queue& q,
                                         ccl_comm* comm,
                                         const ccl::vector_class<ccl::event>& deps,
                                         bool original_deps,
-                                        sycl_reduce_scatter_tune_attr& tune_attr,
+                                        sycl_scaleout_tune_attr& tune_attr,
                                         bool& done,
                                         bool is_cpu_buffers) {
-    reduce_scatter_scaleout_algo algo = tune_attr.algo;
-    if (algo == reduce_scatter_scaleout_algo::direct) {
-        bool copy_to_host = ccl::global_data::env().sycl_enable_direct_gpu_rdma ? false : true;
-        ze_device_handle_t ze_dev = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
-        if (should_disable_rdma(ze_dev)) {
-            copy_to_host = true;
-        }
-        return reduce_scatter_scaleout_sycl_simple(
-            q, send_buf, recv_buf, recv_count, dtype, reduction, comm, deps, done, copy_to_host, is_cpu_buffers);
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    bool copy_to_host = ccl::global_data::env().sycl_enable_direct_gpu_rdma ? false : true;
+    ze_device_handle_t ze_dev = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
+    if (should_disable_rdma(ze_dev) || ccl::global_data::env().atl_transport == ccl_atl_ofi) {
+        copy_to_host = true;
     }
-    else {
-        sycl::event e = reduce_scatter_ring(
-            q, send_buf, recv_buf, recv_count, dtype, reduction, comm, deps, original_deps, tune_attr, done);
-        return ccl::event::create_from_native(e);
+    sycl_scaleout_algo algo = tune_attr.algo();
+
+    // when the proxy service is enabled for reduce-scatter, the selected algorithm runs
+    // its scale-out exchange on the proxy thread instead of in a host task; a service
+    // that failed to start (already warned about) leaves the non-proxy implementation
+    const bool use_proxy = ccl::global_data::env().sycl_enable_reduce_scatter_scaleout_proxy &&
+                           ccl::global_data::get().proxy_service->is_started();
+
+    switch (algo) {
+        case ccl::sycl_policy::algorithm::direct:
+        default: {
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_begin(
+                "reduce_scatter_scaleout_sycl_simple", "recv_size", recv_count * ccl_dtype.size(), comm->unique_id());
+#endif // CCL_ENABLE_ITT
+            LOG_DEBUG("|CCL_SYCL| reduce_scatter scaleout selects direct kernel, recv_count:",
+                      recv_count,
+                      " datatype: ",
+                      dtype);
+            auto e = reduce_scatter_scaleout_sycl_simple(
+                q, send_buf, recv_buf, recv_count, dtype, reduction, comm, deps, done, copy_to_host, is_cpu_buffers);
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
+            return e;
+        }
+        case ccl::sycl_policy::algorithm::ring: {
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_begin(
+                use_proxy ? "reduce_scatter_scaleout_sycl_proxy_ring" : "reduce_scatter_scaleout_sycl_ring",
+                "recv_size",
+                recv_count * ccl_dtype.size(),
+                comm->unique_id());
+#endif // CCL_ENABLE_ITT
+            LOG_DEBUG("|CCL_SYCL| reduce_scatter scaleout selects ring kernel, recv_count:",
+                      recv_count,
+                      " datatype: ",
+                      dtype,
+                      " use_proxy: ",
+                      use_proxy);
+            sycl::event e;
+            if (use_proxy) {
+                e = reduce_scatter_scaleout_sycl_proxy_ring(
+                    q, send_buf, recv_buf, recv_count, dtype, reduction, comm, deps, tune_attr, done);
+            }
+            else {
+                e = reduce_scatter_ring(q,
+                                        send_buf,
+                                        recv_buf,
+                                        recv_count,
+                                        dtype,
+                                        reduction,
+                                        comm,
+                                        deps,
+                                        original_deps,
+                                        tune_attr,
+                                        done);
+            }
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
+            return ccl::event::create_from_native(e);
+        }
     }
 }

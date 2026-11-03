@@ -27,6 +27,8 @@ print_help() {
     echo "      Specific path to the file with excluded tests"
     echo "  --build-only"
     echo "      Enable only the build stage"
+    echo "  --test-only"
+    echo "      Enable only the testing stage, reusing an existing build"
     echo "  --platform <ats|gen|pvc>"
     echo "      Discrete GPU platform name"
     echo "  --transport <impi|mpich>"
@@ -130,6 +132,9 @@ parse_arguments() {
             "-build-only"|"--build-only")
                 ENABLE_TESTING="no"
                 ;;
+            "-test-only"|"--test-only")
+                ENABLE_BUILD="no"
+                ;;
             "-platform"|"--platform")
                 export PLATFORM_HW_GPU=${2}
                 shift
@@ -153,6 +158,13 @@ parse_arguments() {
         esac
         shift
     done
+
+    if [[ ${ENABLE_BUILD} = "no" ]] && [[ ${ENABLE_TESTING} = "no" ]]
+    then
+        echo "$(basename ${0}): ERROR: --build-only and --test-only are mutually exclusive"
+        print_help
+        exit 1
+    fi
 
     if [[ ${PV_ENVIRONMENT} = "yes" ]]
     then

@@ -345,6 +345,15 @@ ccl::status ccl_coll_build_topo_reduce_scatter(ccl_sched* sched,
                                                ccl_comm* comm);
 #endif // CCL_ENABLE_SYCL && CCL_ENABLE_ZE
 
+// gather
+ccl::status ccl_coll_build_direct_gather(ccl_sched* sched,
+                                         ccl_buffer send_buf,
+                                         ccl_buffer recv_buf,
+                                         size_t count,
+                                         const ccl_datatype& dtype,
+                                         int root,
+                                         ccl_comm* comm);
+
 // scatter
 ccl::status ccl_coll_build_naive_scatter(ccl_sched* sched,
                                          ccl_buffer send_buf,

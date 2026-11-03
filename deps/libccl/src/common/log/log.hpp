@@ -17,6 +17,7 @@
 #pragma once
 
 #include <assert.h>
+#include <atomic>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -271,6 +272,22 @@ private:
     { \
         if (ccl_logger::get_instance().get_log_level() >= ccl_log_level::warn) { \
             ccl_logger::get_instance().warn("|CCL_WARN| ", ##__VA_ARGS__); \
+        } \
+    }
+
+// Emit the message as a warning only once for the whole job: the first time
+// this site is reached on the root rank. Every other occurrence, including all
+// non-root ranks, is demoted to debug. Useful for expected-but-notable events
+// happening on a per-collective-call basis, where one warning per rank per call
+// would flood the log.
+#define LOG_WARN_ONCE(...) \
+    { \
+        static std::atomic<bool> ccl_log_warn_once_done{ false }; \
+        if (ccl_logger::get_instance().is_root() && !ccl_log_warn_once_done.exchange(true)) { \
+            LOG_WARN(__VA_ARGS__ "this warning will not be printed again"); \
+        } \
+        else { \
+            LOG_DEBUG(__VA_ARGS__); \
         } \
     }
 

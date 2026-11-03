@@ -83,6 +83,14 @@ bool is_reduce_scatter_inplace(const void* send_buf,
                                const size_t rank,
                                const size_t comm_size);
 
+bool is_gather_inplace(const void* send_buf,
+                       const void* recv_buf,
+                       size_t count,
+                       size_t dtype_size,
+                       size_t rank,
+                       size_t root,
+                       size_t comm_size);
+
 bool is_scatter_inplace(const void* send_buf,
                         const void* recv_buf,
                         const size_t count,

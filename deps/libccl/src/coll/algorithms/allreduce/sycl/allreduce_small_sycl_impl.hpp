@@ -42,6 +42,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
                                 ccl::datatype dtype,
                                 ccl::reduction reduction,
                                 ccl_comm *comm,
+                                std::shared_ptr<ccl_comm> p2p_comm,
                                 ccl_stream *global_stream,
                                 const ccl::vector_class<ccl::event> &deps) {
     sycl::queue q = global_stream->get_native_stream();
@@ -49,13 +50,11 @@ ccl::event allreduce_small_impl(const void *send_buf,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const int dsize = ccl_dtype.size();
 
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
-
     ccl_reduction_data reduction_op = make_reduction_operation(reduction);
     const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
 
-    const int comm_size = node_comm->size();
-    const int comm_rank = node_comm->rank();
+    const int comm_size = p2p_comm->size();
+    const int comm_rank = p2p_comm->rank();
 
     size_t hw_threads = get_total_threads(q);
     bool is_recording = use_recording_path(q);
@@ -78,14 +77,14 @@ ccl::event allreduce_small_impl(const void *send_buf,
     const bool use_kernel_sync = ccl::global_data::env().sycl_kernel_sync;
 
     auto [local_tmp_buf, remote_ptrs] =
-        is_recording ? node_comm->get_all_tmp_bufs_gpu(true) : node_comm->get_all_tmp_bufs(true);
-    int *tmp_buf_idx = node_comm->get_tmp_buf_idx();
+        is_recording ? p2p_comm->get_all_tmp_bufs_gpu(true) : p2p_comm->get_all_tmp_bufs(true);
+    int *tmp_buf_idx = p2p_comm->get_tmp_buf_idx();
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     sycl::event kernel_event;
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     // VS : vec_size, SGS : sub_group_size, LB : use_local_barrier, GB: use_global_barrier
@@ -96,7 +95,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
         constexpr int vec_size = VS, wg_size = SGS, sg_size = SGS;
         const size_t kernel_threads = count / vec_size + count % vec_size;
         const size_t kernel_size = ((kernel_threads + wg_size - 1) / wg_size) * wg_size;
-        const size_t tmp_buf_size = node_comm->get_tmp_buf_size();
+        const size_t tmp_buf_size = p2p_comm->get_tmp_buf_size();
         // total number of hw threads is a multiple of sub_group
         CCL_THROW_IF_NOT(hw_threads % SGS == 0);
         // if synchronization is there, make sure sycl threads can be contained within hw threads
@@ -114,7 +113,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
         ccl_kernel_barrier_data kernel_barrier_data = get_kernel_barrier_data(comm).inc_slot();
         // if global barrier is not used, then do not increment the barrier counter
         ccl_comm_barrier_data comm_barrier_data =
-            GB ? node_comm->barrier_inc() : node_comm->barrier_data();
+            GB ? p2p_comm->barrier_inc() : p2p_comm->barrier_data();
 
         sycl::event local_event = q.submit([=](sycl::handler &h) {
             h.depends_on(l_dep_events);
@@ -169,7 +168,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
                                          tmp_buf_idx,
                                          count,
                                          dsize,
-                                         node_comm->get_tmp_buf_size(),
+                                         p2p_comm->get_tmp_buf_size(),
                                          dep_events);
         }
         else {
@@ -188,11 +187,11 @@ ccl::event allreduce_small_impl(const void *send_buf,
                                                            is_recording,
                                                            tmp_buf_idx,
                                                            reduction_op,
-                                                           node_comm->get_tmp_buf_size(),
+                                                           p2p_comm->get_tmp_buf_size(),
                                                            { memcpy_event });
         }
 
-        sycl::event barrier_event = invoke_barrier(node_comm, q, { memcpy_event }, use_cpu_barrier);
+        sycl::event barrier_event = invoke_barrier(p2p_comm, q, { memcpy_event }, use_cpu_barrier);
 
         sycl::event local_event =
             reduce_sum_invoke.template operator()<VS, 32, 0, 0>({ barrier_event });
@@ -201,7 +200,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
     };
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     // run the three phases of collective as separate kernels.
@@ -300,7 +299,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
             }
 
             ccl_kernel_barrier_data kernel_barrier_data = get_kernel_barrier_data(comm).inc_slot();
-            ccl_comm_barrier_data comm_barrier_data = node_comm->barrier_inc();
+            ccl_comm_barrier_data comm_barrier_data = p2p_comm->barrier_inc();
 
             kernel_event = q.submit([=](sycl::handler &h) {
                 h.depends_on(dep_events);
@@ -327,7 +326,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
                     comm_size);
             });
 
-            ccl_comm_barrier_data comm_barrier_data_next = node_comm->barrier_inc();
+            ccl_comm_barrier_data comm_barrier_data_next = p2p_comm->barrier_inc();
             kernel_event = q.submit([=](sycl::handler &h) {
                 h.depends_on(kernel_event);
                 static_for_each_tile(
@@ -359,7 +358,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     return ccl::event::create_from_native(kernel_event);
 }
@@ -375,6 +374,7 @@ ccl::event allreduce_small_impl(const void *send_buf,
                                                  ccl::datatype dtype, \
                                                  ccl::reduction reduction, \
                                                  ccl_comm *comm, \
+                                                 std::shared_ptr<ccl_comm> p2p_comm, \
                                                  ccl_stream *global_stream, \
                                                  const ccl::vector_class<ccl::event> &deps)
 

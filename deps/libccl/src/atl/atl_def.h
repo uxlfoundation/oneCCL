@@ -261,12 +261,13 @@ std::string to_string(atl_attr_t& attr);
 std::ostream& operator<<(std::ostream& str, const atl_req_t& req);
 
 namespace ccl {
+/* occp is absent from kvs_mode_names on purpose: the OCCP bootstrap is disabled, so the
+ * env parser rejects CCL_KVS_MODE=occp. */
 enum class kvs_mode : int { pmi, mpi, pmix_ofi, pmix_ofi_shm, occp };
 static std::map<kvs_mode, std::string> kvs_mode_names = {
     std::make_pair(kvs_mode::pmi, "pmi"),
     std::make_pair(kvs_mode::mpi, "mpi"),
     std::make_pair(kvs_mode::pmix_ofi, "pmix_ofi"),
     std::make_pair(kvs_mode::pmix_ofi_shm, "pmix_ofi_shm"),
-    std::make_pair(kvs_mode::occp, "occp"),
 };
 } // namespace ccl

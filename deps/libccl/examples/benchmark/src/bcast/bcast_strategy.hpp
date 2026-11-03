@@ -16,9 +16,15 @@
 
 #pragma once
 
+#include "coll_type.hpp"
+
 struct bcast_strategy_impl {
     static constexpr const char* class_name() {
         return "bcast";
+    }
+
+    static constexpr coll_type class_id() {
+        return coll_type::bcast;
     }
 
     size_t get_send_multiplier() {
@@ -50,6 +56,10 @@ struct bcast_strategy_impl {
 struct broadcast_strategy_impl {
     static constexpr const char* class_name() {
         return "broadcast";
+    }
+
+    static constexpr coll_type class_id() {
+        return coll_type::broadcast;
     }
 
     size_t get_send_multiplier() {

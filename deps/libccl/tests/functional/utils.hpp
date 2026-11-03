@@ -18,6 +18,7 @@
 
 #include <ctime>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <numeric>
 #include <sstream>
@@ -115,17 +116,58 @@
         return TEST_SUCCESS; \
     }
 
+#define MAIN_FUNCTION_BODY() \
+    init_test_params(); \
+    auto& transport = transport_data::instance(); \
+    auto& service_comm = transport.get_service_comm(); \
+    PATCH_OUTPUT_NAME_ARG(argc, argv, service_comm); \
+    testing::InitGoogleTest(&argc, argv); \
+    int res = RUN_ALL_TESTS(); \
+    transport.reset_comms(); \
+    return res;
+
 #define MAIN_FUNCTION() \
     int main(int argc, char** argv, char* envs[]) { \
-        init_test_params(); \
-        auto& transport = transport_data::instance(); \
-        auto& service_comm = transport.get_service_comm(); \
-        PATCH_OUTPUT_NAME_ARG(argc, argv, service_comm); \
-        testing::InitGoogleTest(&argc, argv); \
-        int res = RUN_ALL_TESTS(); \
-        transport.reset_comms(); \
-        return res; \
+        MAIN_FUNCTION_BODY() \
     }
+
+/* Same main() as MAIN_FUNCTION, opened as a function-try-block so handlers can
+ * follow. Object-like on purpose: it is meant to be written next to the handlers,
+ * as MAIN_FUNCTION_WITH_TRY CATCH_EXCEPTION(type) CATCH_EXCEPTION(other_type);
+ *
+ * Setup and teardown run outside gtest, so an exception from ccl::init(), the
+ * KVS/communicator creation or reset_comms() has nothing above it: without a
+ * handler it reaches the top of main and terminates, and a bare CCL_THROW carries
+ * its message only in the exception object. */
+#define MAIN_FUNCTION_WITH_TRY \
+    int main(int argc, char** argv, char* envs[]) try { MAIN_FUNCTION_BODY() }
+
+/* One handler per invocation. Handlers compose by being written next to each
+ * other, which is what C++ already means by consecutive catch blocks, so any
+ * number of types can be listed without changing this macro.
+ *
+ * Naming the types instead of catching std::exception is deliberate: it keeps
+ * testing::internal::GoogleTestFailureException propagating, which is what
+ * --gtest_throw_on_failure relies on. */
+#define CATCH_EXCEPTION(exception_type) \
+    catch (const exception_type& e) { \
+        fprintf(stderr, "TEST FAILED: " #exception_type ": %s\n", e.what()); \
+        fflush(stderr); \
+        return TEST_FAILURE; \
+    }
+
+/* sycl::exception only exists when the SYCL backend is built (transport.hpp pulls
+ * in sycl_base.hpp under CCL_ENABLE_SYCL), so name a type that is never thrown
+ * otherwise and keep the handler list in each test identical across
+ * configurations. */
+#ifdef CCL_ENABLE_SYCL
+#define CCL_TEST_SYCL_EXCEPTION sycl::exception
+#else // CCL_ENABLE_SYCL
+namespace ccl_test {
+struct no_sycl_exception : std::exception {};
+} // namespace ccl_test
+#define CCL_TEST_SYCL_EXCEPTION ccl_test::no_sycl_exception
+#endif // CCL_ENABLE_SYCL
 
 #define TEST_CASES_DEFINITION(FuncName) \
     TEST_P(MainTest, FuncName) { \

@@ -25,75 +25,64 @@
 #endif //#if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 
 #include "common/global/global.hpp"
+#include "coll/algorithms/utils/sycl_policy.hpp"  // ccl::sycl_policy::algorithm
 #include "coll/selection/selection.hpp"
 
 // dispatching between SYCL path and Scheduler path
 bool can_use_sycl_kernels(const ccl_selector_param& param);
 
-// scale-up attributes used for various purposes
-struct sycl_coll_scaleup_attr {
-    bool wait_on_deps{ false };
-    bool force_use_tmp{ false };
+using sycl_scaleout_algo = ccl::sycl_policy::algorithm;
+using scaleout_sub_kernel = ccl::sycl_policy::scaleout_sub_kernel;
+
+// One tune_attr for every collective. Collectives that don't use a given axis
+// simply leave that field at its default and ignore it on read.
+//   allreduce:      algo (direct|rabenseifner|ring|proxy_direct|proxy_ring), chunk
+//   reduce_scatter: algo (direct|ring|proxy_ring),                          chunk
+//   allgatherv:     algo (direct|ring|proxy_ring),                          chunk, sub_kernel
+//   alltoall(v):    algo (direct|gdr_only_pairwise|scatter|numa_gdr_split|fallback)
+//   scatter:        algo (direct),                                                 sub_kernel
+class sycl_scaleout_tune_attr {
+public:
+    sycl_scaleout_tune_attr() = default;
+    explicit sycl_scaleout_tune_attr(sycl_scaleout_algo a) noexcept
+        : algo_(a) {}
+    sycl_scaleout_tune_attr(sycl_scaleout_algo a, size_t chunk_bytes) noexcept
+        : algo_(a), pipeline_chunk_size_(chunk_bytes) {}
+
+    sycl_scaleout_algo  algo()                const noexcept { return algo_; }
+    size_t              pipeline_chunk_size() const noexcept { return pipeline_chunk_size_; }
+    scaleout_sub_kernel sub_kernel()          const noexcept { return sub_kernel_; }
+
+    sycl_scaleout_tune_attr& set_algo(sycl_scaleout_algo a) noexcept { algo_ = a; return *this; }
+    sycl_scaleout_tune_attr& set_pipeline_chunk_size(size_t s) noexcept    { pipeline_chunk_size_ = s; return *this; }
+    sycl_scaleout_tune_attr& set_sub_kernel(scaleout_sub_kernel k) noexcept { sub_kernel_ = k; return *this; }
+
+private:
+    sycl_scaleout_algo  algo_{ sycl_scaleout_algo::direct };
+    size_t              pipeline_chunk_size_{ 2 * 1024 * 1024 };
+    scaleout_sub_kernel sub_kernel_{ scaleout_sub_kernel::direct };
 };
 
-// scale-out collective tuning parameters
-enum class allreduce_scaleout_algo { direct, rabenseifner, ring };
-enum class reduce_scatter_scaleout_algo { direct, ring };
-enum class allgatherv_scaleout_algo { direct, ring };
-enum class alltoall_scaleout_algo {
-    direct,
-    pairwise,
-    gdr_only_pairwise,
-    scatter,
-    numa_gdr_only,
-    numa_gdr_split,
-    fallback
+
+class sycl_selector {
+public:
+    sycl_selector(size_t sz,
+                  size_t cs,
+                  ccl_datatype dt,
+                  bool rec) noexcept
+        : size(sz), comm_size(cs), dtype(dt), is_recording(rec) {}
+
+    sycl_scaleout_tune_attr allreduce()      const;
+    sycl_scaleout_tune_attr reduce_scatter() const;
+    sycl_scaleout_tune_attr allgatherv()     const;
+    sycl_scaleout_tune_attr alltoall()       const;
+
+    static size_t allreduce_chunk_size(sycl_scaleout_algo algo, size_t size, size_t comm_size);
+    static size_t reduce_scatter_chunk_size(sycl_scaleout_algo algo, size_t size, size_t comm_size);
+    static size_t allgatherv_chunk_size(sycl_scaleout_algo algo, size_t size, size_t comm_size);
+
+    size_t size;
+    size_t comm_size;
+    ccl_datatype dtype;
+    bool is_recording;
 };
-
-struct sycl_allreduce_tune_attr {
-    allreduce_scaleout_algo algo{ allreduce_scaleout_algo::direct };
-    size_t pipeline_chunk_size{ 2 * 1024 * 1024 };
-};
-
-struct sycl_reduce_scatter_tune_attr {
-    reduce_scatter_scaleout_algo algo{ reduce_scatter_scaleout_algo::direct };
-    size_t pipeline_chunk_size{ 2 * 1024 * 1024 };
-};
-
-struct sycl_allgatherv_tune_attr {
-    allgatherv_scaleout_algo algo{ allgatherv_scaleout_algo::direct };
-    size_t pipeline_chunk_size{ 2 * 1024 * 1024 };
-};
-
-struct sycl_alltoall_tune_attr {
-    alltoall_scaleout_algo algo{ alltoall_scaleout_algo::direct };
-};
-
-// alleduce
-size_t allreduce_select_chunk_size(allreduce_scaleout_algo algo, size_t size, size_t comm_size);
-sycl_allreduce_tune_attr allreduce_select_tune_attr(size_t size,
-                                                    size_t comm_size,
-                                                    ccl_datatype ccl_dtype,
-                                                    bool is_recording);
-
-// reduce-scatter
-sycl_reduce_scatter_tune_attr reduce_scatter_select_tune_attr(size_t size,
-                                                              size_t comm_size,
-                                                              ccl_datatype ccl_dtype,
-                                                              bool is_recording);
-size_t reduce_scatter_select_chunk_size(reduce_scatter_scaleout_algo algo,
-                                        size_t size,
-                                        size_t comm_size);
-
-// allgatherv
-sycl_allgatherv_tune_attr allgatherv_select_tune_attr(size_t size,
-                                                      size_t comm_size,
-                                                      ccl_datatype ccl_dtype,
-                                                      bool is_recording);
-
-size_t allgatherv_select_chunk_size(allgatherv_scaleout_algo algo, size_t size, size_t comm_size);
-
-// alltoall
-sycl_alltoall_tune_attr alltoall_select_tune_attr(size_t size,
-                                                  size_t comm_size,
-                                                  ccl_datatype ccl_dtype);

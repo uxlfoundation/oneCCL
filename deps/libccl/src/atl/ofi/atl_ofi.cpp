@@ -1439,6 +1439,11 @@ void atl_ofi::mr_cache::get(atl_ep_t& ep,
     CCL_THROW_IF_NOT(prov->domain);
     CCL_THROW_IF_NOT(mr);
 
+    if (buf == NULL) {
+        *mr = NULL;
+	return;
+    }
+
     if (ccl::global_data::env().enable_atl_cache) {
         key_t key(prov->domain, buf, bytes);
         auto key_value = cache.find(key);

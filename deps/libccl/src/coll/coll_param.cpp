@@ -67,6 +67,10 @@ ccl_coll_attr::ccl_coll_attr(const ccl::broadcast_attr& attr) {
     COPY_COMMON_OP_ATTRS(attr, this);
 }
 
+ccl_coll_attr::ccl_coll_attr(const ccl::gather_attr& attr) {
+    COPY_COMMON_OP_ATTRS(attr, this);
+}
+
 ccl_coll_attr::ccl_coll_attr(const ccl::scatter_attr& attr) {
     COPY_COMMON_OP_ATTRS(attr, this);
 }
@@ -185,8 +189,8 @@ std::string ccl_coll_param::to_string() const {
         ss << ", rt: " << ccl_reduction_to_str(reduction);
     }
 
-    if (ctype == ccl_coll_bcast || ctype == ccl_coll_broadcast || ctype == ccl_coll_reduce ||
-        ctype == ccl_coll_scatter) {
+    if (ctype == ccl_coll_bcast || ctype == ccl_coll_broadcast || ctype == ccl_coll_gather ||
+        ctype == ccl_coll_reduce || ctype == ccl_coll_scatter) {
         ss << ", root: " << root;
     }
 
@@ -300,6 +304,16 @@ bool ccl_coll_param::is_inplace(buf_type type) const {
             send_buf_ptr, recv_buf_ptr, get_recv_count(), dtype.size(), comm->rank(), comm->size());
     }
 
+    if (ctype == ccl_coll_gather) {
+        return ccl::is_gather_inplace(send_buf_ptr,
+                                 recv_buf_ptr,
+                                 get_send_count(),
+                                 dtype.size(),
+                                 comm->rank(),
+                                 root,
+                                 comm->size());
+    }
+
     if (ctype == ccl_coll_scatter) {
         return ccl::is_scatter_inplace(send_buf_ptr,
                                        recv_buf_ptr,
@@ -351,6 +365,22 @@ std::vector<void*> ccl_coll_param::get_all_non_zero_bufs() const {
                             bufs.push_back(get_recv_buf(idx));
                     }
                 }
+            }
+            break;
+        }
+        case ccl_coll_gather: {
+            /*
+                For gather:
+                - send_buf is needed by all ranks (every rank contributes count elements)
+                - recv_buf is only used on root rank (receives comm_size * count elements)
+                Non-root ranks may pass nullptr for recv_buf per the spec
+            */
+            if (get_send_count()) {
+                bufs.push_back(get_send_buf());
+            }
+
+            if (get_recv_count() && is_root) {
+                bufs.push_back(get_recv_buf());
             }
             break;
         }
@@ -494,6 +524,7 @@ void ccl_coll_param::validate() const {
         case ccl_coll_allgather:
         case ccl_coll_bcast:
         case ccl_coll_broadcast:
+        case ccl_coll_gather:
         case ccl_coll_reduce:
         case ccl_coll_reduce_scatter:
         case ccl_coll_scatter:
@@ -543,6 +574,15 @@ void ccl_coll_param::validate() const {
                                  ", recv_count * comm_size ",
                                  get_recv_count() * comm->size());
             }
+            else if (ctype == ccl_coll_gather) {
+                /* gather: every rank sends 1 block, root receives nranks blocks
+                 * recv_count == send_count * comm_size */
+                CCL_THROW_IF_NOT(get_recv_count() == get_send_count() * comm->size(),
+                                 "recv_count ",
+                                 get_recv_count(),
+                                 ", send_count * comm_size ",
+                                 get_send_count() * comm->size());
+            }
             else {
                 CCL_THROW_IF_NOT(get_send_count() == get_recv_count(),
                                  "send_count ",
@@ -564,7 +604,7 @@ void ccl_coll_param::copy_deps(const std::vector<ccl::event>& d) {
     // E.g. one of the issue can be that since deps are const ref, its lifetime is limited,
     // when user passes it to the group api calls, but the group api can be executed later
     // deps can be already destroyed.
-    if (!group_impl::is_group_active) {
+    if (!group_impl::is_group_active()) {
 #ifdef CCL_ENABLE_SYCL
         for (size_t idx = 0; idx < d.size(); idx++) {
             try {
@@ -795,6 +835,30 @@ ccl_coll_param ccl_coll_param::create_scatter_param(const void* send_buf,
         comm->size() * count); // full send buffer = nranks * count (mirrors reduce_scatter)
     param.recv_bufs.push_back(recv_buf);
     param.recv_counts.push_back(count); // per-rank recv count
+    param.root = root;
+    param.set_common_fields(dtype, comm, stream, deps);
+    param.validate();
+
+    return param;
+}
+
+ccl_coll_param ccl_coll_param::create_gather_param(const void* send_buf,
+                                                   void* recv_buf,
+                                                   size_t count,
+                                                   ccl::datatype dtype,
+                                                   int root,
+                                                   const ccl_coll_attr& attr,
+                                                   ccl_comm* comm,
+                                                   const ccl_stream* stream,
+                                                   const std::vector<ccl::event>& deps) {
+    ccl_coll_param param{};
+
+    param.ctype = ccl_coll_gather;
+    param.send_bufs.push_back(const_cast<void*>(send_buf)); // every rank: count elements
+    param.send_counts.push_back(count);                     // per-rank send count
+    param.recv_bufs.push_back(recv_buf); // root: nranks*count elements; non-root: may be nullptr
+    param.recv_counts.push_back(
+        comm->size() * count); // root's recv buffer holds one block per rank
     param.root = root;
     param.set_common_fields(dtype, comm, stream, deps);
     param.validate();

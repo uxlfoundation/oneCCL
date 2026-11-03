@@ -75,7 +75,8 @@ html_static_path = ['_static']
 
 import sys
 import os
-import subprocess
+import shutil
+import subprocess  # nosec B404 # fixed git invocation below, no untrusted input
 
 # on_rtd is whether we are on readthedocs.org, this line of code grabbed from docs.readthedocs.org
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
@@ -114,9 +115,13 @@ html_logo = '_static/oneAPI-rgb-rev-100.png'
 html_favicon = '_static/favicons.png'
 
 def get_git_last_updated_date():
+    git_path = shutil.which('git')
+    if git_path is None:
+        print("Error git executable not found, cannot determine last updated date")
+        return "Unknown"
     try:
-        result = subprocess.check_output(
-            ['git', 'log', '-1', '--date=format:%d %B, %Y', '--format=%cd'],
+        result = subprocess.check_output(  # nosec B603 # fixed args, no untrusted input
+            [git_path, 'log', '-1', '--date=format:%d %B, %Y', '--format=%cd'],
             stderr=subprocess.STDOUT,
             encoding='utf-8'
         )

@@ -21,11 +21,12 @@ namespace {
 void AllGatherGetCollByteCount(size_t *sendcount, size_t *recvcount,
                                size_t *paramcount, size_t *sendInplaceOffset,
                                size_t *recvInplaceOffset, size_t count,
-                               size_t /*eltSize*/, int nranks) {
-    // count = per-rank element count
-    *sendcount = count;          // elements each rank sends
-    *recvcount = count * nranks; // elements each rank receives
-    *paramcount = count;         // API count argument
+                               size_t eltSize, int nranks) {
+    // count = whole-buffer element count, as in nccl-tests
+    size_t base = (count / nranks) & -(16 / eltSize);
+    *sendcount = base;          // elements each rank sends
+    *recvcount = base * nranks; // elements each rank receives
+    *paramcount = base;         // API count argument
     *sendInplaceOffset = 0;
     *recvInplaceOffset = 0;
 }

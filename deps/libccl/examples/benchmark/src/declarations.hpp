@@ -55,3 +55,8 @@
 #include "reduce_scatter/reduce_scatter_strategy.hpp"
 #include "reduce_scatter/cpu_reduce_scatter_coll.hpp"
 #include "reduce_scatter/sycl_reduce_scatter_coll.hpp"
+
+/* scatter implementation */
+#include "scatter/scatter_strategy.hpp"
+#include "scatter/cpu_scatter_coll.hpp"
+#include "scatter/sycl_scatter_coll.hpp"

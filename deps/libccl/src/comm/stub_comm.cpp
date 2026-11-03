@@ -185,6 +185,18 @@ ccl::event stub_comm::reduce_scatter_impl(const void* send_buf,
     return process_stub_backend();
 }
 
+/* gather */
+ccl::event stub_comm::gather_impl(const void* send_buf,
+                                  void* recv_buf,
+                                  size_t count,
+                                  ccl::datatype dtype,
+                                  int root,
+                                  const ccl::stream::impl_value_t& stream,
+                                  const ccl::gather_attr& attr,
+                                  const ccl::vector_class<ccl::event>& deps) {
+    return process_stub_backend();
+}
+
 /* scatter */
 ccl::event stub_comm::scatter_impl(const void* send_buf,
                                    void* recv_buf,

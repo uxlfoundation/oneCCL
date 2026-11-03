@@ -135,6 +135,11 @@ CCL_API const base_kvs_impl& kvs::get_impl() {
 }
 
 std::atomic<int> kvs::id_counter{ 0 };
+
+int CCL_API kvs::allocate_id() {
+    return id_counter++;
+}
+
 CCL_API kvs::kvs(const kvs_attr& attr) : pimpl(get_kvs_impl(attr)), id(id_counter++) {}
 
 CCL_API kvs::~kvs() {}

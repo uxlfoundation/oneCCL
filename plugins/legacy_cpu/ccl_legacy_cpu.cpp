@@ -27,6 +27,7 @@
 
 #include "oneapi/ccl.hpp"
 
+#include <cstring>
 #include <functional>
 
 namespace {
@@ -205,6 +206,29 @@ onecclResult_t oneccl_alltoall_impl(const void *sendbuff, void *recvbuff,
         });
 }
 
+onecclResult_t oneccl_alltoallv_impl(const void *sendbuff,
+                                     const size_t *send_counts, void *recvbuff,
+                                     const size_t *recv_counts,
+                                     onecclDataType_t datatype,
+                                     onecclComm_t comm, void *stream) {
+    return execute_collective(
+        comm, stream,
+        [=](CommunicatorLegacyCpu *comm_legacy, void * /*async_queue*/) {
+            static itt::Task alltoallv("CPU::AllToAllV");
+
+            alltoallv.start();
+            size_t const comm_size = comm_legacy->comm.size();
+            std::vector<size_t> send_counts_vec(send_counts,
+                                                send_counts + comm_size);
+            std::vector<size_t> recv_counts_vec(recv_counts,
+                                                recv_counts + comm_size);
+            ccl::alltoallv(sendbuff, send_counts_vec, recvbuff, recv_counts_vec,
+                           convert(datatype), comm_legacy->comm)
+                .wait();
+            alltoallv.end();
+        });
+}
+
 onecclResult_t oneccl_broadcast_impl(const void *sendbuff, void *recvbuff,
                                      size_t count, onecclDataType_t datatype,
                                      int root, onecclComm_t comm,
@@ -254,6 +278,21 @@ onecclResult_t oneccl_reduce_scatter_impl(const void *sendbuff, void *recvbuff,
                                 comm_legacy->comm)
                 .wait();
             reduce_scatter.end();
+        });
+}
+
+onecclResult_t oneccl_scatter_impl(const void *sendbuff, void *recvbuff,
+                                   size_t count, onecclDataType_t datatype,
+                                   int root, onecclComm_t comm, void *stream) {
+    return execute_collective(
+        comm, stream,
+        [=](CommunicatorLegacyCpu *comm_legacy, void * /*async_queue*/) {
+            static itt::Task scatter("CPU::Scatter");
+            scatter.start();
+            ccl::scatter(sendbuff, recvbuff, count, convert(datatype), root,
+                         comm_legacy->comm)
+                .wait();
+            scatter.end();
         });
 }
 
@@ -390,9 +429,15 @@ onecclResult_t oneccl_comm_window_register_impl(onecclComm_t comm, void *buff,
         return onecclInvalidArgument;
     }
 
-    ccl::window window_obj = ccl::comm_window_register(
+    // window_t already points at library-owned device memory; pass it back as
+    // the opaque handle so consumers can hand it straight to a kernel.
+    ccl::window_t window_obj = ccl::comm_window_register_v2(
         comm_legacy->comm, buff, size, static_cast<int>(flags));
-    *window = new ccl::window(std::move(window_obj));
+    // No window means the device API is unavailable here, not a failure.
+    if (window_obj == nullptr) {
+        return onecclNotImplemented;
+    }
+    *window = static_cast<onecclWindow_t>(window_obj);
 
     return onecclSuccess;
 }
@@ -408,9 +453,109 @@ onecclResult_t oneccl_comm_window_deregister_impl(onecclComm_t comm,
         return onecclInvalidArgument;
     }
 
-    auto *window_obj = static_cast<ccl::window *>(window);
-    ccl::comm_window_deregister(comm_legacy->comm, *window_obj);
-    delete window_obj;
+    auto window_obj = static_cast<ccl::window_t>(window);
+    ccl::comm_window_deregister(comm_legacy->comm, window_obj);
+
+    return onecclSuccess;
+}
+
+// onecclDevComm_t is opaque in the C header; check it has room and alignment
+// for the communicator copied in and out of it.
+static_assert(sizeof(ccl::dev_comm_t) <= sizeof(onecclDevComm_t),
+              "onecclDevComm_t is too small for ccl::dev_comm_t");
+static_assert(alignof(ccl::dev_comm_t) <= alignof(onecclDevComm_t),
+              "onecclDevComm_t is under-aligned for ccl::dev_comm_t");
+
+onecclResult_t
+oneccl_dev_comm_create_impl(onecclComm_t comm,
+                            const onecclDevCommRequirements_t *reqs,
+                            onecclDevComm_t *dev_comm) {
+    if (comm == nullptr || reqs == nullptr || dev_comm == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *comm_legacy = static_cast<CommunicatorLegacyCpu *>(comm->pExt);
+    if (comm_legacy == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::dev_comm_requirements ccl_reqs{};
+    ccl_reqs.lsa_barrier_count = reqs->lsa_barrier_count;
+
+    ccl::dev_comm_t dc{};
+    ccl::dev_comm_create(comm_legacy->comm, &ccl_reqs, &dc);
+    // An empty communicator means the device API is unavailable here.
+    if (dc.barrier_inboxes == nullptr) {
+        return onecclNotImplemented;
+    }
+    *dev_comm = onecclDevComm_t{};
+    std::memcpy(dev_comm, &dc, sizeof(dc));
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_dev_comm_destroy_impl(onecclComm_t comm,
+                                            const onecclDevComm_t *dev_comm) {
+    if (comm == nullptr || dev_comm == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    auto *comm_legacy = static_cast<CommunicatorLegacyCpu *>(comm->pExt);
+    if (comm_legacy == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::dev_comm_t dc{};
+    std::memcpy(&dc, dev_comm, sizeof(dc));
+    ccl::dev_comm_destroy(comm_legacy->comm, &dc);
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_get_peer_device_pointer_impl(onecclWindow_t window,
+                                                   size_t offset, int peer,
+                                                   void **out_ptr) {
+    if (window == nullptr || out_ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::window_t win = static_cast<ccl::window_t>(window);
+    ccl::get_peer_device_pointer(win, offset, peer, out_ptr);
+    if (*out_ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_get_lsa_device_pointer_impl(onecclWindow_t window,
+                                                  size_t offset, int lsa_peer,
+                                                  void **out_ptr) {
+    if (window == nullptr || out_ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::window_t win = static_cast<ccl::window_t>(window);
+    ccl::get_lsa_device_pointer(win, offset, lsa_peer, out_ptr);
+    if (*out_ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    return onecclSuccess;
+}
+
+onecclResult_t oneccl_get_local_device_pointer_impl(onecclWindow_t window,
+                                                    size_t offset,
+                                                    void **out_ptr) {
+    if (window == nullptr || out_ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
+
+    ccl::window_t win = static_cast<ccl::window_t>(window);
+    ccl::get_local_device_pointer(win, offset, out_ptr);
+    if (*out_ptr == nullptr) {
+        return onecclInvalidArgument;
+    }
 
     return onecclSuccess;
 }
@@ -435,9 +580,11 @@ oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
     (*comm)->allreduce = oneccl_allreduce_impl;
     (*comm)->allgather = oneccl_allgather_impl;
     (*comm)->alltoall = oneccl_alltoall_impl;
+    (*comm)->alltoallv = oneccl_alltoallv_impl;
     (*comm)->broadcast = oneccl_broadcast_impl;
     (*comm)->reduce = oneccl_reduce_impl;
     (*comm)->reduce_scatter = oneccl_reduce_scatter_impl;
+    (*comm)->scatter = oneccl_scatter_impl;
     (*comm)->send = oneccl_send_impl;
     (*comm)->recv = oneccl_recv_impl;
     (*comm)->barrier = oneccl_barrier_impl;
@@ -450,6 +597,8 @@ oneccl_init_communicator_impl(onecclComm_t *comm, size_t nranks,
     (*comm)->comm_deregister = oneccl_comm_deregister_impl;
     (*comm)->comm_window_register = oneccl_comm_window_register_impl;
     (*comm)->comm_window_deregister = oneccl_comm_window_deregister_impl;
+    (*comm)->dev_comm_create = oneccl_dev_comm_create_impl;
+    (*comm)->dev_comm_destroy = oneccl_dev_comm_destroy_impl;
     return onecclSuccess;
 }
 
@@ -477,6 +626,15 @@ extern "C" void *onecclPluginCall(onecclPluginCall_t call_type) {
 
     case ONECCL_PLUGIN_MEM_FREE:
         return reinterpret_cast<void *>(&oneccl_mem_free_impl);
+
+    case ONECCL_PLUGIN_GET_PEER_DEVICE_POINTER:
+        return reinterpret_cast<void *>(&oneccl_get_peer_device_pointer_impl);
+
+    case ONECCL_PLUGIN_GET_LSA_DEVICE_POINTER:
+        return reinterpret_cast<void *>(&oneccl_get_lsa_device_pointer_impl);
+
+    case ONECCL_PLUGIN_GET_LOCAL_DEVICE_POINTER:
+        return reinterpret_cast<void *>(&oneccl_get_local_device_pointer_impl);
 
     case ONECCL_PLUGIN_INIT_COMM:
         return reinterpret_cast<void *>(&oneccl_init_communicator_impl);

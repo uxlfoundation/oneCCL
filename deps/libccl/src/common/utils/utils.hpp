@@ -52,8 +52,12 @@
         CCL_ASSERT(status == ccl::status::success, "bad status ", status); \
     } while (0)
 
+#ifndef unlikely
 #define unlikely(x_) __builtin_expect(!!(x_), 0)
+#endif
+#ifndef likely
 #define likely(x_)   __builtin_expect(!!(x_), 1)
+#endif
 
 #ifndef container_of
 #define container_of(ptr, type, field) ((type*)((char*)ptr - offsetof(type, field)))
@@ -267,6 +271,25 @@ std::string to_hex(T integer) {
 std::string to_hex(const char* data, size_t size);
 
 void close_fd(int fd);
+
+// performs linear search - O(n)
+template <typename T>
+bool vec_contains(std::vector<T> &elements, T &item) {
+    for (auto &element : elements) {
+        if (element == item) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// performs linear search internally - O(n)
+template <typename T>
+void vec_insert_uniq(std::vector<T> &elements, T &item) {
+    if (!vec_contains(elements, item)) {
+        elements.push_back(item);
+    }
+}
 
 } // namespace utils
 } // namespace ccl

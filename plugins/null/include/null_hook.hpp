@@ -81,12 +81,16 @@ typedef enum onecclHookPoint {
     ONECCL_AFTER_CPU_INIT,
     ONECCL_BEFORE_ALLGATHER,
     ONECCL_AFTER_ALLGATHER,
+    ONECCL_BEFORE_ALLTOALLV,
+    ONECCL_AFTER_ALLTOALLV,
     ONECCL_BEFORE_BROADCAST,
     ONECCL_AFTER_BROADCAST,
     ONECCL_BEFORE_REDUCE,
     ONECCL_AFTER_REDUCE,
     ONECCL_BEFORE_REDUCE_SCATTER,
     ONECCL_AFTER_REDUCE_SCATTER,
+    ONECCL_BEFORE_SCATTER,
+    ONECCL_AFTER_SCATTER,
     ONECCL_BEFORE_SEND,
     ONECCL_AFTER_SEND,
     ONECCL_BEFORE_RECV,
@@ -121,10 +125,12 @@ extern CCL_C_API std::vector<onecclHook> null_callbacks;
 // Macro to process hooks
 #define PROCESS_HOOKS(hook_point)                                              \
     for (auto it = null_callbacks.begin(); it != null_callbacks.end();) {      \
+        bool erased = false;                                                   \
         if (it->hookPoint == (hook_point) ||                                   \
             (hook_point) == ONECCL_NEXT_API_CALL) {                            \
             auto callback = it->callback;                                      \
             if (it->lifetime == ONECCL_ONE_TIME) {                             \
+                erased = true;                                                 \
                 it = null_callbacks.erase(it);                                 \
             }                                                                  \
             auto result = callback(hook_point);                                \
@@ -132,7 +138,9 @@ extern CCL_C_API std::vector<onecclHook> null_callbacks;
                 return result.value();                                         \
             }                                                                  \
         }                                                                      \
-        ++it;                                                                  \
+        if (!erased) {                                                         \
+            ++it;                                                              \
+        }                                                                      \
     }
 
 // Macro to add hook

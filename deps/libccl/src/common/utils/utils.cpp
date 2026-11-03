@@ -17,6 +17,8 @@
 #include "common/log/log.hpp"
 #include "common/utils/utils.hpp"
 
+#include <cstdint>
+
 namespace ccl {
 namespace utils {
 
@@ -103,7 +105,10 @@ std::string to_hex(const char* data, size_t size) {
     std::stringstream ss;
     ss << "0x";
     for (size_t i = 0; i < size; ++i) {
-        ss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(data[i]);
+        // via uint8_t: a plain char is signed here, so bytes >= 0x80 would sign-extend
+        // and print as ffffffab instead of ab
+        ss << std::hex << std::setfill('0') << std::setw(2)
+           << static_cast<int>(static_cast<uint8_t>(data[i]));
     }
     return ss.str();
 }

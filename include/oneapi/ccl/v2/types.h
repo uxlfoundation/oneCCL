@@ -36,6 +36,31 @@ typedef struct onecclComm *onecclComm_t;
 /** @brief Opaque handle to a registered communication window */
 typedef void *onecclWindow_t;
 
+/** @brief Pointer-width words reserved for a device communicator */
+#define ONECCL_DEV_COMM_WORDS 8
+
+/**
+ * @struct onecclDevComm_t
+ * @brief Device communicator, passed by value into kernels.
+ *
+ * Filled by onecclDevCommCreate and captured in a kernel lambda, so reading a
+ * rank costs no indirection. The payload is opaque here; only device-capable
+ * translation units interpret it, through oneapi/ccl/v2/device_api.hpp.
+ * @ingroup Types
+ */
+typedef struct {
+    void *opaque[ONECCL_DEV_COMM_WORDS];
+} onecclDevComm_t;
+
+/**
+ * @struct onecclDevCommRequirements_t
+ * @brief Resource requirements for a device communicator.
+ * @ingroup Types
+ */
+typedef struct {
+    int lsa_barrier_count; /**< LSA barrier slots to allocate */
+} onecclDevCommRequirements_t;
+
 /**
  * @enum onecclWindowFlags_t
  * @brief Flags controlling window registration behavior

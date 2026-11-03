@@ -28,23 +28,23 @@ ccl::event allreduce_ll(const void *src,
                         ccl::datatype dtype,
                         ccl::reduction reduction,
                         ccl_comm *comm,
+                        const std::shared_ptr<ccl_comm> p2p_comm,
                         ccl_stream *global_stream,
                         bool &done) {
     sycl::event sycl_e;
     sycl::queue q = global_stream->get_native_stream();
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
     bool recording = use_recording_path(q);
-    const int comm_size = node_comm->size();
-    const int comm_rank = node_comm->rank();
+    const int comm_size = p2p_comm->size();
+    const int comm_rank = p2p_comm->rank();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t dt_sz = ccl_dtype.size();
 
-    bool p2p = node_comm->get_topo_manager().has_p2p_access();
+    bool p2p = comm->get_topo_manager().has_p2p_access();
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     auto lambda = [&]<typename T, template <typename, int> class Proto>(int NRanks) {
@@ -56,37 +56,36 @@ ccl::event allreduce_ll(const void *src,
         if (ccl::global_data::env().sycl_ll_buffer_global) {
             // large buffer
             for (int i = 0; i < NRanks; i++) {
-                peerbuf0[i] = (T *)get_remote_node_tmp_buf(0, comm)[i];
-                peerbuf1[i] = (T *)get_remote_node_tmp_buf(1, comm)[i];
+                peerbuf0[i] = (T *)get_remote_large_tmp_buf(0, p2p_comm.get())[i];
+                peerbuf1[i] = (T *)get_remote_large_tmp_buf(1, p2p_comm.get())[i];
             }
-            ipcbuf0 = (T *)get_tmp_buf(0, comm);
-            ipcbuf1 = (T *)get_tmp_buf(1, comm);
+            ipcbuf0 = (T *)get_large_tmp_buf(0, comm);
+            ipcbuf1 = (T *)get_large_tmp_buf(1, comm);
             ipcbuf_size = ccl::global_data::env().sycl_tmp_buf_size / ccl_large_tmp_bufs::buf_count;
         }
         else {
             // small buffer
-            auto [local_tmp_buf, remote_ptrs] = recording ? node_comm->get_all_tmp_bufs_gpu(true)
-                                                          : node_comm->get_all_tmp_bufs(true);
+            auto [local_tmp_buf, remote_ptrs] = recording ? p2p_comm->get_all_tmp_bufs_gpu(true)
+                                                          : p2p_comm->get_all_tmp_bufs(true);
             for (int i = 0; i < NRanks; i++) {
                 peerbuf0[i] = (T *)remote_ptrs[i];
-                peerbuf1[i] = (T *)((char *)remote_ptrs[i] + node_comm->get_tmp_buf_size() / 2);
+                peerbuf1[i] = (T *)((char *)remote_ptrs[i] + p2p_comm->get_tmp_buf_size() / 2);
             }
             ipcbuf0 = (T *)local_tmp_buf;
-            ipcbuf1 = (T *)((char *)local_tmp_buf + node_comm->get_tmp_buf_size() / 2);
-            ipcbuf_size = node_comm->get_tmp_buf_size() / 2;
+            ipcbuf1 = (T *)((char *)local_tmp_buf + p2p_comm->get_tmp_buf_size() / 2);
+            ipcbuf_size = p2p_comm->get_tmp_buf_size() / 2;
         }
 
         sycl::event e;
 
         if (recording) {
             e = AllReduce<T, Proto, Transmit, true>::launch(
-                comm->get_node_comm()->get_pattern_data_gpu(),
+                p2p_comm->get_pattern_data_gpu(),
                 NRanks,
                 (T *)src,
                 (T *)dst,
                 ipcbuf0,
                 ipcbuf1,
-                // TODO it can also be a two-shot transmit !
                 ipcbuf_size,
                 peerbuf0,
                 peerbuf1,
@@ -97,19 +96,18 @@ ccl::event allreduce_ll(const void *src,
                 comm->global_current_id,
                 q,
                 pattern_type::collective,
-                node_comm,
+                p2p_comm,
                 p2p,
                 done);
         }
         else {
             e = AllReduce<T, Proto, Transmit, false>::launch(
-                comm->get_node_comm()->get_pattern_data(),
+                p2p_comm->get_pattern_data(),
                 NRanks,
                 (T *)src,
                 (T *)dst,
                 ipcbuf0,
                 ipcbuf1,
-                // TODO it can also be a two-shot transmit !
                 ipcbuf_size,
                 peerbuf0,
                 peerbuf1,
@@ -120,7 +118,7 @@ ccl::event allreduce_ll(const void *src,
                 comm->global_current_id,
                 q,
                 pattern_type::collective,
-                node_comm,
+                p2p_comm,
                 p2p,
                 done);
         }
@@ -129,7 +127,7 @@ ccl::event allreduce_ll(const void *src,
 
     if (ccl::global_data::env().sycl_ll_buffer_global) {
         const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
-        sycl::event barrier_event = invoke_barrier(node_comm, q, {}, is_cpu_barrier);
+        sycl::event barrier_event = invoke_barrier(p2p_comm, q, {}, is_cpu_barrier);
     }
 
     if (count * dt_sz <= ccl::global_data::env().sycl_allreduce_ll_threshold) {
@@ -143,7 +141,7 @@ ccl::event allreduce_ll(const void *src,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     if (reduction == ccl::reduction::avg) {
@@ -154,7 +152,7 @@ ccl::event allreduce_ll(const void *src,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     return ccl::event::create_from_native(sycl_e);
 }
@@ -165,6 +163,7 @@ template ccl::event allreduce_ll<RingTransmit>(const void *,
                                                ccl::datatype,
                                                ccl::reduction,
                                                ccl_comm *,
+                                               const std::shared_ptr<ccl_comm> p2p_comm,
                                                ccl_stream *,
                                                bool &);
 
@@ -174,6 +173,7 @@ template ccl::event allreduce_ll<TwoShotsTransmit>(const void *,
                                                    ccl::datatype,
                                                    ccl::reduction,
                                                    ccl_comm *,
+                                                   const std::shared_ptr<ccl_comm> p2p_comm,
                                                    ccl_stream *,
                                                    bool &);
 
@@ -183,5 +183,6 @@ template ccl::event allreduce_ll<OneShotTransmit>(const void *,
                                                   ccl::datatype,
                                                   ccl::reduction,
                                                   ccl_comm *,
+                                                  const std::shared_ptr<ccl_comm> p2p_comm,
                                                   ccl_stream *,
                                                   bool &);

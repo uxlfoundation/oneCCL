@@ -19,16 +19,17 @@
 namespace ccl {
 namespace v1 {
 
-ccl::event broadcast_sycl_single_node(sycl::queue& q,
-                                      const void* send_buf,
-                                      void* recv_buf,
-                                      size_t count,
-                                      ccl::datatype dtype,
-                                      int root,
-                                      ccl_comm* comm,
-                                      ccl_stream* global_stream,
-                                      const vector_class<ccl::event>& deps,
-                                      bool& done);
+ccl::event broadcast_scaleup_sycl(sycl::queue& q,
+                                  const void* send_buf,
+                                  void* recv_buf,
+                                  size_t count,
+                                  ccl::datatype dtype,
+                                  int root,
+                                  ccl_comm* comm,
+                                  std::shared_ptr<ccl_comm> p2p_comm,
+                                  ccl_stream* global_stream,
+                                  const vector_class<event>& deps,
+                                  bool& done);
 
 ccl::event broadcast_sycl(sycl::queue q,
                           const void* send_buf,
@@ -60,6 +61,7 @@ ccl::event broadcast_large(const void* send_buf,
                            ccl::datatype dtype,
                            int root,
                            ccl_comm* comm,
+                           std::shared_ptr<ccl_comm> p2p_comm,
                            ccl_stream* global_stream,
                            const ccl::vector_class<ccl::event>& deps);
 
@@ -81,5 +83,6 @@ ccl::event broadcast_rt_ring(const void* src,
                              ccl::datatype dtype,
                              int root,
                              ccl_comm* comm,
+                             std::shared_ptr<ccl_comm> p2p_comm,
                              ccl_stream* global_stream,
                              bool& done);

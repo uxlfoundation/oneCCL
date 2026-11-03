@@ -89,12 +89,16 @@ static void run_benchmark(TestInstance& test_instance,
         for (size_t i = 0; i < bench_iterations; ++i) {
             std::vector<ccl::event> deps{};
             for (size_t i = 0; i < iterations_in_recording; ++i) {
-                std::vector<ccl::event> tmp;
-                tmp.push_back(test_instance.run_test(deps));
-                deps = std::move(tmp);
+                // std::vector<ccl::event> tmp;
+                // tmp.push_back(test_instance.run_test(deps));
+                // implicitly synchronized thanks to in-order queues
+                test_instance.run_test(deps);
+                // deps = std::move(tmp);
             }
-            assert(deps.size() > 0);
-            deps.back().wait();
+            // assert(deps.size() > 0);
+            // deps.back().wait();
+            // synchronize in-order queue
+            test_instance.get_queue().wait();
         }
         timestamps.push_back(get_microseconds());
     }
@@ -118,9 +122,11 @@ static void run_benchmark(TestInstance& test_instance,
 
         std::vector<ccl::event> deps{};
         for (size_t i = 0; i < iterations_in_recording; ++i) {
-            std::vector<ccl::event> tmp;
-            tmp.push_back(test_instance.run_test(deps));
-            deps = std::move(tmp);
+            // std::vector<ccl::event> tmp;
+            // tmp.push_back(test_instance.run_test(deps));
+            // implicitly synchronized thanks to in-order queues
+            test_instance.run_test(deps);
+            // deps = std::move(tmp);
         }
 
         graph.end_recording();
@@ -129,7 +135,8 @@ static void run_benchmark(TestInstance& test_instance,
     {
         timestamps.push_back(get_microseconds());
         for (size_t i = 0; i < bench_iterations; ++i)
-            test_instance.get_queue().ext_oneapi_graph(executable_graph).wait();
+            test_instance.get_queue().ext_oneapi_graph(executable_graph);
+        test_instance.get_queue().wait();
         timestamps.push_back(get_microseconds());
     }
 
@@ -237,6 +244,12 @@ void run_benchmarks(const Args &args) {
         args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
     TestInstanceBroadcast test_broadcast(
         args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
+    TestInstancePt2Pt test_pt2pt(
+        args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
+    TestInstanceGroupAllreduce test_group_allreduce(
+        args, msg_size, size, rank, devices, context, 10, create_mpi_kvs, ccl::create_communicator); // TODO check also zero iterations
+    TestInstanceGroupPt2Pt test_group_pt2pt(
+        args, msg_size, size, rank, devices, context, 10, create_mpi_kvs, ccl::create_communicator);
 
     run_benchmark(test_allreduce, sizes_to_bench, 10, 1000, 1);
     run_benchmark(test_allreduce, sizes_to_bench, 10, 10, 100);
@@ -244,17 +257,23 @@ void run_benchmarks(const Args &args) {
     run_benchmark(test_reduce_scatter, sizes_to_bench, 10, 1000, 1);
     run_benchmark(test_reduce_scatter, sizes_to_bench, 10, 10, 100);
 
-    test_allgather.reinit(msg_size);
     run_benchmark(test_allgather, sizes_to_bench, 10, 1000, 1);
     run_benchmark(test_allgather, sizes_to_bench, 10, 10, 100);
 
-    test_alltoall.reinit(msg_size);
     run_benchmark(test_alltoall, sizes_to_bench, 10, 1000, 1);
     run_benchmark(test_alltoall, sizes_to_bench, 10, 10, 100);
 
-    test_broadcast.reinit(msg_size);
     run_benchmark(test_broadcast, sizes_to_bench, 10, 1000, 1);
     run_benchmark(test_broadcast, sizes_to_bench, 10, 10, 100);
+
+    run_benchmark(test_pt2pt, sizes_to_bench, 10, 1000, 1);
+    run_benchmark(test_pt2pt, sizes_to_bench, 10, 10, 100);
+
+    run_benchmark(test_group_allreduce, sizes_to_bench, 10, 1000, 1);
+    run_benchmark(test_group_allreduce, sizes_to_bench, 10, 10, 100);
+
+    run_benchmark(test_group_pt2pt, sizes_to_bench, 10, 1000, 1);
+    run_benchmark(test_group_pt2pt, sizes_to_bench, 10, 10, 100);
 }
 
 int main(int argc, char* argv[]) {

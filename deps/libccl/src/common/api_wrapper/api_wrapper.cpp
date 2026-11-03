@@ -28,29 +28,36 @@
 #include "common/api_wrapper/openmp_wrapper.hpp"
 
 #include <dlfcn.h>
+#include <link.h>
 
 namespace ccl {
 
+static bool g_mpi_was_inited = false;
+
 void api_wrappers_init() {
-    bool ofi_inited = true, mpi_inited = true;
-    if (!(ofi_inited = ofi_api_init())) {
-        LOG_INFO("could not initialize OFI api");
-    }
-#if defined(CCL_ENABLE_MPI)
-    if (!(mpi_inited = mpi_api_init())) {
-        LOG_INFO("could not initialize MPI api");
-    }
-#endif //CCL_ENABLE_MPI
-    CCL_THROW_IF_NOT(ofi_inited || mpi_inited, "could not initialize any transport library");
-    if (!ofi_inited && (ccl::global_data::env().atl_transport == ccl_atl_ofi)) {
-        ccl::global_data::env().atl_transport = ccl_atl_mpi;
-        LOG_WARN("OFI transport was not initialized, fallback to MPI transport");
+    bool mpi_inited = false;
+    bool ofi_inited = false;
+
+    if (ccl::global_data::env().atl_transport == ccl_atl_mpi) {
+        // Handle MPI transport
+        mpi_inited = mpi_api_init();
+        if (!mpi_inited)
+            LOG_WARN("MPI transport was not initialized, fallback to OFI transport");
     }
 
-    if (!mpi_inited && (ccl::global_data::env().atl_transport == ccl_atl_mpi)) {
+    // Either if-switch fallback or MPI initialization failure's fallback
+    if (!mpi_inited) {
         ccl::global_data::env().atl_transport = ccl_atl_ofi;
-        LOG_WARN("MPI transport was not initialized, fallback to OFI transport");
+
+        // Handle OFI transport
+        ofi_inited = ofi_api_init();
+        if (!ofi_inited) {
+            LOG_INFO("could not initialize OFI api");
+        }
     }
+    g_mpi_was_inited = mpi_inited;
+
+    CCL_THROW_IF_NOT((mpi_inited || ofi_inited), "could not initialize the requested transport library");
 
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     if (ccl::global_data::env().backend == backend_mode::native &&
@@ -85,32 +92,35 @@ void api_wrappers_init() {
 #endif // CCL_ENABLE_UMF
 
 #endif //CCL_ENABLE_SYCL && CCL_ENABLE_ZE
-#if defined(CCL_ENABLE_MPI) && defined(CCL_ENABLE_OMP)
-    if (!openmp_api_init()) {
+#if defined(CCL_ENABLE_OMP)
+    if (ccl::global_data::env().atl_transport == ccl_atl_mpi && openmp_api_init()) {
+        ccl::openmp_lib_ops.init(ccl::global_data::env().omp_allreduce_num_threads);
+    }
+    else {
+        if (ccl::global_data::env().atl_transport != ccl_atl_mpi) {
+            LOG_WARN("OpenMP collectives require the MPI transport, disabling");
+        }
         ccl::openmp_lib_ops.allreduce = nullptr;
         ccl::openmp_lib_ops.thread_num = nullptr;
         ccl::openmp_lib_ops.init = nullptr;
     }
-    else {
-        ccl::openmp_lib_ops.init(ccl::global_data::env().omp_allreduce_num_threads);
-    }
-#endif // CCL_ENABLE_MPI && CCL_ENABLE_OMP
+#endif // CCL_ENABLE_OMP
 }
 
 void api_wrappers_fini() {
     ofi_api_fini();
-#if defined(CCL_ENABLE_MPI)
-    mpi_api_fini();
-#endif //CCL_ENABLE_MPI
+    if (g_mpi_was_inited) {
+        mpi_api_fini();
+    }
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
     ze_api_fini();
 #if defined(CCL_ENABLE_UMF)
     umf_api_fini();
 #endif // CCL_ENABLE_UMF
 #endif //CCL_ENABLE_SYCL && CCL_ENABLE_ZE
-#if defined(CCL_ENABLE_MPI) && defined(CCL_ENABLE_OMP)
+#if defined(CCL_ENABLE_OMP)
     openmp_api_fini();
-#endif // CCL_ENABLE_MPI && CCL_ENABLE_OMP
+#endif // CCL_ENABLE_OMP
 }
 
 int load_library(lib_info_t& info) {
@@ -126,6 +136,18 @@ int load_library(lib_info_t& info) {
     info.handle = dlopen(info.path.c_str(), RTLD_LAZY | RTLD_GLOBAL);
     if (!info.handle) {
         return CCL_LOAD_LB_DLOPEN_ERROR;
+    }
+    link_map* lmap = nullptr;
+    if (dlinfo(info.handle, RTLD_DI_LINKMAP, &lmap) != 0) {
+        LOG_WARN("dlinfo failed for library: ", info.path);
+    }
+    else if (lmap && lmap->l_name && lmap->l_name[0] != '\0')
+    {
+        LOG_INFO("Loaded library. path: ", lmap->l_name);
+    }
+    else
+    {
+        LOG_WARN("Library path is empty for: ", info.path);
     }
 
     auto ops = reinterpret_cast<void**>((void*)info.ops);

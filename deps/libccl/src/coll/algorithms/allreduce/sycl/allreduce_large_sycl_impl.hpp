@@ -201,8 +201,8 @@ ccl::event allreduce_large_read_write_tmp(const void *send_buf,
     ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     std::array<void *, MAX_NODE_RANKS> l_src_ptrs, l_dst_ptrs;
-    void *src_tmp_ptr = get_tmp_buf(1, comm);
-    void *dst_tmp_ptr = get_tmp_buf(2, comm);
+    void *src_tmp_ptr = get_large_tmp_buf(1, comm);
+    void *dst_tmp_ptr = get_large_tmp_buf(2, comm);
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
     std::vector<sycl::event> memcpy_events;
@@ -420,22 +420,23 @@ ccl::event allreduce_large_impl(const void *send_buf,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
 
     ccl_reduction_data reduction_op = make_reduction_operation(reduction);
     const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
 
-    std::array<void *, MAX_GPUS> l_mdfi_send_ptrs, l_xelink_work_wr_ptrs, l_send_ptrs,
-        l_send_ptrs_rem;
-    std::array<void *, MAX_GPUS> l_mdfi_recv_ptrs, l_xelink_work_rd_ptrs, l_recv_ptrs;
-    std::array<void *, MAX_GPUS> l_mdfi_recv_ptrs_prev, l_xelink_work_rd_ptrs_prev,
-        l_recv_ptrs_prev;
-    std::array<void *, MAX_GPUS> l_send_cp_src_ptrs, l_send_cp_dst_ptrs, l_send_cp_src_ptrs_next,
-        l_send_cp_dst_ptrs_next;
-    std::array<void *, MAX_GPUS> l_recv_cp_src_ptrs, l_recv_cp_dst_ptrs, l_recv_cp_src_ptrs_prev,
-        l_recv_cp_src_ptrs_prev_2, l_recv_cp_dst_ptrs_prev, l_recv_cp_dst_ptrs_prev_2;
-    std::array<void *, MAX_NODE_RANKS> l_work_ptrs, l_work_ptrs_prev, l_node_send_ptrs;
+    std::array<void *, MAX_GPUS> l_mdfi_send_ptrs{}, l_xelink_work_wr_ptrs{}, l_send_ptrs{},
+        l_send_ptrs_rem{};
+    std::array<void *, MAX_GPUS> l_mdfi_recv_ptrs{}, l_xelink_work_rd_ptrs{}, l_recv_ptrs{};
+    std::array<void *, MAX_GPUS> l_mdfi_recv_ptrs_prev{}, l_xelink_work_rd_ptrs_prev{},
+        l_recv_ptrs_prev{};
+    std::array<void *, MAX_GPUS> l_send_cp_src_ptrs{}, l_send_cp_dst_ptrs{};
+    std::array<void *, MAX_GPUS> l_send_cp_src_ptrs_next{}, l_send_cp_dst_ptrs_next{};
+    std::array<void *, MAX_GPUS> l_recv_cp_src_ptrs{}, l_recv_cp_dst_ptrs{};
+    std::array<void *, MAX_GPUS> l_recv_cp_src_ptrs_prev{}, l_recv_cp_dst_ptrs_prev{};
+    std::array<void *, MAX_GPUS> l_recv_cp_src_ptrs_prev_2{}, l_recv_cp_dst_ptrs_prev_2{};
+    std::array<void *, MAX_NODE_RANKS> l_work_ptrs{}, l_work_ptrs_prev{}, l_node_send_ptrs{};
     void *l_recv_ptr = nullptr, *l_reduce_sum_dst = nullptr, *l_reduce_sum_dst_prev = nullptr;
 
     const int rank_align_count = ccl::global_data::env().kernel_mem_align / dsize;
@@ -450,15 +451,15 @@ ccl::event allreduce_large_impl(const void *send_buf,
     const size_t num_chunks = recv_bytes / chunk_size + (rem_chunk_size != 0 || rem_count != 0);
     const size_t pipeline_offset = chunk_size * even_comm_size;
 
-    void *tmp_bufs_send[pipeline_size] = { get_tmp_buf(1, comm),
-                                           (char *)get_tmp_buf(1, comm) + pipeline_offset };
-    void *tmp_bufs_recv[pipeline_size] = { get_tmp_buf(2, comm),
-                                           (char *)get_tmp_buf(2, comm) + pipeline_offset };
-    std::array<void *, MAX_GPUS> xelink_work_bufs_wr[pipeline_size],
+    void *tmp_bufs_send[pipeline_size] = { get_large_tmp_buf(1, comm),
+                                           (char *)get_large_tmp_buf(1, comm) + pipeline_offset };
+    void *tmp_bufs_recv[pipeline_size] = { get_large_tmp_buf(2, comm),
+                                           (char *)get_large_tmp_buf(2, comm) + pipeline_offset };
+    std::array<void *, MAX_NODE_RANKS> xelink_work_bufs_wr[pipeline_size],
         xelink_work_bufs_rd[pipeline_size], work_bufs[pipeline_size];
 
-    xelink_work_bufs_rd[0] = get_remote_even_tmp_buf(0, comm);
-    void *work_buf = get_tmp_buf(0, comm);
+    xelink_work_bufs_rd[0] = get_remote_large_tmp_buf(0, even_comm.get());
+    void *work_buf = get_large_tmp_buf(0, comm);
     for (int i = 0; i < even_comm_size; i++) {
         work_bufs[0][i] = (char *)work_buf + chunk_size * i;
         work_bufs[1][i] = (char *)(work_bufs[0][i]) + pipeline_offset;
@@ -470,9 +471,9 @@ ccl::event allreduce_large_impl(const void *send_buf,
 
     //TODO : update the algorithm to not use node_send_ptrs
     if (rem_count != 0) {
-        l_send_ptrs_rem[0] = get_tmp_buf(2, comm);
+        l_send_ptrs_rem[0] = get_large_tmp_buf(2, node_comm.get());
         l_recv_ptr = (char *)recv_buf + pack_count * dsize;
-        l_node_send_ptrs = get_remote_node_tmp_buf(2, comm);
+        l_node_send_ptrs = get_remote_large_tmp_buf(2, node_comm.get());
     }
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
@@ -621,7 +622,7 @@ ccl::event allreduce_large_impl(const void *send_buf,
         work_event = invoke_barrier(node_comm, q_use, barrier_deps, is_cpu_barrier);
         if (comm->is_multi_thread_instance() == true) {
             pthread_barrier_wait(
-                &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+                ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
         }
         work_event = q_use.submit([=](sycl::handler &h) {
             const size_t kernel_threads_curr = data_count / vec_size + data_count % vec_size;
@@ -933,7 +934,7 @@ ccl::event allreduce_large_impl(const void *send_buf,
 
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     return ccl::event::create_from_native(work_event);
 }

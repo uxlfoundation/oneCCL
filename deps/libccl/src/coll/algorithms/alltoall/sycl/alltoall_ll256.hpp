@@ -81,6 +81,9 @@ sycl::event arc_ll256_alltoall(const void *src,
     int comm_size, comm_rank, numa_size, numa_rank;
     std::shared_ptr<ccl_comm> subcomm;
 
+    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+    std::shared_ptr<ccl_comm> numa_comm = comm->get_numa_comm();
+
     bool split_numa = ccl::global_data::env().sycl_split_numa;
     if (!is_numa_comm) {
         subcomm = comm->get_node_comm();
@@ -170,14 +173,14 @@ sycl::event arc_ll256_alltoall(const void *src,
             // use large kernel persistent buffers
             for (int i = 0; i < local_world_size; i++) {
                 if (!is_numa_comm || numa_split_count) {
-                    local_peer_bufs[i] = (char *)get_remote_node_tmp_buf(0, comm)[i];
+                    local_peer_bufs[i] = (char *)get_remote_large_tmp_buf(0, node_comm.get())[i];
                 }
                 else {
-                    local_peer_bufs[i] = (char *)get_remote_numa_tmp_buf(0, comm)[i];
+                    local_peer_bufs[i] = (char *)get_remote_large_tmp_buf(0, numa_comm.get())[i];
                 }
             }
             //char *local_tmp_buf = local_peer_bufs[local_world_rank];
-            char *local_tmp_buf = (char *)get_tmp_buf(0, comm);
+            char *local_tmp_buf = (char *)get_large_tmp_buf(0, comm);
 
             /*
              * In a single subgroup:

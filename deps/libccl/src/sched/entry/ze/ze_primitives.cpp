@@ -18,6 +18,8 @@
 #include <fstream>
 #include <unordered_map>
 
+#include <sys/mman.h>
+
 #include "common/global/global.hpp"
 #include "common/log/log.hpp"
 #include "common/utils/utils.hpp"
@@ -747,55 +749,191 @@ bool is_arc_card(device_family family) {
            family == ccl::device_family::family8 || ccl::global_data::env().sycl_force_pcie;
 }
 
+// export control black list
 bool should_disable_rdma(const ze_device_handle_t& device) {
-    static bool checked = false;
-    static bool disable_rdma = false;
+    return false;
+}
 
-    // If we've already made a determination, return the cached result
-    if (checked) {
-        return disable_rdma;
+// ==== copy engine discovery and command list creation ====
+
+ze_staging_copy_engines ze_find_copy_engines(const sycl::queue& q) {
+    ze_staging_copy_engines eng;
+
+    eng.ze_ctx = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_context());
+    eng.ze_dev = sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
+
+    uint32_t num_groups = 0;
+    zeDeviceGetCommandQueueGroupProperties(eng.ze_dev, &num_groups, nullptr);
+
+    std::vector<ze_command_queue_group_properties_t> props(
+        num_groups, { ZE_STRUCTURE_TYPE_COMMAND_QUEUE_GROUP_PROPERTIES });
+    zeDeviceGetCommandQueueGroupProperties(eng.ze_dev, &num_groups, props.data());
+
+    for (uint32_t i = 0; i < num_groups; i++) {
+        const bool has_copy = props[i].flags & ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COPY;
+        const bool has_compute = props[i].flags & ZE_COMMAND_QUEUE_GROUP_PROPERTY_FLAG_COMPUTE;
+
+        if (has_copy && !has_compute) {
+            if (props[i].numQueues == 1) {
+                eng.main_ordinal = i;
+                // std::printf("[copy_engine] main copy engine: ordinal=%u\n", i);
+            }
+            else {
+                eng.link_ordinal = i;
+                eng.link_n_queues = props[i].numQueues;
+                // std::printf("[copy_engine] link copy engines: ordinal=%u numQueues=%u\n",
+                //             i, props[i].numQueues);
+            }
+        }
+    }
+    return eng;
+}
+
+// Create one immediate command list on the link copy engine.
+// link_queue_index: 0 .. link_n_queues-1 — which BCS engine to use.
+ze_command_list_handle_t ze_create_link_copy_cmdlist(const ze_staging_copy_engines& eng,
+                                                     uint32_t link_queue_index = 0) {
+    if (eng.link_ordinal == UINT32_MAX)
+        throw std::runtime_error("No link copy engine available on this device");
+
+    ze_command_queue_desc_t desc{};
+    desc.stype = ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC;
+    desc.ordinal = eng.link_ordinal;
+    desc.index = link_queue_index; // 0-7 on PVC selects BCS1-BCS8
+    desc.mode = ZE_COMMAND_QUEUE_MODE_ASYNCHRONOUS;
+    desc.priority = ZE_COMMAND_QUEUE_PRIORITY_NORMAL;
+    // EXPLICIT_ONLY tells the driver to use exactly this index, not round-robin
+    desc.flags = ZE_COMMAND_QUEUE_FLAG_EXPLICIT_ONLY;
+
+    ze_command_list_handle_t cmdlist = nullptr;
+    ZE_CALL(zeCommandListCreateImmediate, (eng.ze_ctx, eng.ze_dev, &desc, &cmdlist));
+
+    // std::printf("[copy_engine] created link copy cmdlist=%p ordinal=%u index=%u\n",
+    //             (void*)cmdlist, eng.link_ordinal, link_queue_index);
+    return cmdlist;
+}
+
+// Create one immediate command list on the main copy engine.
+ze_command_list_handle_t ze_create_main_copy_cmdlist(const ze_staging_copy_engines& eng) {
+    if (eng.main_ordinal == UINT32_MAX)
+        throw std::runtime_error("No main copy engine available on this device");
+
+    ze_command_queue_desc_t desc{};
+    desc.stype = ZE_STRUCTURE_TYPE_COMMAND_QUEUE_DESC;
+    desc.ordinal = eng.main_ordinal;
+    desc.index = 0; // only one queue in this group
+    desc.mode = ZE_COMMAND_QUEUE_MODE_ASYNCHRONOUS;
+    desc.priority = ZE_COMMAND_QUEUE_PRIORITY_NORMAL;
+
+    ze_command_list_handle_t cmdlist = nullptr;
+    ZE_CALL(zeCommandListCreateImmediate, (eng.ze_ctx, eng.ze_dev, &desc, &cmdlist));
+
+    // std::printf("[copy_engine] created main copy cmdlist=%p ordinal=%u\n",
+    //             (void*)cmdlist, eng.main_ordinal);
+    return cmdlist;
+}
+
+// ====== copy engine command submission and synchronization =======
+
+// Call once during proxy init
+// eng comes from ze_find_copy_engines()
+ze_staging_copy_context ze_copy_context_create(const ze_staging_copy_engines& eng) {
+    ze_staging_copy_context ctx{};
+    ctx.ze_ctx = eng.ze_ctx;
+
+    // Two link copy engines (BCS1/BCS2) for bidirectional overlap. Link engines
+    // are used deliberately over the main copy engine (BCS0): a kernel-dependent
+    // q.memcpy() on the in-order main stream can be routed to BCS0 and would then
+    // deadlock against the proxy's staging copies while the persistent kernel is
+    // still live. Link engines are never used by such main-stream copies.
+    ctx.d2h_cmdlist = ze_create_link_copy_cmdlist(eng, 0);
+    ctx.h2d_cmdlist = ze_create_link_copy_cmdlist(eng, 1);
+
+    // Event pool: HOST_VISIBLE so zeEventHostSynchronize works,
+    // not KERNEL_MAPPED_MEMORY (we don't need GPU-side signaling).
+    // One event per in-flight buffer per direction: d2h[0..D-1], h2d[0..D-1].
+    constexpr int depth = ze_staging_copy_context::pipeline_depth;
+    ze_event_pool_desc_t pool_desc{};
+    pool_desc.stype = ZE_STRUCTURE_TYPE_EVENT_POOL_DESC;
+    pool_desc.flags = ZE_EVENT_POOL_FLAG_HOST_VISIBLE;
+    pool_desc.count = 2 * depth;
+
+    ZE_CALL(zeEventPoolCreate, (ctx.ze_ctx, &pool_desc, 0, nullptr, &ctx.event_pool));
+
+    for (int i = 0; i < depth; i++) {
+        ze_event_desc_t ed{};
+        ed.stype = ZE_STRUCTURE_TYPE_EVENT_DESC;
+        ed.index = static_cast<uint32_t>(i); // d2h[i]
+        ed.signal = ZE_EVENT_SCOPE_FLAG_HOST;
+        ed.wait = ZE_EVENT_SCOPE_FLAG_HOST;
+        ZE_CALL(zeEventCreate, (ctx.event_pool, &ed, &ctx.d2h_ev[i]));
+
+        ed.index = static_cast<uint32_t>(i + depth); // h2d[i]
+        ZE_CALL(zeEventCreate, (ctx.event_pool, &ed, &ctx.h2d_ev[i]));
+    }
+    return ctx;
+}
+
+void ze_copy_context_destroy(ze_staging_copy_context& ctx) {
+    for (int i = 0; i < ze_staging_copy_context::pipeline_depth; i++) {
+        ZE_CALL(zeEventDestroy, (ctx.d2h_ev[i]));
+        ZE_CALL(zeEventDestroy, (ctx.h2d_ev[i]));
+    }
+    ZE_CALL(zeEventPoolDestroy, (ctx.event_pool));
+    ZE_CALL(zeCommandListDestroy, (ctx.d2h_cmdlist));
+    ZE_CALL(zeCommandListDestroy, (ctx.h2d_cmdlist));
+}
+
+void ze_submit_copy(ze_command_list_handle_t cmdlist,
+                    void* dst,
+                    const void* src,
+                    size_t n,
+                    ze_event_handle_t signal_ev) {
+    ZE_CALL(zeCommandListAppendMemoryCopy, (cmdlist, dst, src, n, signal_ev, 0, nullptr));
+}
+
+void ze_wait_and_reset(ze_event_handle_t ev) {
+    // Timeout UINT64_MAX = wait forever
+    ZE_CALL(zeEventHostSynchronize, (ev, UINT64_MAX));
+    ZE_CALL(zeEventHostReset, (ev)); // must reset before reuse
+}
+
+void* ze_ipc_mmap_device_allocation(ze_context_handle_t ctx,
+                                    void* device_ptr,
+                                    size_t size_bytes) {
+    ze_ipc_mem_handle_t ipc_handle{};
+    ZE_CALL(zeMemGetIpcHandle, (ctx, device_ptr, &ipc_handle));
+
+    int fd = -1;
+    std::memcpy(&fd, &ipc_handle, sizeof(fd));
+    if (fd < 0) {
+        CCL_THROW("zeMemGetIpcHandle produced invalid fd");
     }
 
-    ze_device_properties_t dev_props = ccl::ze::default_device_props;
-    ZE_CALL(zeDeviceGetProperties, (device, &dev_props));
-    LOG_DEBUG("Device ID: 0x", std::hex, dev_props.deviceId, std::dec);
+    void* base = mmap(nullptr, size_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
-    switch (dev_props.deviceId) {
-        // Disable RDMA for some B-series cards
-        case 0xE20B: // DT6
-        case 0xE20C: // DT7
-        case 0xE20D: // DT8
-        case 0xE212: // WKS-B93
-        case 0xE220: // DT1+
-        case 0xE221: // DT2
-        case 0xE223: // DT1+ WKS
-            LOG_DEBUG("Disabling RDMA for device ID: 0x", std::hex, dev_props.deviceId, std::dec);
-            disable_rdma = true;
-            break;
+    /* Release the IPC handle immediately after mmap — the mapping stays valid without it,
+     * and holding multiple handles simultaneously may cause driver issues. */
+    ZE_CALL(zeMemPutIpcHandle, (ctx, ipc_handle));
+    std::memset(&ipc_handle, 0, sizeof(ipc_handle));
 
-        // Don't disable RDMA for these devices
-        case 0xE210: // DT6+
-        case 0xE211: // DT6-
-        case 0xE216: // NEX2
-        case 0xE222: // DT3-
-            LOG_DEBUG(
-                "Not disabling RDMA for device ID: 0x", std::hex, dev_props.deviceId, std::dec);
-            disable_rdma = false;
-            break;
-
-        default:
-            // For unknown device IDs, do not disable RDMA
-            LOG_DEBUG("Unknown device ID: 0x",
-                      std::hex,
-                      dev_props.deviceId,
-                      std::dec,
-                      " - do not disable RDMA");
-            disable_rdma = false;
-            break;
+    if (base == MAP_FAILED) {
+        int e = errno;
+        CCL_THROW("mmap failed: ", std::strerror(e));
     }
 
-    checked = true;
-    return disable_rdma;
+    return base;
+}
+
+void ze_ipc_munmap_device_allocation(void* host_ptr,
+                                     size_t size_bytes) {
+    if (host_ptr && host_ptr != MAP_FAILED) {
+        if (munmap(host_ptr, size_bytes) != 0) {
+            // don't throw from cleanup
+        }
+    }
+    // IPC handle has been released in ze_ipc_mmap_device_allocation immediately after mmap
+    // ZE_CALL(zeMemPutIpcHandle, (ctx, *ipc_handle));
 }
 
 } // namespace ze

@@ -108,6 +108,15 @@ public:
             eps[ep_idx], send_buf, send_len, recv_buf, recv_lens, offsets, req);
     }
 
+    virtual atl_status_t scatter(size_t ep_idx,
+                                 const void* send_buf,
+                                 void* recv_buf,
+                                 size_t send_len,
+                                 int root,
+                                 atl_req_t& req) {
+        return transport->scatter(eps[ep_idx], send_buf, recv_buf, send_len, root, req);
+    }
+
     virtual atl_status_t allreduce(size_t ep_idx,
                                    const void* send_buf,
                                    void* recv_buf,
@@ -121,7 +130,7 @@ public:
     virtual atl_status_t alltoall(size_t ep_idx,
                                   const void* send_buf,
                                   void* recv_buf,
-                                  int len,
+                                  size_t len,
                                   atl_req_t& req) {
         return transport->alltoall(eps[ep_idx], send_buf, recv_buf, len, req);
     }
@@ -216,6 +225,15 @@ public:
 
     virtual atl_status_t check(size_t ep_idx, atl_req_t& req) {
         return transport->check(eps[ep_idx], req);
+    }
+
+    // wrapper around a common pattern that appears in code
+    virtual void check_wait_throw(size_t ep_idx, atl_req_t& req) {
+        ATL_CALL_THROW_IF_ERROR(this->check(ep_idx, req));
+        if (!req.is_completed) {
+            // We do not want to call check() in a loop (because we would call MPI_Test repeatedly). Call MPI_Wait() instead.
+            ATL_CALL_THROW_IF_ERROR(this->wait(ep_idx, req));
+        }
     }
 
     virtual std::shared_ptr<atl_base_comm> comm_split(int color, int key) = 0;

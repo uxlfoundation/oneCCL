@@ -41,17 +41,18 @@ SYCL_REDUCE_SCATTER_FUNCTIONS(large)
 namespace ccl {
 namespace v1 {
 
-ccl::event reduce_scatter_sycl_single_node(sycl::queue& q,
-                                           const void* send_buf,
-                                           void* recv_buf,
-                                           size_t recv_count,
-                                           datatype dtype,
-                                           reduction reduction,
-                                           ccl_comm* comm,
-                                           ccl_stream* global_stream,
-                                           const vector_class<event>& deps,
-                                           bool& done,
-                                           sycl_coll_scaleup_attr coll_attr = {});
+ccl::event reduce_scatter_scaleup_sycl(sycl::queue& q,
+                                       const void* send_buf,
+                                       void* recv_buf,
+                                       size_t recv_count,
+                                       datatype dtype,
+                                       reduction reduction,
+                                       ccl_comm* comm,
+                                       const std::shared_ptr<ccl_comm> p2p_domain_comm,
+                                       ccl_stream* global_stream,
+                                       const vector_class<event>& deps,
+                                       bool& done,
+                                       sycl_scaleup_options coll_attr = {});
 
 ccl::event reduce_scatter_sycl(sycl::queue q,
                                const void* send_buf,
@@ -77,7 +78,7 @@ ccl::event reduce_scatter_scaleout_sycl(sycl::queue& q,
                                         ccl_comm* comm,
                                         const ccl::vector_class<ccl::event>& deps,
                                         bool original_deps,
-                                        sycl_reduce_scatter_tune_attr& tune_attr,
+                                        sycl_scaleout_tune_attr& tune_attr,
                                         bool& done,
                                         bool is_cpu_buffers = false);
 
@@ -88,6 +89,7 @@ ccl::event reduce_scatter_small(const void* send_buf,
                                 ccl::datatype dtype,
                                 ccl::reduction reduction,
                                 ccl_comm* comm,
+                                std::shared_ptr<ccl_comm> p2p_comm,
                                 ccl_stream* global_stream,
                                 const ccl::vector_class<ccl::event>& deps);
 
@@ -97,16 +99,19 @@ ccl::event reduce_scatter_large(const void* send_buf,
                                 ccl::datatype dtype,
                                 ccl::reduction reduction,
                                 ccl_comm* comm,
+                                std::shared_ptr<ccl_comm> p2p_comm,
                                 ccl_stream* global_stream,
                                 const ccl::vector_class<ccl::event>& deps,
-                                sycl_coll_scaleup_attr coll_attr = {});
+                                sycl_scaleup_options coll_attr = {});
 
-// ring with RT protocols
-ccl::event reduce_scatter_rt_ring(const void* src,
-                                  void* dst,
-                                  size_t recv_count,
-                                  ccl::datatype dtype,
-                                  ccl::reduction reduction,
-                                  ccl_comm* comm,
-                                  ccl_stream* global_stream,
-                                  bool& done);
+// LL protocols
+template <template <typename, template <typename, int> class, bool, int> class Transmit>
+ccl::event reduce_scatter_ll(const void* src,
+                             void* dst,
+                             size_t recv_count,
+                             ccl::datatype dtype,
+                             ccl::reduction reduction,
+                             ccl_comm* comm,
+                             const std::shared_ptr<ccl_comm> p2p_comm,
+                             ccl_stream* global_stream,
+                             bool& done);

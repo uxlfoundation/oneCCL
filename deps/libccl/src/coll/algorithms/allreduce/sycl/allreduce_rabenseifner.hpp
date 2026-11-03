@@ -278,7 +278,7 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
                                                     ccl_comm *comm,
                                                     const ccl::vector_class<ccl::event> &deps,
                                                     bool original_deps,
-                                                    sycl_allreduce_tune_attr tune_attr,
+                                                    sycl_scaleout_tune_attr tune_attr,
                                                     bool &done) {
     sycl::event sycl_e;
     int newrank;
@@ -290,7 +290,7 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
     ccl_reduction_data reduction_op = make_reduction_operation(reduction);
 
     // tuning parameters
-    size_t pipeline_chunk_size = tune_attr.pipeline_chunk_size;
+    size_t pipeline_chunk_size = tune_attr.pipeline_chunk_size();
 
     int pow2 = comm->pof2();
     if (count < pow2) {
@@ -324,6 +324,7 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
         CCL_THROW_IF_NOT(dep_events.size() > 0,
                          "allreduce_sycl_rabenseifner_nonblocking: empty dependence");
     }
+
     if (send_buf != recv_buf) {
         sycl_e = q.submit([=](sycl::handler &h) {
             h.depends_on(dep_events);
@@ -341,6 +342,7 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
     ccl_sched_id_t pt2pt_sched_id = atl_comm->tag_creator->get_pt2pt_sched_id();
     int64_t tag =
         atl_comm->tag_creator->create(0 /* rank */, comm->get_comm_id(), pt2pt_sched_id, 0);
+    bool use_rdma = transport_rdma_enabled();
 
     // ranks are divided into two groups, first 2 * rem, and the rest.
     // In the first group, even rank send its data to odd rank, and they do
@@ -349,11 +351,13 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
     // group go to the main algorithm.
     if (rank < 2 * rem) {
         if (rank % 2 == 0) {
-            sycl_e = gpu_send_plain(q, recv_buf, count, rank + 1, tag, dtype, comm, dep_events);
+            sycl_e = gpu_send_plain(
+                q, recv_buf, count, rank + 1, tag, dtype, comm, dep_events, use_rdma);
             newrank = -1;
         }
         else {
-            sycl_e = gpu_recv_plain(q, tmp_buf, count, rank - 1, tag, dtype, comm, dep_events);
+            sycl_e =
+                gpu_recv_plain(q, tmp_buf, count, rank - 1, tag, dtype, comm, dep_events, use_rdma);
             // tmp buffers are aligned
             bool use_full_vector = can_use_full_vector(tmp_buf, recv_buf, 1, 4);
             if (use_full_vector) {
@@ -376,8 +380,11 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
     }
 
     if (newrank != -1) {
-        // out-of-order queue
-        sycl::queue q_worker(q.get_context(), q.get_device());
+        sycl::queue q_worker = q;
+        if (!ccl::global_data::env().sycl_enable_pipeline_gpu_rdma) {
+            // out-of-order queue
+            q_worker = sycl::queue(q.get_context(), q.get_device());
+        }
 
         std::vector<size_t> newcnts(pow2, count / pow2);
         std::vector<size_t> newdisps(pow2);
@@ -547,10 +554,12 @@ sycl::event allreduce_sycl_rabenseifner_nonblocking(sycl::queue &q,
 
     if (rank < 2 * rem) {
         if (rank % 2) {
-            sycl_e = gpu_send_plain(q, recv_buf, count, rank - 1, tag, dtype, comm, dep_events);
+            sycl_e = gpu_send_plain(
+                q, recv_buf, count, rank - 1, tag, dtype, comm, dep_events, use_rdma);
         }
         else {
-            sycl_e = gpu_recv_plain(q, recv_buf, count, rank + 1, tag, dtype, comm, dep_events);
+            sycl_e = gpu_recv_plain(
+                q, recv_buf, count, rank + 1, tag, dtype, comm, dep_events, use_rdma);
         }
         dep_events.clear();
         dep_events.push_back(std::move(sycl_e));
@@ -584,7 +593,7 @@ inline sycl::event allreduce_scaleout_sycl_rabenseifner(sycl::queue &q,
                                                         ccl_comm *comm,
                                                         const ccl::vector_class<ccl::event> &deps,
                                                         bool original_deps,
-                                                        sycl_allreduce_tune_attr tune_attr,
+                                                        sycl_scaleout_tune_attr tune_attr,
                                                         bool &done) {
     auto lambda = [&]<typename T>() {
         if (ccl::global_data::env().enable_op_sync) {

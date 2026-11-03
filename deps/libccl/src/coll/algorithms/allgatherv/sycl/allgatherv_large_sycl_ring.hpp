@@ -20,75 +20,11 @@
 #include "coll/algorithms/utils/sycl_barrier.hpp"
 #include "coll/algorithms/utils/sycl_ptrs.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/utils/sycl_copy.hpp"
 #include "coll/algorithms/reduce_scatter/sycl/reduce_scatter_large_sycl_ring.hpp"
+#include "coll/algorithms/utils/sycl_rate_limiter.hpp"
 
 #define USE_PARALLEL_FOR 1
-
-template <typename T>
-void inline copy2_kernel(void* dst_ptr1, void* dst_ptr2, const void* src_ptr, size_t idx) {
-#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__) && defined(CCL_SYCL_ENABLE_ARCB)
-    message_t v;
-    if (sizeof(T) == 16) {
-        lscLoad<16, CacheCtrl::L1UC_L3C>(v, ((message_t*)src_ptr) + idx);
-        lscStore<16, CacheCtrl::L1WB_L3WB>(((message_t*)dst_ptr1) + idx, v);
-        lscStore<16, CacheCtrl::L1WB_L3WB>(((message_t*)dst_ptr2) + idx, v);
-    }
-    else {
-        ((T*)dst_ptr1)[idx] = ((T*)src_ptr)[idx];
-        ((T*)dst_ptr2)[idx] = ((T*)src_ptr)[idx];
-    }
-#else
-    ((T*)dst_ptr1)[idx] = ((T*)src_ptr)[idx];
-    ((T*)dst_ptr2)[idx] = ((T*)src_ptr)[idx];
-#endif
-}
-
-template <typename T, int vec_size>
-void inline copy2(void* dst_ptr1,
-                  void* dst_ptr2,
-                  const void* src_ptr,
-                  const size_t count,
-                  const size_t offset,
-                  const sycl::nd_item<1> it) {
-    const size_t idx = it.get_global_linear_id() + offset;
-    const size_t packed_count = count / vec_size;
-
-    if (idx < packed_count) {
-        using AT = sycl::vec<T, vec_size>;
-        copy2_kernel<AT>(dst_ptr1, dst_ptr2, src_ptr, idx);
-    }
-    else {
-        const size_t new_idx = idx + (vec_size - 1) * packed_count;
-        if (new_idx < count) {
-            copy2_kernel<T>(dst_ptr1, dst_ptr2, src_ptr, new_idx);
-        }
-    }
-}
-
-// load and store to two destinations
-template <typename T, int full_vec_size, int partial_vec_size>
-#if !USE_PARALLEL_FOR
-SYCL_EXT_ONEAPI_FUNCTION_PROPERTY((syclexp::nd_range_kernel<1>))
-#endif
-void inline copy_2dst_wrap(void* dst_ptr1, void* dst_ptr2, const void* src_ptr, const size_t count, int use_full_vector) {
-    const sycl::nd_item<1> it = syclext::this_work_item::get_nd_item<1>();
-    const size_t num_threads = it.get_global_range(0);
-    const int vec_size = use_full_vector ? full_vec_size : partial_vec_size;
-    const size_t req_threads = count / vec_size + count % vec_size;
-
-    if (use_full_vector) {
-#pragma unroll
-        for (size_t offset = 0; offset < req_threads; offset += num_threads) {
-            copy2<T, full_vec_size>(dst_ptr1, dst_ptr2, src_ptr, count, offset, it);
-        }
-    }
-    else {
-#pragma unroll
-        for (size_t offset = 0; offset < req_threads; offset += num_threads) {
-            copy2<T, partial_vec_size>(dst_ptr1, dst_ptr2, src_ptr, count, offset, it);
-        }
-    }
-}
 
 template <typename T, int vec_size>
 struct Copy2Kernel {
@@ -115,6 +51,66 @@ struct Copy2Kernel {
     ccl_comm_flag_data flag_data;
 };
 
+// Rate-limiter-aware copy wrappers (variable-byte acquire).
+// When `per_iter_bytes == 0` the helpers fall through to the original strided copy.
+// When nonzero, each outer iteration charges exactly `per_iter_bytes` via acquire().
+template <typename T, int vec_size>
+void inline copy_kernel_wrap_throttled(void* dst_ptr,
+                                       void* src_ptr,
+                                       const size_t count,
+                                       int64_t per_iter_bytes,
+                                       ccl::ccl_rate_limiter::bucket_handle handle) {
+    const sycl::nd_item<1> it = syclext::this_work_item::get_nd_item<1>();
+    const size_t num_threads = it.get_global_range(0);
+    const size_t req_threads = count / vec_size + count % vec_size;
+
+    if (per_iter_bytes == 0) {
+        for (size_t offset = 0; offset < req_threads; offset += num_threads) {
+            copy<T, vec_size>(dst_ptr, src_ptr, count, offset, it);
+        }
+        return;
+    }
+
+    const size_t max_iters = (req_threads + num_threads - 1) / num_threads;
+    for (size_t step = 0; step < max_iters; ++step) {
+        const size_t group_start = step * num_threads + it.get_group(0) * it.get_local_range(0);
+        if (group_start < req_threads) {
+            ccl::ccl_rate_limiter::acquire(handle, it, per_iter_bytes);
+        }
+        const size_t offset = step * num_threads;
+        copy<T, vec_size>(dst_ptr, src_ptr, count, offset, it);
+    }
+}
+
+template <typename T, int vec_size>
+void inline copy_2dst_wrap_throttled(void* dst_ptr1,
+                                     void* dst_ptr2,
+                                     const void* src_ptr,
+                                     const size_t count,
+                                     int64_t per_iter_bytes,
+                                     ccl::ccl_rate_limiter::bucket_handle handle) {
+    const sycl::nd_item<1> it = syclext::this_work_item::get_nd_item<1>();
+    const size_t num_threads = it.get_global_range(0);
+    const size_t req_threads = count / vec_size + count % vec_size;
+
+    if (per_iter_bytes == 0) {
+        for (size_t offset = 0; offset < req_threads; offset += num_threads) {
+            copy2<T, vec_size>(dst_ptr1, dst_ptr2, src_ptr, count, offset, it);
+        }
+        return;
+    }
+
+    const size_t max_iters = (req_threads + num_threads - 1) / num_threads;
+    for (size_t step = 0; step < max_iters; ++step) {
+        const size_t group_start = step * num_threads + it.get_group(0) * it.get_local_range(0);
+        if (group_start < req_threads) {
+            ccl::ccl_rate_limiter::acquire(handle, it, per_iter_bytes);
+        }
+        const size_t offset = step * num_threads;
+        copy2<T, vec_size>(dst_ptr1, dst_ptr2, src_ptr, count, offset, it);
+    }
+}
+
 template <typename T>
 sycl::event allgatherv_large_su_ring_chunking_no_ipc(sycl::queue& q,
                                                      const void* send_buf,
@@ -124,15 +120,15 @@ sycl::event allgatherv_large_su_ring_chunking_no_ipc(sycl::queue& q,
                                                      const ccl::vector_class<size_t>& offsets,
                                                      ccl::datatype dtype,
                                                      ccl_comm* comm,
+                                                     const std::shared_ptr<ccl_comm> p2p_comm,
                                                      ccl_stream* global_stream,
                                                      bool in_place,
                                                      sycl_ptrs_type& sycl_ptrs,
                                                      int& slot) {
     sycl::event e;
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
 
-    int world = node_comm->size();
-    int rank = node_comm->rank();
+    int world = p2p_comm->size();
+    int rank = p2p_comm->rank();
 
     LOG_DEBUG("allgatherv large ring kernel without IPC rank: ",
               rank,
@@ -169,8 +165,8 @@ sycl::event allgatherv_large_su_ring_chunking_no_ipc(sycl::queue& q,
     size_t chunk_size = ccl::global_data::env().sycl_tmp_buf_size / pipeline_size;
     std::array<void*, ARC_MAX_NUM> work_bufs;
     std::array<void*, ARC_MAX_NUM> remote_work_bufs;
-    work_bufs[0] = get_tmp_buf(0, comm);
-    remote_work_bufs[0] = get_remote_node_tmp_buf(0, comm)[right];
+    work_bufs[0] = get_large_tmp_buf(0, comm);
+    remote_work_bufs[0] = get_remote_large_tmp_buf(0, p2p_comm.get())[right];
     for (int i = 1; i < pipeline_size; i++) {
         work_bufs[i] = (char*)work_bufs[i - 1] + chunk_size;
         remote_work_bufs[i] = (char*)remote_work_bufs[i - 1] + chunk_size;
@@ -194,21 +190,20 @@ sycl::event allgatherv_large_su_ring_chunking_no_ipc(sycl::queue& q,
     }
     else {
         if (in_place) {
-            q.parallel_for(
-                nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
-                    copy_kernel_wrap<T, full_vec_size, partial_vec_size>(remote_dst, src, send_count, use_full_vector);
-                });
+            q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                copy_kernel_wrap<T, full_vec_size, partial_vec_size>(remote_dst, src, send_count, use_full_vector);
+            });
         }
         else {
-            q.parallel_for(
-                nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
-                    copy_2dst_wrap<T, full_vec_size, partial_vec_size>(local_dst, remote_dst, src, send_count, use_full_vector);
-                });
+            q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                copy_2dst_wrap<T, full_vec_size, partial_vec_size>(
+                    local_dst, remote_dst, src, send_count, use_full_vector);
+            });
         }
     }
     s = (s + world - 1) % world;
     iter++;
-    invoke_p2p_barrier(node_comm, q, {}, is_cpu_barrier);
+    invoke_p2p_barrier(p2p_comm, q, {}, is_cpu_barrier);
 
     while (iter < world - 1) {
         int next_slot = (slot + 1) % pipeline_size;
@@ -221,12 +216,12 @@ sycl::event allgatherv_large_su_ring_chunking_no_ipc(sycl::queue& q,
             q.memcpy(remote_dst, src, send_size);
         }
         else {
-            q.parallel_for(
-                nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
-                    copy_2dst_wrap<T, full_vec_size, partial_vec_size>(local_dst, remote_dst, src, send_count, use_full_vector);
-                });
+            q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                copy_2dst_wrap<T, full_vec_size, partial_vec_size>(
+                    local_dst, remote_dst, src, send_count, use_full_vector);
+            });
         }
-        invoke_p2p_barrier(node_comm, q, {}, is_cpu_barrier);
+        invoke_p2p_barrier(p2p_comm, q, {}, is_cpu_barrier);
 
         s = (s + world - 1) % world;
         iter++;
@@ -240,10 +235,9 @@ sycl::event allgatherv_large_su_ring_chunking_no_ipc(sycl::queue& q,
             q.memcpy(local_dst, src, send_size);
         }
         else {
-            q.parallel_for(
-                nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
-                    copy_kernel_wrap<T, full_vec_size, partial_vec_size>(local_dst, src, send_count, use_full_vector);
-                });
+            q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                copy_kernel_wrap<T, full_vec_size, partial_vec_size>(local_dst, src, send_count, use_full_vector);
+            });
         }
         slot = (slot + 1) % pipeline_size;
     }
@@ -276,7 +270,7 @@ sycl::event allgatherv_large_su_ring_chunking_single_kernel(sycl::queue& q,
 
     const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
 
-    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, send_count, dsize);     
+    const bool use_full_vector = can_use_full_vector(send_buf, recv_buf, send_count, dsize);
     constexpr int full_vec_size = get_num_elements<T, 16, true>();
     constexpr int partial_vec_size = get_num_elements<T, 16, false>();
     const int vec_size = use_full_vector ? full_vec_size : partial_vec_size;
@@ -313,7 +307,8 @@ sycl::event allgatherv_large_su_ring_chunking_single_kernel(sycl::queue& q,
         char* dst = (char*)peer_recv + offsets[s];
 
         if (in_place || iter > 0) {
-            CopyKernel<T, full_vec_size, partial_vec_size> cp_kernel(dst, src, send_count, node_comm.get(), use_full_vector);
+            CopyKernel<T, full_vec_size, partial_vec_size> cp_kernel(
+                dst, src, send_count, node_comm.get(), use_full_vector);
             q.parallel_for(nd_range, cp_kernel);
         }
         else {
@@ -321,19 +316,119 @@ sycl::event allgatherv_large_su_ring_chunking_single_kernel(sycl::queue& q,
             // to both recv_buf and right neighbor's recv_buf
             void* dst2 = (char*)recv_buf + offsets[rank];
             const void* src = send_buf;
-	    if (use_full_vector) {
+            if (use_full_vector) {
                 Copy2Kernel<T, full_vec_size> cp2_kernel(dst, dst2, src, send_count, node_comm.get());
                 q.parallel_for(nd_range, cp2_kernel);
-	    }
-	    else {
+            }
+            else {
                 Copy2Kernel<T, partial_vec_size> cp2_kernel(dst, dst2, src, send_count, node_comm.get());
                 q.parallel_for(nd_range, cp2_kernel);
-	    }
+            }
         }
 
         s = (s + world - 1) % world;
         iter++;
     }
+
+    return e;
+}
+
+// Rate-limiter-aware variant of allgatherv_large_su_ring_chunking.
+template <typename T>
+sycl::event allgatherv_large_su_ring_chunking_throttled(sycl::queue& q,
+                                                        const void* send_buf,
+                                                        size_t send_count,
+                                                        void* recv_buf,
+                                                        const ccl::vector_class<size_t>& recv_counts,
+                                                        const ccl::vector_class<size_t>& offsets,
+                                                        ccl::datatype dtype,
+                                                        ccl_comm* comm,
+                                                        ccl_stream* global_stream,
+                                                        bool in_place,
+                                                        sycl_ptrs_type& sycl_ptrs) {
+    sycl::event e;
+    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
+
+    int world = node_comm->size();
+    int rank = node_comm->rank();
+
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    const int dsize = ccl_dtype.size();
+    size_t send_size = send_count * dsize;
+
+    const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
+
+    constexpr int use_full_vector = true;
+    sycl::device device = q.get_device();
+    // Query the maximum work-group size
+    const size_t max_work_group_size = device.get_info<sycl::info::device::max_work_group_size>();
+    const size_t work_group_size = ccl::global_data::env().sycl_work_group_size;
+    assert(work_group_size > 0 && work_group_size <= max_work_group_size);
+    constexpr int vec_size = get_num_elements<T, 16, use_full_vector>();
+    const size_t kernel_threads = send_count / vec_size + send_count % vec_size;
+    const size_t kernel_size = ((kernel_threads + work_group_size - 1) / work_group_size) * work_group_size;
+    sycl::nd_range<1> nd_range(kernel_size, work_group_size);
+
+    ccl::ccl_rate_limiter::bucket_handle rl_handle = ccl::ccl_rate_limiter::get_handle(q);
+    const bool rl_enabled = ccl::ccl_rate_limiter::is_enabled(rl_handle);
+
+    // RL validation: compute per-iteration byte charge and verify it fits within max_acquire.
+    int64_t rl_per_iter_bytes = rl_enabled ? static_cast<int64_t>(work_group_size) * vec_size * sizeof(T) : 0;
+
+    if (rl_enabled) {
+        CCL_THROW_IF_NOT(rl_per_iter_bytes <= rl_handle.max_acquire_bytes,
+                         "sycl_rate_limiter: per-iter bytes per work-group (",
+                         rl_per_iter_bytes,
+                         ") exceeds configured max_acquire (",
+                         rl_handle.max_acquire_bytes,
+                         "); raise CCL_SYCL_RATE_LIMIT_MAX_ACQUIRE_BYTES or shrink work_group_size");
+    }
+
+    int right = (rank + 1) % world;
+    T* peer_recv = (T*)(sycl_ptrs.node_ptrs_wr[right]);
+    int s = rank;
+    int iter = 0;
+    const bool rl_profile_device =
+        (ccl::ccl_rate_limiter::get_profile_mode() == ccl::ccl_rate_limiter::profile_mode::device ||
+         ccl::ccl_rate_limiter::get_profile_mode() == ccl::ccl_rate_limiter::profile_mode::both);
+    ccl::ccl_rate_limiter::profile_host_start();
+
+    while (iter < world - 1) {
+        char* src = (char*)recv_buf + offsets[s];
+        char* dst = (char*)peer_recv + offsets[s];
+
+        sycl::event ring_ev;
+        if (in_place || iter > 0) {
+            ring_ev = q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                copy_kernel_wrap_throttled<T, vec_size>(dst, src, send_count, rl_per_iter_bytes, rl_handle);
+            });
+        }
+        else {
+            // for out-of-place, in the first iteration, copy from send buf
+            // to both recv_buf and right neighbor's recv_buf
+            void* dst2 = (char*)recv_buf + offsets[rank];
+            const void* src = send_buf;
+            ring_ev = q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                copy_2dst_wrap_throttled<T, vec_size>(dst, dst2, src, send_count, rl_per_iter_bytes, rl_handle);
+            });
+        }
+        if (rl_profile_device) {
+            ccl::ccl_rate_limiter::profile_add_device_event(ring_ev);
+        }
+        invoke_p2p_barrier(node_comm, q, {}, is_cpu_barrier);
+
+        s = (s + world - 1) % world;
+        iter++;
+    }
+    // For host-mode profiling we want the wall clock to include device
+    // execution (so it is comparable to the device-event sum). Block here
+    // before stopping the host timer.
+    const auto _rl_pm = ccl::ccl_rate_limiter::get_profile_mode();
+    if (_rl_pm == ccl::ccl_rate_limiter::profile_mode::host ||
+        _rl_pm == ccl::ccl_rate_limiter::profile_mode::both) {
+        q.wait();
+    }
+    ccl::ccl_rate_limiter::profile_host_stop();
 
     return e;
 }
@@ -347,14 +442,14 @@ sycl::event allgatherv_large_su_ring_chunking(sycl::queue& q,
                                               const ccl::vector_class<size_t>& offsets,
                                               ccl::datatype dtype,
                                               ccl_comm* comm,
+                                              const std::shared_ptr<ccl_comm> p2p_comm,
                                               ccl_stream* global_stream,
                                               bool in_place,
                                               sycl_ptrs_type& sycl_ptrs) {
     sycl::event e;
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
 
-    int world = node_comm->size();
-    int rank = node_comm->rank();
+    int world = p2p_comm->size();
+    int rank = p2p_comm->rank();
 
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const int dsize = ccl_dtype.size();
@@ -362,7 +457,7 @@ sycl::event allgatherv_large_su_ring_chunking(sycl::queue& q,
 
     const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
 
-    bool use_full_vector = can_use_full_vector(send_buf, recv_buf, send_count, dsize);     
+    bool use_full_vector = can_use_full_vector(send_buf, recv_buf, send_count, dsize);
     constexpr int full_vec_size = get_num_elements<T, 16, true>();
     constexpr int partial_vec_size = get_num_elements<T, 16, false>();
     const int vec_size = use_full_vector ? full_vec_size : partial_vec_size;
@@ -399,23 +494,22 @@ sycl::event allgatherv_large_su_ring_chunking(sycl::queue& q,
         }
         else {
             if (in_place || iter > 0) {
-                q.parallel_for(
-                    nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
-                        copy_kernel_wrap<T, full_vec_size, partial_vec_size>(dst, src, send_count, use_full_vector);
-                    });
+                q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                    copy_kernel_wrap<T, full_vec_size, partial_vec_size>(dst, src, send_count, use_full_vector);
+                });
             }
             else {
                 // for out-of-place, in the first iteration, copy from send buf
                 // to both recv_buf and right neighbor's recv_buf
                 void* dst2 = (char*)recv_buf + offsets[rank];
                 const void* src = send_buf;
-                q.parallel_for(
-                    nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
-                        copy_2dst_wrap<T, full_vec_size, partial_vec_size>(dst, dst2, src, send_count, use_full_vector);
-                    });
+                q.parallel_for(nd_range, [=](sycl::nd_item<1> it) [[sycl::reqd_sub_group_size(16)]] {
+                    copy_2dst_wrap<T, full_vec_size, partial_vec_size>(
+                        dst, dst2, src, send_count, use_full_vector);
+                });
             }
         }
-        invoke_p2p_barrier(node_comm, q, {}, is_cpu_barrier);
+        invoke_p2p_barrier(p2p_comm, q, {}, is_cpu_barrier);
 
         s = (s + world - 1) % world;
         iter++;
@@ -432,17 +526,17 @@ sycl::event allgatherv_large_su_ring(sycl::queue& q,
                                      const ccl::vector_class<size_t>& recv_counts,
                                      const ccl::vector_class<size_t>& offsets,
                                      ccl::datatype dtype,
-                                     ccl_comm* comm,
+                                     ccl_comm* global_comm,
+                                     std::shared_ptr<ccl_comm> p2p_comm,
                                      ccl_stream* global_stream,
                                      sycl_ptrs_type& sycl_ptrs,
                                      const ccl::vector_class<ccl::event>& deps,
                                      bool use_tmp) {
-    LOG_DEBUG("allgatherv large ring kernel buffer send_count:", send_count);
+    LOG_DEBUG("allgatherv large ring kernel buffer send_count:", send_count, " use_tmp: ", use_tmp);
     sycl::event e;
-    int world = comm->size();
-    int rank = comm->rank();
-    std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
-    int node_size = node_comm->size();
+    int world = p2p_comm->size();
+    int rank = p2p_comm->rank();
+    int node_size = p2p_comm->size();
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     const int dsize = ccl_dtype.size();
 
@@ -471,7 +565,7 @@ sycl::event allgatherv_large_su_ring(sycl::queue& q,
     const bool is_cpu_barrier = ccl::global_data::env().sycl_ccl_barrier;
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
 
-    invoke_barrier(node_comm, q, dep_events, is_cpu_barrier);
+    invoke_barrier(p2p_comm, q, dep_events, is_cpu_barrier);
 
     size_t send_offset = 0;
     int slot = 0;
@@ -490,7 +584,8 @@ sycl::event allgatherv_large_su_ring(sycl::queue& q,
                                                             scaleup_counts,
                                                             scaleup_offsets,
                                                             dtype,
-                                                            node_comm.get(),
+                                                            global_comm,
+                                                            p2p_comm,
                                                             global_stream,
                                                             in_place,
                                                             sycl_ptrs,
@@ -504,12 +599,25 @@ sycl::event allgatherv_large_su_ring(sycl::queue& q,
                                                                    scaleup_counts,
                                                                    scaleup_offsets,
                                                                    dtype,
-                                                                   node_comm.get(),
+                                                                   p2p_comm.get(),
                                                                    global_stream,
                                                                    in_place,
                                                                    sycl_ptrs);
         }
         else {
+#ifdef CCL_ENABLE_SYCL_RATE_LIMITER
+            e = allgatherv_large_su_ring_chunking_throttled<T>(q,
+                                                               (T*)send_buf + send_offset,
+                                                               pack_count,
+                                                               recv_buf,
+                                                               scaleup_counts,
+                                                               scaleup_offsets,
+                                                               dtype,
+                                                               p2p_comm.get(),
+                                                               global_stream,
+                                                               in_place,
+                                                               sycl_ptrs);
+#else
             e = allgatherv_large_su_ring_chunking<T>(q,
                                                      (T*)send_buf + send_offset,
                                                      pack_count,
@@ -517,10 +625,12 @@ sycl::event allgatherv_large_su_ring(sycl::queue& q,
                                                      scaleup_counts,
                                                      scaleup_offsets,
                                                      dtype,
-                                                     node_comm.get(),
+                                                     global_comm,
+                                                     p2p_comm,
                                                      global_stream,
                                                      in_place,
                                                      sycl_ptrs);
+#endif
         }
         send_offset += pack_count;
     } // for

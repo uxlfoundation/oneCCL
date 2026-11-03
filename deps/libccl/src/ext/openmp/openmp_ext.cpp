@@ -14,7 +14,7 @@
  limitations under the License.
 */
 
-#if defined(CCL_ENABLE_MPI) && defined(CCL_ENABLE_OMP)
+#if defined(CCL_ENABLE_OMP)
 
 #include "coll/coll_param.hpp"
 #include "oneapi/ccl.hpp"
@@ -188,4 +188,4 @@ extern "C" CCL_API void* ccl_openmp_init() {
     return reinterpret_cast<void*>(&init);
 }
 
-#endif // CCL_ENABLE_MPI && CCL_ENABLE_OMP
+#endif // CCL_ENABLE_OMP

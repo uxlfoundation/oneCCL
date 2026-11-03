@@ -82,7 +82,7 @@ extern "C" {
  * @brief Minor version of oneCCL
  * @ingroup Macros
  */
-#define ONECCL_MINOR 1
+#define ONECCL_MINOR 2
 
 /**
  * @def ONECCL_PATCH
@@ -422,6 +422,81 @@ onecclResult_t CCL_C_API onecclCommWindowDeregister(onecclComm_t comm,
                                                     onecclWindow_t window);
 
 /**
+ * @brief Creates a device communicator for device-side collectives
+ *
+ * Holds the resources (e.g. LSA barrier slots) the device-side API needs when
+ * invoked from within user SYCL kernels. The caller owns the communicator and
+ * captures it by value into its kernels.
+ *
+ * @param[in] comm Communicator
+ * @param[in] reqs Resource requirements (e.g. barrier count)
+ * @param[out] dev_comm Device communicator to fill in
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API
+onecclDevCommCreate(onecclComm_t comm, const onecclDevCommRequirements_t *reqs,
+                    onecclDevComm_t *dev_comm);
+
+/**
+ * @brief Frees the resources of a device communicator
+ *
+ * @param[in] comm Communicator
+ * @param[in] dev_comm Device communicator created by onecclDevCommCreate
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API
+onecclDevCommDestroy(onecclComm_t comm, const onecclDevComm_t *dev_comm);
+
+/**
+ * @brief Resolves a peer's device pointer within a window, host-side
+ *
+ * Host equivalent of the device-side get_peer_pointer().
+ *
+ * @param[in] window Window handle
+ * @param[in] offset Byte offset within the peer's buffer
+ * @param[in] peer Peer's rank in the world communicator (must be LSA-reachable)
+ * @param[out] out_ptr Receives the device pointer (nullptr if peer unreachable)
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclGetPeerDevicePointer(onecclWindow_t window,
+                                                    size_t offset, int peer,
+                                                    void **out_ptr);
+
+/**
+ * @brief Resolves an LSA peer's device pointer within a window, host-side
+ *
+ * Host equivalent of the device-side get_lsa_pointer().
+ *
+ * @param[in] window Window handle
+ * @param[in] offset Byte offset within the peer's buffer
+ * @param[in] lsa_peer Peer's rank within the LSA team
+ * @param[out] out_ptr Receives the device pointer (nullptr if peer unreachable)
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclGetLsaDevicePointer(onecclWindow_t window,
+                                                   size_t offset, int lsa_peer,
+                                                   void **out_ptr);
+
+/**
+ * @brief Resolves this rank's own device pointer within a window, host-side
+ *
+ * Host equivalent of the device-side get_local_pointer().
+ *
+ * @param[in] window Window handle
+ * @param[in] offset Byte offset within the local buffer
+ * @param[out] out_ptr Receives the device pointer (nullptr on error)
+ * @return Result of the operation
+ * @ingroup CommunicatorCreation
+ */
+onecclResult_t CCL_C_API onecclGetLocalDevicePointer(onecclWindow_t window,
+                                                     size_t offset,
+                                                     void **out_ptr);
+
+/**
  * @brief Function to check for errors of asynchronous oneCCL operations in the communicator
  *
  * This API is not implemented yet
@@ -539,6 +614,35 @@ onecclResult_t CCL_C_API onecclReduceScatter(const void *sendbuff,
                                             onecclComm_t comm, void *stream);
 
 /**
+ * @brief Function to perform a Scatter operation
+ *
+ * Scatter is a root-based collective communication operation that distributes count elements to each rank in the
+ * communicator. On the root rank, the block destined for rank i is taken from sendbuff at offset i*count. On non-root
+ * ranks, sendbuff is not used and may be NULL.
+ *
+ * This operation assumes that the send count is equal to nranks*count, that is, the sendbuff on root has a count of at
+ * least nranks*count elements, while recvbuff on every rank has a count of at least count elements.
+ *
+ * This operation is in-place if recvbuff == sendbuff + root * count.
+ *
+ * The stream is usually a pointer to a SYCL queue, but it can be NULL for host buffers. For details, see <a href="./plugins.html">plugin</a>.
+ *
+ * @param[in] sendbuff Buffer with the data to scatter from root; ignored on non-root ranks
+ * @param[out] recvbuff Buffer to receive the block of count elements
+ * @param[in] count Number of elements to send to or receive from each rank
+ * @param[in] datatype Data type of elements
+ * @param[in] root Root rank of the operation
+ * @param[in] comm Communicator for the operation
+ * @param[in] stream Stream for the scatter
+ * @return Result of the operation
+ * @ingroup CollectiveFunctions
+ */
+onecclResult_t CCL_C_API onecclScatter(const void *sendbuff, void *recvbuff,
+                                      size_t count, onecclDataType_t datatype,
+                                      int root, onecclComm_t comm,
+                                      void *stream);
+
+/**
  * @brief Function to perform an AllGgather operation
  *
  * Allgather is a collective communication operation that gathers sendcount elements from the sendbuf in each rank and
@@ -590,6 +694,45 @@ onecclResult_t CCL_C_API onecclAllToAll(const void *sendbuff, void *recvbuff,
                                         size_t count,
                                         onecclDataType_t datatype,
                                        onecclComm_t comm, void *stream);
+
+/**
+ * @brief Function to perform an AlltoAllV operation
+ *
+ * Alltoallv is a collective communication operation where each rank may send
+ * and receive a variable number of elements to and from every other rank.
+ * For destination rank j, the send block starts at
+ * sendbuff + send_offsets[j] and has send_counts[j] elements. Data received
+ * from source rank i is written to recvbuff + recv_offsets[i] and has
+ * recv_counts[i] elements.
+ *
+ * send_offsets and recv_offsets are not presented as parameters because they
+ * are calculated based on the send_counts and recv_counts accordingly at
+ * oneCCL AlltoAllv implementation stage.
+ *
+ * Counts and offsets are expressed in elements of datatype (not bytes), and
+ * each array must have communicator-size entries.
+ *
+ * This operation is out-of-place only.
+ *
+ * The stream is usually a pointer to a SYCL queue, but it can be NULL for host
+ * buffers. For details, see <a href="./plugins.html">plugin</a>
+ *
+ * @param[in] sendbuff Buffer with the data to send
+ * @param[in] send_counts Number of elements to send to each rank
+ * @param[out] recvbuff Buffer to receive data
+ * @param[in] recv_counts Number of elements to receive from each rank
+ * @param[in] datatype Data type of elements
+ * @param[in] comm Communicator for the operation
+ * @param[in] stream Stream for the AllToAllV operation
+ * @return Result of the operation
+ * @ingroup CollectiveFunctions
+ */
+onecclResult_t CCL_C_API onecclAllToAllV(const void *sendbuff,
+                                         const size_t *send_counts,
+                                         void *recvbuff,
+                                         const size_t *recv_counts,
+                                         onecclDataType_t datatype,
+                                         onecclComm_t comm, void *stream);
 
 /**
  * @brief Fun ction to perform a send operation

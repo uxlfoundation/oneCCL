@@ -20,6 +20,7 @@
 #include "coll/coll.hpp"
 #include "common/global/global.hpp"
 
+#include <cstdint>
 #include <map>
 #include <string>
 
@@ -54,6 +55,32 @@ struct ccl_selector_param {
     ccl_coll_algo hint_algo = {};
 
     bool is_scaleout = false;
+
+    // Optional hints for the JSON selection engine. Fast sycl path fills these
+    // before `SelectionEngine::resolve()`.
+    
+    // Mirrors ccl_p2p_domain_level (coll/algorithms/utils/p2p_domain.hpp).
+    // Keep the numeric values in sync so callers can `static_cast` without
+    // a translation table. `unset` is engine-side only (filter never matches).
+    enum class p2p_domain_hint_t : std::int8_t {
+        unset  = -1,
+        p2p_auto   = 0,
+        p2p_node   = 1,
+        p2p_numa   = 2,
+        p2p_switch = 3,
+        p2p_none   = 4,
+    };
+    enum class phase_hint_t : std::int8_t {
+        unset = -1, scaleup = 0, scaleout,
+    };
+    p2p_domain_hint_t p2p_domain_hint = p2p_domain_hint_t::unset;
+    phase_hint_t phase_hint = phase_hint_t::unset;
+    size_t comm_size_hint = 0;      // 0 = fall back to p.comm->size()
+    // Tri-state: -1 = not set (filter never matches); 0/1 = boolean value.
+    std::int8_t has_p2p_access_hint = -1;
+    std::int8_t is_multi_thread_hint = -1;
+    std::int8_t is_arc_hint = -1;
+    std::int8_t is_recording_hint = -1;
 
     static ccl_selector_param create(ccl_coll_type ctype,
                                      size_t count,
@@ -128,6 +155,7 @@ CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_alltoallv, ccl_coll_alltoallv_algo)
 CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_barrier, ccl_coll_barrier_algo);
 CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_bcast, ccl_coll_bcast_algo);
 CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_broadcast, ccl_coll_broadcast_algo);
+CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_gather, ccl_coll_gather_algo);
 CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_recv, ccl_coll_recv_algo);
 CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_reduce, ccl_coll_reduce_algo);
 CCL_SELECTION_DECLARE_ALGO_SELECTOR(ccl_coll_reduce_scatter, ccl_coll_reduce_scatter_algo);

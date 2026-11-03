@@ -782,6 +782,56 @@ bool is_reduce_scatter_inplace(const void* send_buf,
     return inplace;
 }
 
+bool is_gather_inplace(const void* send_buf,
+                       const void* recv_buf,
+                       size_t count,
+                       size_t dtype_size,
+                       size_t rank,
+                       size_t root,
+                       size_t comm_size) {
+    // MPI gather in-place: root's send_buf points to its own slot inside recv_buf.
+    // Non-root ranks never have a valid recv_buf, so they are never in-place.
+    if (rank != root || recv_buf == nullptr) {
+        return false;
+    }
+
+    size_t block_bytes = count * dtype_size;
+    const char* recv_start = reinterpret_cast<const char*>(recv_buf);
+    const char* recv_end = recv_start + block_bytes * comm_size;
+    const char* send_ptr = reinterpret_cast<const char*>(send_buf);
+    const char* own_slot = recv_start + root * block_bytes;
+
+    bool address_aliasing = (send_ptr >= recv_start) && (send_ptr < recv_end);
+    bool inplace = (send_ptr == own_slot);
+
+    LOG_DEBUG("count: ",
+              count,
+              ", inplace: ",
+              inplace,
+              ", send_buf: ",
+              send_buf,
+              ", recv_buf: ",
+              recv_buf);
+    if (address_aliasing && !inplace) {
+        std::stringstream ss_send, ss_recv;
+        ss_send << send_buf;
+        ss_recv << recv_buf;
+
+        std::string warning_msg("using gather with a send_buf that is not in-place"
+                                " but that overlaps with recv_buf! Did you mean to place your"
+                                " send_buf in the appropriate location within recv_buf?");
+        LOG_WARN("CAUTION: ", warning_msg);
+        LOG_DEBUG("   send_buf ", ss_send.str());
+        LOG_DEBUG("   recv_buf ", ss_recv.str());
+        if (ccl::global_data::env().check_inplace_aliasing) {
+            CCL_THROW("ERROR: " + warning_msg + ".\n" +
+                      "Set CCL_CHECK_INPLACE_ALIASING=0 to disable this check.");
+        }
+    }
+
+    return inplace;
+}
+
 bool is_scatter_inplace(const void* send_buf,
                         const void* recv_buf,
                         const size_t count,

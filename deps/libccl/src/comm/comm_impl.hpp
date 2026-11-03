@@ -564,6 +564,26 @@ ccl::event ccl_comm::reduce_scatter_impl(const buffer_type& send_buf,
                               deps);
 }
 
+/* gather */
+template <class buffer_type>
+ccl::event ccl_comm::gather_impl(const buffer_type* send_buf,
+                                 buffer_type* recv_buf,
+                                 size_t count,
+                                 int root,
+                                 const ccl::stream::impl_value_t& stream,
+                                 const ccl::gather_attr& attr,
+                                 const ccl::vector_class<ccl::event>& deps) {
+    return ccl_gather(reinterpret_cast<const void*>(send_buf),
+                      reinterpret_cast<void*>(recv_buf),
+                      count,
+                      ccl::native_type_info<buffer_type>::dtype,
+                      root,
+                      attr,
+                      this,
+                      get_stream_ptr(stream),
+                      deps);
+}
+
 /* scatter */
 template <class buffer_type>
 ccl::event ccl_comm::scatter_impl(const buffer_type* send_buf,
@@ -582,6 +602,29 @@ ccl::event ccl_comm::scatter_impl(const buffer_type* send_buf,
                        this,
                        get_stream_ptr(stream),
                        deps);
+}
+
+template <class buffer_type>
+ccl::event ccl_comm::gather_impl(const buffer_type& send_buf,
+                                 buffer_type& recv_buf,
+                                 size_t count,
+                                 int root,
+                                 const ccl::stream::impl_value_t& stream,
+                                 const ccl::gather_attr& attr,
+                                 const ccl::vector_class<ccl::event>& deps) {
+    ccl_coll_attr internal_attr(attr);
+#ifdef CCL_ENABLE_SYCL
+    internal_attr.is_sycl_buf = 1;
+#endif // CCL_ENABLE_SYCL
+    return ccl_gather(reinterpret_cast<const void*>(&send_buf),
+                      reinterpret_cast<void*>(&recv_buf),
+                      count,
+                      ccl::native_type_info<buffer_type>::dtype,
+                      root,
+                      internal_attr,
+                      this,
+                      get_stream_ptr(stream),
+                      deps);
 }
 
 template <class buffer_type>

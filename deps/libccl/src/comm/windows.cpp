@@ -80,10 +80,20 @@ int ccl_window::deregister_buf() {
         return 0;
     }
 
-    for (int r = 0; r < comm_size; r++) {
-        if (r == comm->rank())
-            continue;
-        ZE_CALL(zeMemCloseIpcHandle, (context, registered_ptrs[r].ptr));
+    // This function is invoked from noexcept contexts (move-assignment and
+    // window deregistration). ZE_CALL throws a ccl::exception on failure,
+    // which would call std::terminate() if it escaped. Swallow it here: the return
+    // value is a status code that all callers already ignore.
+    try {
+        for (int r = 0; r < comm_size; r++) {
+            if (r == comm->rank())
+                continue;
+            ZE_CALL(zeMemCloseIpcHandle, (context, registered_ptrs[r].ptr));
+        }
+    }
+    catch (const ccl::exception& e) {
+        LOG_WARN("failed to deregister window buffer: ", e.what());
+        return 0;
     }
     return 1;
 #else

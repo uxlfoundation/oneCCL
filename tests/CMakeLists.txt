@@ -34,7 +34,7 @@ function(add_test_internal)
     find_package(Threads REQUIRED)
 
     # Find the MPI package
-    if(ONECCL_ENABLE_MPI)
+    if(ONECCL_TEST_USE_MPI)
         find_package(MPI REQUIRED)
     endif()
 
@@ -47,7 +47,7 @@ function(add_test_internal)
         Threads::Threads
     )
 
-    if(ONECCL_ENABLE_MPI)
+    if(ONECCL_TEST_USE_MPI)
         list(APPEND LIBRARIES_TO_LINK MPI::MPI_CXX)
     endif()
 
@@ -113,7 +113,7 @@ add_test_internal(
 )
 
 # Temporarly disenable valgrind checks for the test
-if(ONECCL_ENABLE_MPI)
+if(ONECCL_TEST_USE_MPI)
     add_test_internal(
         TARGET null_concurrent
         SRCS concurrent_execution.cpp
@@ -124,7 +124,7 @@ if(ONECCL_ENABLE_MPI)
     )
 endif()
 
-if(COMPILER_SUPPORTS_SYCL AND ONECCL_ENABLE_MPI)
+if(COMPILER_SUPPORTS_SYCL AND ONECCL_TEST_USE_MPI)
     # Build the acceptance_sycl binary once
     add_executable(acceptance_sycl acceptance_sycl.cpp)
 
@@ -161,7 +161,9 @@ if(COMPILER_SUPPORTS_SYCL AND ONECCL_ENABLE_MPI)
         BroadcastOperation
         AllGatherOperation
         AllToAllOperation
+        AllToAllvOperation
         ReduceScatterOperation
+        ScatterOperation
         SendRecvOperation
         SendRecvGroupOperation
     )
@@ -226,6 +228,7 @@ if(NOT ${ONECCL_USE_SYSTEM_LIBCCL})
     set_property(TEST both_apis PROPERTY ENVIRONMENT_MODIFICATION "${ENV_MODIFICATION}")
 endif()
 
-if(COMPILER_SUPPORTS_SYCL AND ONECCL_ENABLE_MPI)
+if(COMPILER_SUPPORTS_SYCL AND ONECCL_TEST_USE_MPI)
     add_subdirectory(benchmark)
+    add_subdirectory(rate_limiter)
 endif()

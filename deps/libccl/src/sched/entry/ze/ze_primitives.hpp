@@ -126,6 +126,20 @@ constexpr ze_device_properties_t default_device_props = { .stype =
                                                           .uuid = {},
                                                           .name = {} };
 
+constexpr ze_device_compute_properties_t default_device_compute_properties = { .stype =
+                                                                                  ZE_STRUCTURE_TYPE_DEVICE_COMPUTE_PROPERTIES,
+                                                                              .pNext = nullptr,
+                                                                              .maxTotalGroupSize = 0,
+                                                                              .maxGroupSizeX = 0,
+                                                                              .maxGroupSizeY = 0,
+                                                                              .maxGroupSizeZ = 0,
+                                                                              .maxGroupCountX = 0,
+                                                                              .maxGroupCountY = 0,
+                                                                              .maxGroupCountZ = 0,
+                                                                              .maxSharedLocalMemory = 0,
+                                                                              .numSubGroupSizes = 0,
+                                                                              .subGroupSizes = {} };
+
 constexpr ze_event_pool_desc_t default_event_pool_desc = { .stype =
                                                                ZE_STRUCTURE_TYPE_EVENT_POOL_DESC,
                                                            .pNext = nullptr,
@@ -281,6 +295,53 @@ std::string flags_to_string(uint32_t flags) {
 
 bool is_arc_card(device_family family);
 bool should_disable_rdma(const ze_device_handle_t& device);
+
+// ==== proxy service staging copy engines context ====
+
+struct ze_staging_copy_engines {
+    uint32_t main_ordinal = UINT32_MAX; // BCS0 — 1 queue
+    uint32_t link_ordinal = UINT32_MAX; // BCS1-8 — multiple queues
+    uint32_t link_n_queues = 0;
+    ze_context_handle_t ze_ctx = nullptr;
+    ze_device_handle_t ze_dev = nullptr;
+};
+
+struct ze_staging_copy_context {
+    // Software-pipeline depth of the staging send/recv path: the number of host
+    // staging buffers (and per-direction completion events) kept in flight.
+    static constexpr int pipeline_depth = 2;
+
+    ze_context_handle_t ze_ctx = nullptr;
+    ze_command_list_handle_t d2h_cmdlist = nullptr; // should be link copy engine
+    ze_command_list_handle_t h2d_cmdlist = nullptr; // should be link copy engine
+    ze_event_pool_handle_t event_pool = nullptr;
+    // One event per in-flight buffer, per direction.
+    ze_event_handle_t d2h_ev[pipeline_depth] = {};
+    ze_event_handle_t h2d_ev[pipeline_depth] = {};
+};
+
+// Create command lists for copy engines. Call once during proxy init.
+ze_staging_copy_engines ze_find_copy_engines(const sycl::queue& q);
+ze_command_list_handle_t ze_create_link_copy_cmdlist(const ze_staging_copy_engines& eng,
+                                                     uint32_t link_queue_index);
+ze_command_list_handle_t ze_create_main_copy_cmdlist(const ze_staging_copy_engines& eng);
+ze_staging_copy_context ze_copy_context_create(const ze_staging_copy_engines& eng);
+void ze_copy_context_destroy(ze_staging_copy_context& ctx);
+// Submit copy command list and wait for completion.
+void ze_submit_copy(ze_command_list_handle_t cmdlist,
+                    void* dst,
+                    const void* src,
+                    size_t n,
+                    ze_event_handle_t signal_ev);
+void ze_wait_and_reset(ze_event_handle_t ev);
+
+// GDR (GPU Direct RDMA) mmap utilities for device memory access from host
+void* ze_ipc_mmap_device_allocation(ze_context_handle_t ctx,
+                                    void* device_ptr,
+                                    size_t size_bytes);
+
+void ze_ipc_munmap_device_allocation(void* host_ptr,
+                                     size_t size_bytes);
 
 } // namespace ze
 } // namespace ccl

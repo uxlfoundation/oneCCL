@@ -829,10 +829,10 @@ int parse_user_options(int& argc, char**(&argv), user_options_t& options) {
     if (options.inplace) {
         // TODO: "allgatherv", "reduce_scatter" it'd pass with sycl kernels
         // they must be checked with schedule architicture.
-        std::initializer_list<std::string> supported_colls = { "allgather",     "allgatherv",
-                                                               "allreduce",     "alltoall",
-                                                               "alltoallv",     "broadcast",
-                                                               "reduce_scatter" };
+        std::initializer_list<std::string> supported_colls = { "allgather",      "allgatherv",
+                                                               "allreduce",      "alltoall",
+                                                               "alltoallv",      "broadcast",
+                                                               "reduce_scatter", "scatter" };
         for (auto name : options.coll_names) {
             if (!is_inplace_supported(name, supported_colls)) {
                 PRINT("inplace is not supported for %s yet", name.c_str());

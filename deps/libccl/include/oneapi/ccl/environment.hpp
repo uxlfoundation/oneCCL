@@ -72,6 +72,8 @@
 
 #include "oneapi/ccl/exception.hpp"
 
+#include "oneapi/ccl/device_api/window.hpp"
+#include "oneapi/ccl/device_api/dev_comm.hpp"
 #include "oneapi/ccl/window.hpp"
 
 namespace ccl {

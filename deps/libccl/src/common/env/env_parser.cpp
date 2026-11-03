@@ -20,15 +20,6 @@ extern char** environ;
 
 namespace ccl {
 
-// static file functions
-
-static bool is_run_with_mpi() {
-    return (getenv("MPI_LOCALRANKID") || getenv("MPI_LOCALNRANKS") || getenv("PMI_RANK") ||
-            getenv("PMI_SIZE") || getenv("PMIX_RANK"))
-               ? true
-               : false;
-}
-
 // env_parser class implementation
 
 env_parser::env_parser()
@@ -44,16 +35,9 @@ env_parser::env_parser()
 void env_parser::env_2_atl_transport(
     std::map<ccl_atl_transport, std::string> const& atl_transport_names,
     ccl_atl_transport& atl_transport) {
-#ifdef CCL_ENABLE_MPI
-    if (!getenv(CCL_ATL_TRANSPORT) && !is_run_with_mpi()) {
-        LOG_WARN("did not find MPI-launcher specific variables, switch to ATL/OFI, "
-                 "to force enable ATL/MPI set CCL_ATL_TRANSPORT=mpi");
-        unused_check_skip.insert(CCL_ATL_TRANSPORT);
-        atl_transport = ccl_atl_ofi;
-    }
-    else
-#endif // CCL_ENABLE_MPI
-        env_2_enum(CCL_ATL_TRANSPORT, atl_transport_names, atl_transport);
+    // Runtime transport selection via CCL_ATL_TRANSPORT (ofi|mpi).
+    // Unset → ofi is the default (env_data ctor already initializes atl_transport to ccl_atl_ofi).
+    env_2_enum(CCL_ATL_TRANSPORT, atl_transport_names, atl_transport);
 }
 
 void env_parser::warn_about_unused_var() const {

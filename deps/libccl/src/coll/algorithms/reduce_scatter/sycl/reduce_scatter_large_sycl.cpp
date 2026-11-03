@@ -92,9 +92,10 @@ ccl::event reduce_scatter_large(const void *send_buf,
                                 ccl::datatype dtype,
                                 ccl::reduction reduction,
                                 ccl_comm *comm,
+                                std::shared_ptr<ccl_comm> p2p_comm,
                                 ccl_stream *global_stream,
                                 const ccl::vector_class<ccl::event> &deps,
-                                sycl_coll_scaleup_attr coll_attr) {
+                                sycl_scaleup_options coll_attr) {
     if (comm->is_multi_thread_instance() == true) {
         LOG_DEBUG("invoking MT reduce_scatter_large");
         ccl::global_data::env().sycl_reduce_scatter_tmp_buf = 1;
@@ -111,7 +112,7 @@ ccl::event reduce_scatter_large(const void *send_buf,
     std::shared_ptr<ccl_comm> even_comm = comm->get_even_comm();
 
     // BMG path
-    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family) && pair_comm->size() == 1) {
+    if (is_arc_card(ccl::global_data::get().ze_data->devices[0].family)) {
         // tmp_buf flag ignored, since temp buffer is always used,
         // there is no algorithm which does not use tmp buf
         bool is_tmp_used = ccl::global_data::env().sycl_reduce_scatter_tmp_buf;
@@ -122,7 +123,7 @@ ccl::event reduce_scatter_large(const void *send_buf,
         // with the scalar applied, then run the ring with SUM transport semantics over the preprocessed staging buffer.
         // recv_buf cannot be reused because it only holds this rank's slice (recv_count).
         const bool reduce_has_pre_operation = ccl_reduction_type_storage::is_custom(reduction);
-        const size_t world_count = recv_count * comm->get_node_comm()->size();
+        const size_t world_count = recv_count * p2p_comm->size();
         const size_t world_bytes =
             world_count * ccl::global_data::get().dtypes->get(dtype).size();
         // The scratch is fixed-size; if the full input doesn't fit, skip the BMG branch and fall
@@ -131,6 +132,7 @@ ccl::event reduce_scatter_large(const void *send_buf,
         // dispatcher's rearrange/chunk logic for a regime that's not a known hot path.
         const bool staging_fits =
             world_bytes <= (size_t)comm->get_scaleout_device_buf_size();
+        LOG_DEBUG("invoking reduce_scatter_large BMG path: reduce_has_pre_operation: ", reduce_has_pre_operation, " staging_fits: ", staging_fits);
         if (!reduce_has_pre_operation || staging_fits) {
             const void *transport_send_buf = send_buf;
             ccl::reduction transport_reduction = reduction;
@@ -138,11 +140,10 @@ ccl::event reduce_scatter_large(const void *send_buf,
             void *preop_staging_buf = nullptr;
             if (reduce_has_pre_operation) {
                 sycl::queue q = global_stream->get_native_stream();
-                std::shared_ptr<ccl_comm> node_comm = comm->get_node_comm();
                 preop_staging_buf = comm->get_scaleout_device_buf(q);
                 ccl::event preop_event = stage_and_apply_custom_preop(
                     q, preop_staging_buf, send_buf, world_count, dtype, reduction,
-                    node_comm->get_tmp_buf_size(), get_sycl_events(deps));
+                    p2p_comm->get_tmp_buf_size(), get_sycl_events(deps));
                 transport_send_buf = preop_staging_buf;
                 transport_reduction = ccl::reduction::sum;
                 transport_deps_local.push_back(std::move(preop_event));
@@ -152,7 +153,7 @@ ccl::event reduce_scatter_large(const void *send_buf,
             auto lambda = [&]<typename T>() {
                 return reduce_scatter_large_su_ring<T>(
                     transport_send_buf, recv_buf, recv_count, dtype, transport_reduction,
-                    comm, global_stream, sycl_ptrs, transport_deps);
+                    comm, p2p_comm, global_stream, sycl_ptrs, transport_deps);
             };
             sycl::event e = invoke_collective_sycl(lambda, dtype);
             if (preop_staging_buf) {
@@ -200,7 +201,7 @@ ccl::event reduce_scatter_large(const void *send_buf,
     if (!is_tmp_used) {
         ccl_sched *sched = NULL;
         ze_handle_exchange_entry *exchange_entry = NULL;
-        const size_t comm_size = node_comm->size();
+        const size_t comm_size = p2p_comm->size();
 
         std::vector<void *> registered_send_ptrs =
             node_comm->get_registered_ptrs(send_buf, recv_count * dsize * comm_size);
@@ -208,7 +209,7 @@ ccl::event reduce_scatter_large(const void *send_buf,
         if (registered_send_ptrs.size()) {
             LOG_DEBUG("reduce_scatter pointers are registered \n");
             sycl_ptrs.xelink_ptrs_rd =
-                get_ipc_ptrs<void, MAX_GPUS>(registered_send_ptrs, comm, even_comm, (void *)send_buf);
+                get_ipc_ptrs<void, MAX_NODE_RANKS>(registered_send_ptrs, p2p_comm.get(), even_comm, (void *)send_buf);
         }
         else {
             std::vector<void *> ptrs{ (void *)send_buf, recv_buf }; // index 0 and 1
@@ -216,7 +217,7 @@ ccl::event reduce_scatter_large(const void *send_buf,
             sched = p.first;
             exchange_entry = p.second;
 
-            sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_GPUS>(even_comm, 0, (void *)send_buf, sched);
+            sycl_ptrs.xelink_ptrs_rd = get_ipc_ptrs<void, MAX_NODE_RANKS>(even_comm, 0, (void *)send_buf, sched);
         }
 
         // use full vector (>= 8 bytes) if remote buffers and data size are 4 byte aligned
@@ -242,11 +243,11 @@ ccl::event reduce_scatter_large(const void *send_buf,
     else {
         // 0 index is used for tmp work buffer and
         // 1 index is used to copy input data
-        sycl_ptrs.xelink_ptrs_rd = get_remote_even_tmp_buf(1, comm);
+        sycl_ptrs.xelink_ptrs_rd = get_remote_large_tmp_buf(1, even_comm.get());
         if (pair_comm->size() > 1) {
             assert(pair_comm->size() == MAX_TILES);
             int peer_pair_rank = pair_comm->rank() ? 0 : 1;
-            sycl_ptrs.mdfi_ptr_rd = get_remote_pair_tmp_buf(1, comm)[peer_pair_rank];
+            sycl_ptrs.mdfi_ptr_rd = get_remote_large_tmp_buf(1, pair_comm.get())[peer_pair_rank];
         }
     }
 

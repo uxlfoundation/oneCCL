@@ -32,6 +32,7 @@ class ccl_alltoall_attr_impl_t;
 class ccl_alltoallv_attr_impl_t;
 class ccl_barrier_attr_impl_t;
 class ccl_broadcast_attr_impl_t;
+class ccl_gather_attr_impl_t;
 class ccl_pt2pt_attr_impl_t;
 class ccl_reduce_attr_impl_t;
 class ccl_reduce_scatter_attr_impl_t;
@@ -459,6 +460,48 @@ private:
 };
 
 /**
+ * Gather coll attributes
+ */
+class gather_attr : public ccl_api_base_copyable<gather_attr,
+                                                 copy_on_write_access_policy,
+                                                 ccl_gather_attr_impl_t> {
+public:
+    using base_t =
+        ccl_api_base_copyable<gather_attr, copy_on_write_access_policy, ccl_gather_attr_impl_t>;
+
+    /**
+     * Declare PIMPL type
+     */
+    using impl_value_t = typename base_t::impl_value_t;
+
+    /**
+     * Declare implementation type
+     */
+    using impl_t = typename impl_value_t::element_type;
+
+    gather_attr(gather_attr&& src);
+    gather_attr(const gather_attr& src);
+    gather_attr& operator=(gather_attr&& src) noexcept;
+    gather_attr& operator=(const gather_attr& src);
+    ~gather_attr();
+
+    template <operation_attr_id attrId, class Value>
+    typename detail::ccl_api_type_attr_traits<operation_attr_id, attrId>::return_type set(
+        const Value& v);
+
+    template <operation_attr_id attrId>
+    const typename detail::ccl_api_type_attr_traits<operation_attr_id, attrId>::return_type& get()
+        const;
+
+private:
+    friend class ccl::detail::environment;
+    friend struct ccl::ccl_empty_attr;
+    gather_attr(
+        const typename detail::ccl_api_type_attr_traits<operation_attr_id,
+                                                        operation_attr_id::version>::type& version);
+};
+
+/**
  * Reduce coll attributes
  */
 class reduce_attr : public ccl_api_base_copyable<reduce_attr,
@@ -688,6 +731,7 @@ extern alltoall_attr default_alltoall_attr;
 extern alltoallv_attr default_alltoallv_attr;
 extern barrier_attr default_barrier_attr;
 extern broadcast_attr default_broadcast_attr;
+extern gather_attr default_gather_attr;
 extern pt2pt_attr default_pt2pt_attr;
 extern reduce_attr default_reduce_attr;
 extern reduce_scatter_attr default_reduce_scatter_attr;
@@ -775,6 +819,7 @@ using v1::alltoall_attr;
 using v1::alltoallv_attr;
 using v1::barrier_attr;
 using v1::broadcast_attr;
+using v1::gather_attr;
 using v1::pt2pt_attr;
 using v1::reduce_attr;
 using v1::reduce_scatter_attr;
@@ -787,6 +832,7 @@ using v1::default_alltoall_attr;
 using v1::default_alltoallv_attr;
 using v1::default_barrier_attr;
 using v1::default_broadcast_attr;
+using v1::default_gather_attr;
 using v1::default_pt2pt_attr;
 using v1::default_reduce_attr;
 using v1::default_reduce_scatter_attr;

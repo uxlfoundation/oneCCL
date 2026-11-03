@@ -27,44 +27,69 @@ namespace ccl {
 lib_info_t ofi_lib_info;
 ofi_lib_ops_t ofi_lib_ops;
 
-std::string get_ofi_lib_path() {
-    // lib_path specifies the name and full path to the OFI library -
-    // it should be an absolute and validated path pointing to the
-    // desired libfabric library
+static std::string get_relative_ccl_root_path();
 
-    // the order of searching for libfabric is:
-    // * CCL_OFI_LIBRARY_PATH (ofi_lib_path env)
-    // * I_MPI_OFI_LIBRARY
-    // * I_MPI_ROOT/opt/mpi/libfabric/lib
-    // * LD_LIBRARY_PATH
+std::string get_ofi_lib_path() {
+    // lib_path specifies the name and full path to the OFI library.
+    // Search order:
+    // 1. CCL_OFI_LIBRARY_PATH (always)
+    // 2. I_MPI_OFI_LIBRARY (only when transport==mpi)
+    // 3. $I_MPI_ROOT/opt/mpi/libfabric/lib/libfabric.so.1 (only when transport==mpi)
+    // 4. CCL_ROOT-relative bundled libfabric (dladdr-derived CCL_ROOT):
+    //      /opt/mpi/libfabric/lib/libfabric.so.1 (where we install it)
+    //      /lib/libfabric/libfabric.so            (IMPI <= 2021.14)
+    //      /lib/libfabric.so                      (IMPI 2021.15)
+    // 5. "libfabric.so.1" (LD_LIBRARY_PATH / ldconfig)
 
     auto ofi_lib_path = ccl::global_data::env().ofi_lib_path;
     if (!ofi_lib_path.empty()) {
         LOG_DEBUG("OFI lib path (CCL_OFI_LIBRARY_PATH): ", ofi_lib_path);
+        return ofi_lib_path;
     }
-    else {
+
+    // When MPI transport is requested, check Intel MPI environment variables first
+    // to ensure oneCCL and atl_mpi agree on the libfabric version (they share a process).
+    if (ccl::global_data::env().atl_transport == ccl_atl_mpi) {
         char* mpi_ofi_path = getenv("I_MPI_OFI_LIBRARY");
-        if (mpi_ofi_path) {
+        if (mpi_ofi_path && mpi_ofi_path[0] != '\0') {
             ofi_lib_path = std::string(mpi_ofi_path);
             LOG_DEBUG("OFI lib path (I_MPI_OFI_LIBRARY): ", ofi_lib_path);
+            return ofi_lib_path;
         }
-        else {
-            char* mpi_root = getenv("I_MPI_ROOT");
-            std::string mpi_root_ofi_lib_path =
-                mpi_root == NULL ? std::string() : std::string(mpi_root);
-            mpi_root_ofi_lib_path += "/opt/mpi/libfabric/lib/libfabric.so";
+
+        char* mpi_root = getenv("I_MPI_ROOT");
+        if (mpi_root) {
+            std::string mpi_root_ofi_lib_path = std::string(mpi_root) + "/opt/mpi/libfabric/lib/libfabric.so.1";
             struct stat buffer {};
-            if (mpi_root && stat(mpi_root_ofi_lib_path.c_str(), &buffer) == 0) {
-                ofi_lib_path = std::move(mpi_root_ofi_lib_path);
-                LOG_DEBUG("OFI lib path (MPI_ROOT/opt/mpi/libfabric/lib/): ", ofi_lib_path);
-            }
-            else {
-                ofi_lib_path = "libfabric.so.1";
-                LOG_DEBUG("OFI lib path (LD_LIBRARY_PATH): ", ofi_lib_path);
+            if (stat(mpi_root_ofi_lib_path.c_str(), &buffer) == 0) {
+                LOG_DEBUG("OFI lib path (I_MPI_ROOT/opt/mpi/libfabric/lib/): ", mpi_root_ofi_lib_path);
+                return mpi_root_ofi_lib_path;
             }
         }
     }
 
+    // Prefer the libfabric bundled with the package. The relative paths cover the
+    // different install layouts (default install is opt/mpi/libfabric/lib).
+    auto ccl_root = get_relative_ccl_root_path();
+    if (!ccl_root.empty()) {
+        const char* relative_paths[] = {
+            "/opt/mpi/libfabric/lib/libfabric.so.1", // Our actual install path
+            "/lib/libfabric/libfabric.so",            // IMPI <= 2021.14
+            "/lib/libfabric.so",                      // IMPI 2021.15
+        };
+        struct stat buffer {};
+        for (const char* rel : relative_paths) {
+            std::string candidate = ccl_root + rel;
+            if (stat(candidate.c_str(), &buffer) == 0) {
+                LOG_DEBUG("OFI lib path (bundled): ", candidate);
+                return candidate;
+            }
+        }
+    }
+
+    // Fall back to the system libfabric resolved through LD_LIBRARY_PATH/ldconfig.
+    ofi_lib_path = "libfabric.so.1";
+    LOG_DEBUG("OFI lib path (LD_LIBRARY_PATH): ", ofi_lib_path);
     return ofi_lib_path;
 }
 
@@ -103,26 +128,15 @@ static bool load_libfabric() {
         return true;
     }
 
-    print_error(error, ofi_lib_info);
-    LOG_INFO("Retrying to load libfabric.so using relative path");
-
-    auto realtive_root = get_relative_ccl_root_path();
-    if (realtive_root.empty()) {
-        return false;
-    }
-
-    // Path up to IMPI 2021.14
-    ofi_lib_info.path = realtive_root + "/lib/libfabric/libfabric.so";
-    error = load_library(ofi_lib_info);
-    if (error == CCL_LOAD_LB_SUCCESS) {
-        return true;
-    }
-
-    // Path in IMPI 2021.15
-    ofi_lib_info.path = realtive_root + "/lib/libfabric.so";
-    error = load_library(ofi_lib_info);
-    if (error == CCL_LOAD_LB_SUCCESS) {
-        return true;
+    // If the bundled/explicit path failed, retry the system libfabric as a last resort.
+    if (ofi_lib_info.path != "libfabric.so.1") {
+        print_error(error, ofi_lib_info);
+        LOG_INFO("Retrying to load system libfabric.so.1");
+        ofi_lib_info.path = "libfabric.so.1";
+        error = load_library(ofi_lib_info);
+        if (error == CCL_LOAD_LB_SUCCESS) {
+            return true;
+        }
     }
 
     print_error(error, ofi_lib_info);
@@ -130,8 +144,10 @@ static bool load_libfabric() {
 }
 
 static void setup_providers() {
+    // An exported-but-empty FI_PROVIDER_PATH is treated as unset: it carries no
+    // search path, and CI environments propagate empty values for unset vars.
     const char* fi_provider_path = getenv("FI_PROVIDER_PATH");
-    if (fi_provider_path != nullptr) {
+    if (fi_provider_path != nullptr && *fi_provider_path != '\0') {
         LOG_DEBUG("FI_PROVIDER_PATH is already set to: ", fi_provider_path);
         return;
     }
@@ -146,18 +162,26 @@ static void setup_providers() {
         return;
     }
 
-    std::string primary_path = std::string(real_libfabric_path);
-    std::string secondary_path = primary_path + "/prov";
+    // libfabric honors only the first entry of FI_PROVIDER_PATH, so this must be
+    // the directory holding the provider plugins - not a colon-joined list, and
+    // not the directory of the core library itself.
+    std::string provider_path = std::string(real_libfabric_path) + "/prov";
 
-    // Construct the full provider path with colon separator
-    std::string full_provider_path = primary_path + ":" + secondary_path;
+    // Leave FI_PROVIDER_PATH unset when there is no bundled provider directory:
+    // setting it to a non-existent path would override libfabric's own default
+    // search and hide providers built into the library we loaded.
+    struct stat buffer {};
+    if (stat(provider_path.c_str(), &buffer) != 0) {
+        LOG_DEBUG("no provider directory at ", provider_path, ", leaving FI_PROVIDER_PATH unset");
+        return;
+    }
 
-    if (setenv("FI_PROVIDER_PATH", full_provider_path.c_str(), 1) != 0) {
+    if (setenv("FI_PROVIDER_PATH", provider_path.c_str(), 1) != 0) {
         LOG_ERROR("Failed to set FI_PROVIDER_PATH with error: ", strerror(errno));
         return;
     }
 
-    LOG_DEBUG("FI_PROVIDER_PATH set to: ", full_provider_path);
+    LOG_DEBUG("FI_PROVIDER_PATH set to: ", provider_path);
 }
 
 bool ofi_api_init() {

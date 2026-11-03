@@ -16,11 +16,14 @@
 
 #include "atl/mpi/atl_mpi_ctx.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
+#include "coll/algorithms/utils/host_task.hpp"
 
 #if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 #include "coll/algorithms/allgatherv/sycl/allgatherv_sycl.hpp"
 #include "coll/algorithms/allgatherv/sycl/allgatherv_ring.hpp"
 #endif // defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
+
+#include "proxy/proxy.hpp"
 
 ccl::event allgatherv_scaleout_sycl_direct(sycl::queue& q,
                                            const void* send_buf,
@@ -79,31 +82,21 @@ ccl::event allgatherv_scaleout_sycl_direct(sycl::queue& q,
         }
     }
 
-    auto op_end = q.submit([=](sycl::handler& h) {
-        h.depends_on(sycl_deps);
-        h.host_task([=]() {
-            // call ccl::wrapper for MPI/OFI.
-            int ep_idx = 0;
-            atl_req_t req;
-            std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-            ATL_CALL_THROW_IF_ERROR(
-                atl_comm->allgatherv(ep_idx,
-                                     scaleout_send_buf,
-                                     send_count * ccl_dtype.size(),
-                                     scaleout_recv_buf,
-                                     recv_scaleout_bytes.data(),
-                                     copy_to_host ? scaleout_offsets.data() : recv_offsets.data(),
-                                     req));
+    auto op_end = ccl_host_task(q, sycl_deps, [=]() {
+        // call ccl::wrapper for MPI/OFI.
+        int ep_idx = 0;
+        atl_req_t req;
+        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+        ATL_CALL_THROW_IF_ERROR(
+            atl_comm->allgatherv(ep_idx,
+                                 scaleout_send_buf,
+                                 send_count * ccl_dtype.size(),
+                                 scaleout_recv_buf,
+                                 recv_scaleout_bytes.data(),
+                                 copy_to_host ? scaleout_offsets.data() : recv_offsets.data(),
+                                 req));
 
-            ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, req));
-            if (!req.is_completed) {
-                // We do not want to call check() in a loop (because we would call MPI_Test repeatedly). Call MPI_Wait() instead.
-                ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, req));
-            }
-            else {
-                // The operation was probably blocking, since it finished really quickly
-            }
-        });
+        atl_comm->check_wait_throw(ep_idx, req);
     });
 
     if (copy_to_host && aux_buf == nullptr) {
@@ -128,17 +121,29 @@ ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
                                     const ccl::vector_class<ccl::event>& deps,
                                     bool original_deps,
                                     bool& done,
-                                    sycl_allgatherv_tune_attr tune_attr,
+                                    sycl_scaleout_tune_attr tune_attr,
                                     bool copy_to_host,
                                     bool is_cpu_buffers,
                                     void* aux_buf) {
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
-    switch (tune_attr.algo) {
-        case allgatherv_scaleout_algo::direct: {
+
+    // when the proxy service is enabled for allgatherv, the selected algorithm runs its
+    // scale-out exchange on the proxy thread instead of in a host task; a service that
+    // failed to start (already warned about) leaves the non-proxy implementation
+    const bool use_proxy = ccl::global_data::env().sycl_enable_allgatherv_scaleout_proxy &&
+                           ccl::global_data::get().proxy_service->is_started();
+
+    switch (tune_attr.algo()) {
+        case ccl::sycl_policy::algorithm::direct:
+        default: {
 #ifdef CCL_ENABLE_ITT
             ccl::profile::itt::task_begin(
                 "allgatherv_scaleout_sycl_direct", "send_size", send_count * ccl_dtype.size(), comm->unique_id());
 #endif // CCL_ENABLE_ITT
+            LOG_DEBUG("|CCL_SYCL| allgatherv scaleout selects direct kernel, send_count:",
+                      send_count,
+                      " datatype: ",
+                      dtype);
             auto e = allgatherv_scaleout_sycl_direct(q,
                                                      send_buf,
                                                      send_count,
@@ -157,23 +162,48 @@ ccl::event allgatherv_scaleout_sycl(sycl::queue& q,
 #endif // CCL_ENABLE_ITT
             return e;
         }
-        case allgatherv_scaleout_algo::ring: {
+        case ccl::sycl_policy::algorithm::ring: {
 #ifdef CCL_ENABLE_ITT
             ccl::profile::itt::task_begin(
-                "allgatherv_scaleout_sycl_ring", "send_size", send_count * ccl_dtype.size(), comm->unique_id());
+                use_proxy ? "allgatherv_scaleout_sycl_proxy_ring" : "allgatherv_scaleout_sycl_ring",
+                "send_size",
+                send_count * ccl_dtype.size(),
+                comm->unique_id());
 #endif // CCL_ENABLE_ITT
-            auto ev = allgatherv_scaleout_sycl_ring(q,
-                                                    send_buf,
-                                                    send_count,
-                                                    recv_buf,
-                                                    recv_counts,
-                                                    recv_offsets,
-                                                    dtype,
-                                                    comm,
-                                                    deps,
-                                                    original_deps,
-                                                    tune_attr,
-                                                    done);
+            LOG_DEBUG("|CCL_SYCL| allgatherv scaleout selects ring kernel, send_count:",
+                      send_count,
+                      " datatype: ",
+                      dtype,
+                      " use_proxy: ",
+                      use_proxy);
+            sycl::event ev;
+            if (use_proxy) {
+                ev = allgatherv_scaleout_sycl_proxy_ring(q,
+                                                         send_buf,
+                                                         send_count,
+                                                         recv_buf,
+                                                         recv_counts,
+                                                         recv_offsets,
+                                                         dtype,
+                                                         comm,
+                                                         deps,
+                                                         tune_attr,
+                                                         done);
+            }
+            else {
+                ev = allgatherv_scaleout_sycl_ring(q,
+                                                   send_buf,
+                                                   send_count,
+                                                   recv_buf,
+                                                   recv_counts,
+                                                   recv_offsets,
+                                                   dtype,
+                                                   comm,
+                                                   deps,
+                                                   original_deps,
+                                                   tune_attr,
+                                                   done);
+            }
 #ifdef CCL_ENABLE_ITT
             ccl::profile::itt::task_end();
 #endif // CCL_ENABLE_ITT

@@ -189,6 +189,14 @@ TEST_F(NullPluginTest, CommExceptions) {
         onecclPluginException, onecclSuccess);
 
     test_with_exception(
+        ONECCL_BEFORE_SCATTER,
+        [&]() {
+            return onecclScatter(sendbuff.data(), recvbuff.data(), kCount,
+                                 onecclInt, 0, comm_xpu, nullptr);
+        },
+        onecclPluginException, onecclSuccess);
+
+    test_with_exception(
         ONECCL_BEFORE_SEND,
         [&]() {
             return onecclSend(sendbuff.data(), kCount, onecclInt, 1, comm_xpu,

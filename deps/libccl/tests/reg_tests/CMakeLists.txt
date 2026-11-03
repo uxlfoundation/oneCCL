@@ -44,7 +44,7 @@ if (DEFINED ENV{CCL_ROOT})
 endif()
 message(STATUS "CCL_ROOT: ${CCL_ROOT}")
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (${CMAKE_VERSION} VERSION_LESS 3.1)
@@ -73,4 +73,10 @@ if ("${COMPUTE_BACKEND}" STREQUAL "dpcpp")
     add_subdirectory(sycl)
     add_subdirectory(sycl/pt2pt)
     add_subdirectory(sycl/inference)
+    # internal tests use internal headers and are only available when
+    # building as part of the main oneCCL tree; guard on ccl-static as
+    # an indicator that this build context is available.
+    if (TARGET ccl-static)
+        add_subdirectory(sycl/internal_tests)
+    endif()
 endif()

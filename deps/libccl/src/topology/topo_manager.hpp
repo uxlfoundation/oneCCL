@@ -165,6 +165,9 @@ public:
     bool has_p2p_access() const;
     bool has_p2p_atomics() const;
     bool has_all_vertices_connected() const;
+    void set_p2p_access(bool val);
+    void set_p2p_atomics(bool val);
+    void set_all_vertices_connected(bool val);
     std::vector<ze_device_uuid_t> copy_dev_uuids(const rank_info_vec_t& info_vec) const;
     std::vector<ze_device_handle_t> get_filtered_devices(
         const std::vector<ze::device_info>& node_devices) const;
@@ -190,6 +193,9 @@ public:
     rank_info_vec_t get_filtered_rank_info_vec(int filter_host_idx,
                                                rank_info_vec_t in_rank_info_vec) const;
     rank_info_vec_t get_filtered_rank_info_vec(int filter_host_idx) const;
+    topo_host_info get_host_info(int host_id) const {
+        return host_info_vec[host_id];
+    }
 
     static std::string generate_uuid();
     static domains_t parse_topo_env();

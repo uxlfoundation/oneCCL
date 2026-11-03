@@ -279,9 +279,9 @@ function(activate_compute_backend MODULES_PATH COMPUTE_BACKEND)
     # When we use dpcpp compiler(dpcpp backends), use c++17 to be aligned with compiler
     if (${COMPUTE_BACKEND_TARGET_NAME} MATCHES "^Intel::SYCL.*")
         set(CMAKE_CXX_STANDARD 17 PARENT_SCOPE)
-    # And use c++11 for all other cases
+    # And use c++17 for all other cases
     else()
-        set(CMAKE_CXX_STANDARD 11 PARENT_SCOPE)
+        set(CMAKE_CXX_STANDARD 17 PARENT_SCOPE)
     endif()
 
     # set output variables in the parent scope:
@@ -317,9 +317,9 @@ function(set_compute_backend COMMON_CMAKE_DIR)
     # well bacause both set_compute_backend and activate_compute_backend can be called directly
     if (${COMPUTE_BACKEND_TARGET_NAME} MATCHES "^Intel::SYCL.*")
         set(CMAKE_CXX_STANDARD 17 PARENT_SCOPE)
-    # And use c++11 for all other cases
+    # And use c++17 for all other cases
     else()
-        set(CMAKE_CXX_STANDARD 11 PARENT_SCOPE)
+        set(CMAKE_CXX_STANDARD 17 PARENT_SCOPE)
     endif()
 
     if (NOT COMPUTE_BACKEND_TARGET_NAME)

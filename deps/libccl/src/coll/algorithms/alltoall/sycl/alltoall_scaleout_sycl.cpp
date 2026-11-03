@@ -16,11 +16,14 @@
 
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 #include "coll/algorithms/utils/sycl_selection.hpp"
+#include "coll/algorithms/utils/host_task.hpp"
 
 #if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 #include "coll/algorithms/alltoall/sycl/alltoall_sycl.hpp"
 #include "coll/algorithms/alltoall/sycl/alltoall_pairwise.hpp"
 #endif // defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
+
+#include "proxy/proxy.hpp"
 
 sycl::event alltoall_scaleout_sycl_simple_blocking(sycl::queue& q,
                                                    const void* send_buf,
@@ -39,7 +42,7 @@ sycl::event alltoall_scaleout_sycl_simple_blocking(sycl::queue& q,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t size = count * ccl_dtype.size();
 
-    const void* scaleout_send_buf = send_buf;
+    void* scaleout_send_buf = const_cast<void*>(send_buf);
     void* scaleout_recv_buf = recv_buf;
 
     if (original_deps)
@@ -51,10 +54,13 @@ sycl::event alltoall_scaleout_sycl_simple_blocking(sycl::queue& q,
 
     if (copy_to_host) {
         scaleout_recv_buf = comm->get_scaleout_host_buf();
-        scaleout_send_buf = scaleout_recv_buf;
+        scaleout_send_buf = ATL_IN_PLACE;
+        // OFI alltoall does not support in-place
+        if (ccl::global_data::env().atl_transport == ccl_atl_ofi)
+            scaleout_send_buf = comm->get_scaleout_host_buf();
         copy_e = q.submit([=](sycl::handler& h) {
             h.memcpy(
-                scaleout_recv_buf, send_buf == ATL_IN_PLACE ? recv_buf : send_buf, size * world);
+                scaleout_send_buf == ATL_IN_PLACE ? scaleout_recv_buf : scaleout_send_buf, send_buf == ATL_IN_PLACE ? recv_buf : send_buf, size * world);
         });
         copy_e.wait();
     }
@@ -114,7 +120,7 @@ sycl::event alltoall_scaleout_sycl_simple_nonblocking(sycl::queue& q,
     auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
     size_t size = count * ccl_dtype.size();
 
-    const void* scaleout_send_buf = send_buf;
+    void* scaleout_send_buf = const_cast<void*>(send_buf);
     void* scaleout_recv_buf = recv_buf;
 
     std::vector<sycl::event> dep_events = get_sycl_events(deps);
@@ -124,12 +130,15 @@ sycl::event alltoall_scaleout_sycl_simple_nonblocking(sycl::queue& q,
     void *mmap_src_buf, *mmap_dst_buf;
 
     if (copy_to_host) {
-        scaleout_send_buf = ATL_IN_PLACE;
         scaleout_recv_buf = comm->get_scaleout_host_buf();
+        scaleout_send_buf = ATL_IN_PLACE;
+        // OFI alltoall does not support in-place
+        if (ccl::global_data::env().atl_transport == ccl_atl_ofi)
+            scaleout_send_buf = comm->get_scaleout_host_buf();
         copy_e = q.submit([=](sycl::handler& h) {
             h.depends_on(dep_events);
             h.memcpy(
-                scaleout_recv_buf, send_buf == ATL_IN_PLACE ? recv_buf : send_buf, size * world);
+                scaleout_send_buf == ATL_IN_PLACE ? scaleout_recv_buf : scaleout_send_buf, send_buf == ATL_IN_PLACE ? recv_buf : send_buf, size * world);
         });
         dep_events.clear();
         dep_events.push_back(std::move(copy_e));
@@ -141,25 +150,14 @@ sycl::event alltoall_scaleout_sycl_simple_nonblocking(sycl::queue& q,
         }
     }
 
-    op_end = q.submit([=](sycl::handler& h) {
-        h.depends_on(dep_events);
-        h.host_task([=]() {
-            // call ccl::wrapper for MPI/OFI.
-            int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
-            atl_req_t req;
-            std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-            ATL_CALL_THROW_IF_ERROR(
-                atl_comm->alltoall(ep_idx, scaleout_send_buf, scaleout_recv_buf, size, req));
+    op_end = ccl_host_task(q, dep_events, [=]() {
+        int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+        atl_req_t req;
+        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+        ATL_CALL_THROW_IF_ERROR(
+            atl_comm->alltoall(ep_idx, scaleout_send_buf, scaleout_recv_buf, size, req));
 
-            ATL_CALL_THROW_IF_ERROR(atl_comm->check(ep_idx, req));
-            if (!req.is_completed) {
-                // We do not want to call check() in a loop (because we would call MPI_Test repeatedly). Call MPI_Wait() instead.
-                ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, req));
-            }
-            else {
-                // The operation was probably blocking, since it finished really quickly
-            }
-        });
+        atl_comm->check_wait_throw(ep_idx, req);
     });
 
     if (copy_to_host) {
@@ -181,7 +179,7 @@ inline sycl::event alltoall_scaleout_sycl_direct(sycl::queue& q,
                                                  ccl_comm* comm,
                                                  const ccl::vector_class<ccl::event>& deps,
                                                  bool original_deps,
-                                                 sycl_alltoall_tune_attr tune_attr,
+                                                 sycl_scaleout_tune_attr tune_attr,
                                                  bool& done,
                                                  bool copy_to_host,
                                                  bool is_cpu_buffers) {
@@ -222,15 +220,16 @@ ccl::event alltoall_scaleout_sycl(sycl::queue& q,
                                   ccl_stream* global_stream,
                                   const ccl::vector_class<ccl::event>& deps,
                                   bool original_deps,
-                                  sycl_alltoall_tune_attr tune_attr,
+                                  sycl_scaleout_tune_attr tune_attr,
                                   bool& done) {
-    alltoall_scaleout_algo algo = tune_attr.algo;
+    sycl_scaleout_algo algo = tune_attr.algo();
     ccl::event e;
     sycl::event ev;
     done = false;
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
 
     switch (algo) {
-        case alltoall_scaleout_algo::direct: {
+        case ccl::sycl_policy::algorithm::direct: {
             auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
             bool copy_to_host = ccl::global_data::env().sycl_enable_direct_gpu_rdma ? false : true;
             ze_device_handle_t ze_dev =
@@ -275,31 +274,35 @@ ccl::event alltoall_scaleout_sycl(sycl::queue& q,
 #endif // CCL_ENABLE_ITT
             return ccl::event::create_from_native(ev);
         }
-        case alltoall_scaleout_algo::pairwise:
-            e = alltoall_sycl_pairwise_rdma(
-                q, send_buf, recv_buf, count, dtype, comm, global_stream, deps, done);
-            return e;
-        case alltoall_scaleout_algo::scatter:
+        case ccl::sycl_policy::algorithm::scatter: {
+            // when the proxy service is enabled, run the exchange on the proxy thread;
+            // a service that failed to start leaves the non-proxy implementation
+            const bool use_proxy = ccl::global_data::env().sycl_enable_alltoall_scaleout_proxy &&
+                                   ccl::global_data::get().proxy_service->is_started();
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_begin(use_proxy ? "alltoall_sycl_scatter_rdma proxy"
+                                                    : "alltoall_sycl_scatter_rdma",
+                                          "send_size",
+                                          count * ccl_dtype.size());
+#endif // CCL_ENABLE_ITT
+            LOG_DEBUG("|CCL_SYCL| alltoall scaleout selects scatter kernel, count:",
+                      count,
+                      " datatype: ",
+                      dtype,
+                      " use_proxy: ",
+                      use_proxy);
             e = alltoall_sycl_scatter_rdma(
-                q, send_buf, recv_buf, count, dtype, comm, global_stream, deps, done);
+                q, send_buf, recv_buf, count, dtype, comm, global_stream, deps, use_proxy, done);
+#ifdef CCL_ENABLE_ITT
+            ccl::profile::itt::task_end();
+#endif // CCL_ENABLE_ITT
             return e;
-        case alltoall_scaleout_algo::gdr_only_pairwise:
+        }
+        case ccl::sycl_policy::algorithm::gdr_only_pairwise:
             e = alltoall_sycl_global_pairwise_rdma(
                 q, send_buf, recv_buf, count, dtype, comm, global_stream, deps, done);
             return e;
-        case alltoall_scaleout_algo::numa_gdr_only:
-            e = alltoall_sycl_numa_pairwise_rdma_oneshot(q,
-                                                         send_buf,
-                                                         recv_buf,
-                                                         count,
-                                                         dtype,
-                                                         comm,
-                                                         global_stream,
-                                                         deps,
-                                                         true /* batch_node */,
-                                                         done);
-            return e;
-        case alltoall_scaleout_algo::numa_gdr_split:
+        case ccl::sycl_policy::algorithm::numa_gdr_split:
             e = alltoall_sycl_numa_pairwise_rdma_oneshot_split(q,
                                                                send_buf,
                                                                recv_buf,
@@ -311,7 +314,7 @@ ccl::event alltoall_scaleout_sycl(sycl::queue& q,
                                                                true /* batch_node */,
                                                                done);
             return e;
-        case alltoall_scaleout_algo::fallback:
+        case ccl::sycl_policy::algorithm::fallback:
         default: done = false; return e;
     }
 }

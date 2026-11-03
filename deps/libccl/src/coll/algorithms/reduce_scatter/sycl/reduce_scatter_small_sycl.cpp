@@ -79,6 +79,7 @@ ccl::event reduce_scatter_small(const void* send_buf,
                                 ccl::datatype dtype,
                                 ccl::reduction reduction,
                                 ccl_comm* comm,
+                                std::shared_ptr<ccl_comm> p2p_comm,
                                 ccl_stream* global_stream,
                                 const ccl::vector_class<ccl::event>& deps) {
     if (comm->is_multi_thread_instance() == true) {
@@ -90,7 +91,7 @@ ccl::event reduce_scatter_small(const void* send_buf,
 
     auto lambda = [&]<typename T>() {
         return reduce_scatter_small_impl<T>(
-            send_buf, recv_buf, recv_count, rem_count, dtype, reduction, comm, global_stream, deps);
+            send_buf, recv_buf, recv_count, rem_count, dtype, reduction, comm, p2p_comm, global_stream, deps);
     };
     return invoke_collective(lambda, dtype);
 }

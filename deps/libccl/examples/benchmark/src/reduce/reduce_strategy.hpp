@@ -17,11 +17,16 @@
 #pragma once
 
 #include "cpu_coll.hpp"
+#include "coll_type.hpp"
 #include "reduce_strategy.hpp"
 
 struct reduce_strategy_impl {
     static constexpr const char* class_name() {
         return "reduce";
+    }
+
+    static constexpr coll_type class_id() {
+        return coll_type::reduce;
     }
 
     size_t get_send_multiplier() {

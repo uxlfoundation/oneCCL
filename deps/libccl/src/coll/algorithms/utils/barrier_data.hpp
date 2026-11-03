@@ -71,7 +71,7 @@ public:
     }
 
 private:
-    size_t *m_sync_ptrs;
+    size_t *m_sync_ptrs = nullptr;
     size_t m_count = 0;
 };
 
@@ -206,5 +206,47 @@ public:
 
     void set_remote_ptrs(std::array<size_t *, MAX_NODE_RANKS> ptrs) {
         d_remote_ptrs = ptrs;
+    }
+};
+
+class alignas(CACHELINE_SIZE) ccl_comm_pair_flag_data {
+private:
+    int m_rank;
+    int m_size;
+
+    // per-peer call counters, local to this rank (not IPC-shared), MAX_NODE_RANKS entries
+    size_t *d_pair_counts = nullptr;
+
+    // IPC-opened pointers: d_remote_ptrs[r] points to rank r's pair_flags array.
+    // pair_flags layout: one cell per peer, indexed by writer rank.
+    // A single cell is sufficient: Intel GPUs guarantee per-location coherence,
+    // so the monotonic marker alone ensures a poll cannot observe a stale value.
+    std::array<size_t *, MAX_NODE_RANKS> d_remote_ptrs{};
+
+public:
+    ccl_comm_pair_flag_data(int rank, int size) : m_rank(rank), m_size(size) {}
+
+    int rank() const {
+        return m_rank;
+    }
+
+    int size() const {
+        return m_size;
+    }
+
+    void set_pair_counts(size_t *p) {
+        d_pair_counts = p;
+    }
+
+    void set_remote_ptrs(std::array<size_t *, MAX_NODE_RANKS> ptrs) {
+        d_remote_ptrs = ptrs;
+    }
+
+    size_t *pair_counts() const {
+        return d_pair_counts;
+    }
+
+    std::array<size_t *, MAX_NODE_RANKS> remote_ptrs() const {
+        return d_remote_ptrs;
     }
 };

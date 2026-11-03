@@ -1,9 +1,9 @@
-if(ONECCL_ENABLE_MPI)
+if(ONECCL_TEST_USE_MPI)
     add_subdirectory(cpu)
 endif()
 
 if(COMPILER_SUPPORTS_SYCL)
-    if(ONECCL_ENABLE_MPI)
+    if(ONECCL_TEST_USE_MPI)
         add_subdirectory(multi)
         add_subdirectory(sycl)
         add_subdirectory(split)

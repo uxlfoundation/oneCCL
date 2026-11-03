@@ -91,7 +91,7 @@ ccl::event broadcast_small_impl(const void* send_buf,
     sycl::event kernel_event;
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     // VS : vec_size, SGS : sub_group_size
     auto broadcast_invoke = [=, &q]<int VS, int SGS>(std::vector<sycl::event>& sycl_deps) {
@@ -181,7 +181,7 @@ ccl::event broadcast_small_impl(const void* send_buf,
     }
     if (comm->is_multi_thread_instance() == true) {
         pthread_barrier_wait(
-            &ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     return ccl::event::create_from_native(kernel_event);
 }

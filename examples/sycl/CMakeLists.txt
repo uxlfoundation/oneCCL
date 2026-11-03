@@ -27,6 +27,24 @@ target_link_libraries(sycl_finalize PRIVATE oneCCL2)
 target_link_libraries(sycl_graph PRIVATE oneCCL2)
 target_link_libraries(sycl_graph_finalize PRIVATE oneCCL2)
 
+# Device-API examples: the v2 device header wraps the v1 device-side API, which
+# is header-inline, so take libccl's headers without linking it. Still depend on
+# ccl for ordering: libccl generates config.h, so it has to be built before
+# these compile.
+set(LSA_EXAMPLES sycl_lsa
+                 sycl_lsa_device
+                 sycl_lsa_host
+                 sycl_lsa_reduce_sum
+                 sycl_lsa_allreduce)
+foreach(example ${LSA_EXAMPLES})
+    add_executable(${example} ${example}.cpp)
+    target_link_libraries(${example} PRIVATE MPI::MPI_CXX oneCCL2 Threads::Threads)
+    target_include_directories(${example} PRIVATE
+                               $<TARGET_PROPERTY:ccl,INTERFACE_INCLUDE_DIRECTORIES>)
+    add_dependencies(${example} ccl)
+    add_sycl_to_target(TARGET ${example} SOURCES ${example}.cpp)
+endforeach()
+
 # Add threads, W/A for sycl issues with linking
 target_link_libraries(sycl PRIVATE Threads::Threads)
 target_link_libraries(sycl_memory_api PRIVATE Threads::Threads)
@@ -63,4 +81,16 @@ if(${ONECCL_BUILD_TESTS})
     add_test(NAME example_sycl_graph_finalize COMMAND mpiexec -n 2 $<TARGET_FILE:sycl_graph_finalize> CONFIGURATIONS examples_sycl)
     set_property(TEST example_sycl_graph_finalize PROPERTY ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:ccl_legacy>")
     set_tests_properties(example_sycl_graph_finalize PROPERTIES TIMEOUT 600)
+
+    foreach(example sycl_lsa sycl_lsa_device sycl_lsa_host sycl_lsa_reduce_sum)
+        add_test(NAME example_${example} COMMAND mpiexec -n 2 $<TARGET_FILE:${example}> CONFIGURATIONS examples_sycl)
+        set_property(TEST example_${example} PROPERTY ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:ccl_legacy>")
+        set_tests_properties(example_${example} PROPERTIES TIMEOUT 600)
+    endforeach()
+
+    # Bounded sweep: the default 1..4M x 3 modes x 120 iters is a benchmark run,
+    # too slow for a test leg.
+    add_test(NAME example_sycl_lsa_allreduce COMMAND mpiexec -n 2 $<TARGET_FILE:sycl_lsa_allreduce> 1024 65536 CONFIGURATIONS examples_sycl)
+    set_property(TEST example_sycl_lsa_allreduce PROPERTY ENVIRONMENT_MODIFICATION "LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:ccl_legacy>")
+    set_tests_properties(example_sycl_lsa_allreduce PROPERTIES TIMEOUT 600)
 endif()

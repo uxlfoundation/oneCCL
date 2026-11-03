@@ -25,6 +25,9 @@
 #include "sched/buffer/buffer_cache.hpp"
 #include "sched/cache/cache.hpp"
 #include "sched/cache/recycle_storage.hpp"
+#if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
+#include "proxy/proxy.hpp"
+#endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 
 #include <sys/utsname.h>
 
@@ -82,6 +85,9 @@ ccl::status global_data::reset() {
         executor is responsible for resize logic and has own multi-step reset
      */
     executor.reset();
+#if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
+    proxy_service.reset();
+#endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
     reset_resize_dependent_objects();
     reset_resize_independent_objects();
 
@@ -103,6 +109,11 @@ ccl::status global_data::init() {
 
     set_local_coord();
     api_wrappers_init();
+
+    // Device-dependent defaults must be applied AFTER api_wrappers_init()
+    // because it constructs ze_data (see api_wrapper.cpp). set_internal_env
+    // downstream may consume these fields, so run this first.
+    env_object.adjust_device_defaults();
 
     env_object.set_internal_env();
 
@@ -134,6 +145,9 @@ void global_data::init_resize_dependent_objects() {
     }
 
     executor.reset(new ccl_executor());
+#if defined(CCL_ENABLE_ZE) && defined(CCL_ENABLE_SYCL)
+    proxy_service.reset(new ccl_proxy_service());
+#endif // CCL_ENABLE_ZE && CCL_ENABLE_SYCL
 }
 
 void global_data::init_resize_independent_objects() {

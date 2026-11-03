@@ -28,7 +28,8 @@ set_property(CACHE ONECCL_LIBCCL_SYCL_DEVICE_CODE_SPLIT
              PROPERTY STRINGS "" per_kernel per_source off)
 option(ONECCL_LIBCCL_EXTERN_TEMPLATE_INST
        "Emit extern template declarations + per-dtype inst files in libccl (Release iteration win, Debug link-phase cost)" ON)
-option(ONECCL_ENABLE_MPI "Enable MPI support" ON)
+option(ONECCL_BUNDLE_MPI "Install the bundled Intel MPI into the package" OFF)
+option(ONECCL_TEST_USE_MPI "Use an external MPI to launch tests/examples (library transport is independent of this)" ON)
 option(CCL_ENABLE_ARCA "Enable ARCA for embedded libccl builds" OFF)
 option(CCL_ENABLE_ARCB "Enable ARCB for embedded libccl builds" OFF)
 
@@ -130,6 +131,35 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|IntelLLVM")
 endif()
 
 include(cmake/compat.cmake)
+
+# ---------------------------------------------------------------------------
+# Git hooks — activate automatically on configure so every developer gets the
+# commit-msg linter without any manual setup step.
+# Only runs inside an actual git working tree; skipped in CI/package builds and
+# in the open source distribution, which does not ship utils/.
+# ---------------------------------------------------------------------------
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --git-dir
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_QUIET ERROR_QUIET
+        RESULT_VARIABLE _in_git_repo
+    )
+    if(_in_git_repo EQUAL 0 AND IS_DIRECTORY "${CMAKE_SOURCE_DIR}/utils/hooks")
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} config core.hooksPath utils/hooks
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            RESULT_VARIABLE _hook_result
+        )
+        if(_hook_result EQUAL 0)
+            message(STATUS "oneCCL: git commit-msg hook activated (utils/hooks)")
+        else()
+            message(WARNING "oneCCL: failed to set core.hooksPath — activate manually: "
+                            "git config core.hooksPath utils/hooks")
+        endif()
+    endif()
+endif()
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/_install" CACHE PATH "Default install path" FORCE)
@@ -240,7 +270,8 @@ if(ONECCL_BUILD_LIBS)
                     "-DSYCL_DEVICE_CODE_SPLIT=${ONECCL_LIBCCL_SYCL_DEVICE_CODE_SPLIT}"
                     "-DENABLE_EXTERN_TEMPLATE_INST=${ONECCL_LIBCCL_EXTERN_TEMPLATE_INST}"
                     "-DENABLE_ITT=${ONECCL_ENABLE_ITT}"
-                    "-DONECCL_ENABLE_MPI=${ONECCL_ENABLE_MPI}"
+                    "-DBUNDLE_MPI=${ONECCL_BUNDLE_MPI}"
+                    "-DENABLE_LINKER_RUNPATH=ON"
                 )
                 set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2 -fsycl-max-parallel-link-jobs=${SYCL_LINK_JOBS}")
 
@@ -260,6 +291,9 @@ if(ONECCL_BUILD_LIBS)
                 endif()
                 list(JOIN LIBCCL_CMAKE_ARGS ";" LIBCCL_CMAKE_ARGS_LIST)
 
+                # Create install include directory early so CMake validation passes
+                file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/libccl/_install/include")
+
                 externalproject_add(
                     oneCCL
                     PREFIX ${CMAKE_BINARY_DIR}/libccl
@@ -269,7 +303,8 @@ if(ONECCL_BUILD_LIBS)
                     CMAKE_ARGS ${LIBCCL_CMAKE_ARGS_LIST}
                     BUILD_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl --parallel=${NPROC} --verbose
                     INSTALL_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl --target install --verbose
-                    BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/libccl/_install/lib/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1.0
+                    BUILD_BYPRODUCTS ${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl/src/libccl.so.1.0
+                    INSTALL_BYPRODUCTS ${CMAKE_BINARY_DIR}/libccl/_install/lib/libccl.so;${CMAKE_BINARY_DIR}/libccl/_install/include/oneapi/ccl/config.h
                     BUILD_ALWAYS 1
                     LOG_OUTPUT_ON_FAILURE TRUE
                 )
@@ -282,7 +317,7 @@ if(ONECCL_BUILD_LIBS)
                     IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/libccl/_install/lib/libccl.so"
 
                 )
-                target_include_directories(ccl BEFORE INTERFACE "${CMAKE_SOURCE_DIR}/deps/libccl/include")
+                target_include_directories(ccl BEFORE INTERFACE "${CMAKE_BINARY_DIR}/libccl/_install/include")
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl/_install/lib/" DESTINATION "${DEST_LIB_DIR}" USE_SOURCE_PERMISSIONS)
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl/_install/env/" DESTINATION "${DEST_ENV_DIR}" USE_SOURCE_PERMISSIONS)
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl/_install/opt/" DESTINATION "${DEST_OPT_DIR}" USE_SOURCE_PERMISSIONS OPTIONAL)
@@ -304,7 +339,8 @@ if(ONECCL_BUILD_LIBS)
                     "-DBUILD_REG_TESTS=${ONECCL_LIBCCL_BUILD_REG_TESTS}"
                     "-DENABLE_EXTERN_TEMPLATE_INST=${ONECCL_LIBCCL_EXTERN_TEMPLATE_INST}"
                     "-DENABLE_ITT=${ONECCL_ENABLE_ITT}"
-                    "-DONECCL_ENABLE_MPI=${ONECCL_ENABLE_MPI}"
+                    "-DBUNDLE_MPI=${ONECCL_BUNDLE_MPI}"
+                    "-DENABLE_LINKER_RUNPATH=ON"
                 )
                 set(SHARED_LINKER_FLAGS "-L${ONECCL2_LIB_DIR} -l:libccl.so.2 ${STATIC_INTEL_FLAG}")
 
@@ -327,6 +363,9 @@ if(ONECCL_BUILD_LIBS)
                 endif()
                 list(JOIN LIBCCL_CPU_CMAKE_ARGS ";" LIBCCL_CPU_CMAKE_ARGS_LIST)
 
+                # Create install include directory early so CMake validation passes
+                file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/include")
+
                 externalproject_add(
                     oneCCLCPU
                     PREFIX ${CMAKE_BINARY_DIR}/libccl_cpu
@@ -336,7 +375,8 @@ if(ONECCL_BUILD_LIBS)
                     CMAKE_ARGS ${LIBCCL_CPU_CMAKE_ARGS_LIST}
                     BUILD_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl_cpu --parallel=${NPROC} --verbose
                     INSTALL_COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/libccl_cpu --target install --verbose
-                    BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1.0
+                    BUILD_BYPRODUCTS ${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1;${CMAKE_INSTALL_PREFIX}/libccl_cpu/src/libccl.so.1.0
+                    INSTALL_BYPRODUCTS ${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/libccl.so;${CMAKE_BINARY_DIR}/libccl_cpu/_install/include/oneapi/ccl/config.h
                     BUILD_ALWAYS 1
                     LOG_OUTPUT_ON_FAILURE TRUE
                 )
@@ -347,7 +387,7 @@ if(ONECCL_BUILD_LIBS)
                 set_target_properties(ccl_cpu PROPERTIES
                     IMPORTED_LOCATION "${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/libccl.so"
                 )
-                target_include_directories(ccl_cpu BEFORE INTERFACE "${CMAKE_SOURCE_DIR}/deps/libccl/include")
+                target_include_directories(ccl_cpu BEFORE INTERFACE "${CMAKE_BINARY_DIR}/libccl_cpu/_install/include")
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/lib/" DESTINATION "${DEST_LIB_DIR}/ccl/cpu/lib/" USE_SOURCE_PERMISSIONS)
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/env/" DESTINATION "${DEST_ENV_DIR}" USE_SOURCE_PERMISSIONS)
                 install(DIRECTORY "${CMAKE_BINARY_DIR}/libccl_cpu/_install/opt/" DESTINATION "${DEST_OPT_DIR}" USE_SOURCE_PERMISSIONS OPTIONAL)
@@ -388,10 +428,10 @@ add_subdirectory(plugins)
 add_subdirectory(examples)
 add_subdirectory(tests)
 # Optional: not part of the source distribution
-if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/utils)
+if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/utils")
     add_subdirectory(utils)
 endif()
-if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks)
+if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks")
     add_subdirectory(benchmarks)
 endif()
 
@@ -400,16 +440,35 @@ install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
 
 # Install legacy ccl public headers
 install(DIRECTORY deps/libccl/include/ DESTINATION ${CMAKE_INSTALL_PREFIX}/include OPTIONAL)
+# Install generated config.h from the ExternalProject install tree (libccl generates it at build time)
+# Prefer SYCL build when available; only install from CPU build if SYCL is disabled
+# Only install when building libccl internally (not when using system libccl)
+# Non-OPTIONAL so missing config.h is caught as an error during install (when a branch is active)
+if(ONECCL_BUILD_LIBS AND NOT ONECCL_USE_SYSTEM_LIBCCL)
+    if(COMPILER_SUPPORTS_SYCL)
+        install(FILES "${CMAKE_BINARY_DIR}/libccl/_install/include/oneapi/ccl/config.h"
+                DESTINATION ${CMAKE_INSTALL_PREFIX}/include/oneapi/ccl)
+    elseif(ONECCL_BUILD_CPU_PLUGIN)
+        install(FILES "${CMAKE_BINARY_DIR}/libccl_cpu/_install/include/oneapi/ccl/config.h"
+                DESTINATION ${CMAKE_INSTALL_PREFIX}/include/oneapi/ccl)
+    else()
+        message(FATAL_ERROR "Cannot install config.h: neither COMPILER_SUPPORTS_SYCL nor ONECCL_BUILD_CPU_PLUGIN is enabled")
+    endif()
+endif()
 
 # Install cmake config files
 install(FILES cmake/oneCCL2Config.cmake DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/cmake/oneCCL2)
 install(FILES cmake/oneCCL2ConfigVersion.cmake DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/cmake/oneCCL2)
 
 # Install vars.sh (override vars.sh from v1)
-install(FILES etc/vars.sh DESTINATION ${CMAKE_INSTALL_PREFIX}/env)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/etc/vars.sh")
+    install(FILES etc/vars.sh DESTINATION ${CMAKE_INSTALL_PREFIX}/env)
+endif()
 
 # Install pkgconfig
-install(DIRECTORY pkgconfig DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/pkgconfig")
+    install(DIRECTORY pkgconfig DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+endif()
 
 install_symlink(libccl.so.2 ${CMAKE_INSTALL_PREFIX}/lib/libccl.so)
 

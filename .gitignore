@@ -1,6 +1,8 @@
 *.d
 *.o
 *.a
+*.pyc
+__pycache__/
 *.log
 .lastoptions*
 *~
@@ -9,6 +11,8 @@ _install/
 *.orig
 _rpm/
 _staging/
+# Feature-tracker staging files (the MCP content_file must live inside the repo)
+.tracker-staging/
 _deb/
 _package/
 _predrop/
@@ -65,3 +69,8 @@ deps/libccl/tests/reg_tests/sycl/pt2pt/hyper_cub
 deps/libccl/tests/reg_tests/sycl/pt2pt/pt2pt_comm_split
 deps/libccl/tests/reg_tests/sycl/pt2pt/pt2pt_group
 deps/libccl/tests/reg_tests/sycl/pt2pt/pt2pt_self
+AGENTS.md
+CLAUDE.md
+.claude/skills/
+.github/skills/
+.agents/skills/

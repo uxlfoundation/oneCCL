@@ -133,7 +133,14 @@ void run_regular_tests(const Args &args) {
         args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
     TestInstanceBroadcast test_broadcast(
         args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
-    TestInstancePt2Pt test_pt2pt(args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
+    TestInstancePt2Pt test_pt2pt(
+        args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
+    TestInstanceGroupAllreduce test_group_allreduce(
+        args, msg_size, size, rank, devices, context, 10, create_mpi_kvs, ccl::create_communicator); // TODO check also zero iterations
+    TestInstanceGroupPt2Pt test_group_pt2pt(
+        args, msg_size, size, rank, devices, context, 10, create_mpi_kvs, ccl::create_communicator);
+    TestInstanceGroupMultiColl test_group_multi(
+        args, msg_size, size, rank, devices, context, create_mpi_kvs, ccl::create_communicator);
 
     for (size_t i = 0; i < iterations; ++i) {
         test_allreduce.reinit(msg_size);
@@ -153,49 +160,62 @@ void run_regular_tests(const Args &args) {
             run_test_scenario(test_alltoall, 10, 1);
             run_test_scenario(test_alltoall, 2, 10);
 
-            // test_broadcast.reinit(msg_size);
-            // run_test_scenario(test_broadcast, 10, 1);
-            // run_test_scenario(test_broadcast, 2, 10);
+            test_broadcast.reinit(msg_size);
+            run_test_scenario(test_broadcast, 10, 1);
+            run_test_scenario(test_broadcast, 2, 10);
 
-            if (ts != TestScope::PVC) {
-                test_pt2pt.reinit(msg_size);
-                run_test_scenario(test_pt2pt, 10, 1);
-                run_test_scenario(test_pt2pt, 2, 10);
-            }
+            test_pt2pt.reinit(msg_size);
+            run_test_scenario(test_pt2pt, 10, 1);
+            run_test_scenario(test_pt2pt, 2, 10);
+
+            test_group_pt2pt.reinit(msg_size);
+            run_test_scenario(test_group_pt2pt, 10, 1);
+            run_test_scenario(test_group_pt2pt, 2, 10);
+
+            test_group_multi.reinit(msg_size);
+            run_test_scenario(test_group_multi, 10, 1);
+            run_test_scenario(test_group_multi, 2, 10);
         }
+
+        test_group_allreduce.reinit(msg_size);
+        run_test_scenario(test_group_allreduce, 10, 1);
+        run_test_scenario(test_group_allreduce, 2, 10);
 
         // check if internal state is properly managed
         // internal state: offset buf indices
         run_test_scenario(test_allreduce, 1, 1);
         run_test_scenario(test_reduce_scatter, 1, 1);
-        // run_test_scenario(test_allgather, 1, 1);
+        run_test_scenario(test_allgather, 1, 1);
         if (ts != TestScope::LimitedNoFallback) {
             run_test_scenario(test_alltoall, 1, 1);
-            // run_test_scenario(test_broadcast, 1, 1);
-            if (ts != TestScope::PVC) {
-                run_test_scenario(test_pt2pt, 1, 1);
-            }
+            run_test_scenario(test_broadcast, 1, 1);
+            run_test_scenario(test_pt2pt, 1, 1);
+            run_test_scenario(test_group_pt2pt, 1, 1);
+            run_test_scenario(test_group_multi, 1, 1);
         }
+        run_test_scenario(test_group_allreduce, 1, 1);
         run_test_scenario(test_allreduce, 2, 2);
         run_test_scenario(test_reduce_scatter, 2, 2);
         run_test_scenario(test_allgather, 2, 2);
         if (ts != TestScope::LimitedNoFallback) {
             run_test_scenario(test_alltoall, 2, 2);
-            // run_test_scenario(test_broadcast, 2, 2);
-            if (ts != TestScope::PVC) {
-                run_test_scenario(test_pt2pt, 2, 2);
-            }
+            run_test_scenario(test_broadcast, 2, 2);
+            run_test_scenario(test_pt2pt, 2, 2);
+            run_test_scenario(test_group_pt2pt, 2, 2);
+            run_test_scenario(test_group_multi, 2, 2);
         }
+        run_test_scenario(test_group_allreduce, 2, 2);
         run_test_scenario(test_allreduce, 1, 1);
         run_test_scenario(test_reduce_scatter, 1, 1);
-        // run_test_scenario(test_allgather, 1, 1);
+        run_test_scenario(test_allgather, 1, 1);
         if (ts != TestScope::LimitedNoFallback) {
             run_test_scenario(test_alltoall, 1, 1);
-            // run_test_scenario(test_broadcast, 1, 1);
-            if (ts != TestScope::PVC) {
-                run_test_scenario(test_pt2pt, 1, 1);
-            }
+            run_test_scenario(test_broadcast, 1, 1);
+            run_test_scenario(test_pt2pt, 1, 1);
+            run_test_scenario(test_group_pt2pt, 1, 1);
+            run_test_scenario(test_group_multi, 1, 1);
         }
+        run_test_scenario(test_group_allreduce, 1, 1);
         msg_size *= 4;
     }
     if (ts != TestScope::LimitedNoFallback) {
@@ -217,15 +237,21 @@ void run_regular_tests(const Args &args) {
             run_test_scenario(test_alltoall, 10, 1);
             run_test_scenario(test_alltoall, 2, 10);
 
-            // test_broadcast.reinit(msg_size); // introduced
-            // run_test_scenario(test_broadcast, 10, 1);
-            // run_test_scenario(test_broadcast, 2, 10);
+            test_broadcast.reinit(msg_size);
+            run_test_scenario(test_broadcast, 10, 1);
+            run_test_scenario(test_broadcast, 2, 10);
 
-            if (ts != TestScope::PVC) {
-                test_pt2pt.reinit(msg_size);
-                run_test_scenario(test_pt2pt, 10, 1);
-                run_test_scenario(test_pt2pt, 2, 10);
-            }
+            test_pt2pt.reinit(msg_size);
+            run_test_scenario(test_pt2pt, 10, 1);
+            run_test_scenario(test_pt2pt, 2, 10);
+
+            test_group_pt2pt.reinit(msg_size);
+            run_test_scenario(test_group_pt2pt, 10, 1);
+            run_test_scenario(test_group_pt2pt, 2, 10);
+
+            test_group_allreduce.reinit(msg_size);
+            run_test_scenario(test_group_allreduce, 10, 1);
+            run_test_scenario(test_group_allreduce, 2, 10);
 
             // check if internal state is properly managed
             // internal state: offset buf indices
@@ -233,26 +259,29 @@ void run_regular_tests(const Args &args) {
             run_test_scenario(test_reduce_scatter, 1, 1);
             run_test_scenario(test_allgather, 1, 1);
             run_test_scenario(test_alltoall, 1, 1);
-            // run_test_scenario(test_broadcast, 1, 1);
-            if (ts != TestScope::PVC) {
-                run_test_scenario(test_pt2pt, 1, 1);
-            }
+            run_test_scenario(test_broadcast, 1, 1);
+            run_test_scenario(test_pt2pt, 1, 1);
+            run_test_scenario(test_group_pt2pt, 1, 1);
+            run_test_scenario(test_group_multi, 1, 1);
+            run_test_scenario(test_group_allreduce, 1, 1);
             run_test_scenario(test_allreduce, 2, 2);
             run_test_scenario(test_reduce_scatter, 2, 2);
             run_test_scenario(test_allgather, 2, 2);
             run_test_scenario(test_alltoall, 2, 2);
-            // run_test_scenario(test_broadcast, 2, 2);
-            if (ts != TestScope::PVC) {
-                run_test_scenario(test_pt2pt, 2, 2);
-            }
+            run_test_scenario(test_broadcast, 2, 2);
+            run_test_scenario(test_pt2pt, 2, 2);
+            run_test_scenario(test_group_pt2pt, 2, 2);
+            run_test_scenario(test_group_multi, 2, 2);
+            run_test_scenario(test_group_allreduce, 2, 2);
             run_test_scenario(test_allreduce, 1, 1);
             run_test_scenario(test_reduce_scatter, 1, 1);
             run_test_scenario(test_allgather, 1, 1);
             run_test_scenario(test_alltoall, 1, 1);
-            // run_test_scenario(test_broadcast, 1, 1);
-            if (ts != TestScope::PVC) {
-                run_test_scenario(test_pt2pt, 1, 1);
-            }
+            run_test_scenario(test_broadcast, 1, 1);
+            run_test_scenario(test_pt2pt, 1, 1);
+            run_test_scenario(test_group_pt2pt, 1, 1);
+            run_test_scenario(test_group_multi, 1, 1);
+            run_test_scenario(test_group_allreduce, 1, 1);
 
             msg_size *= 10;
         }

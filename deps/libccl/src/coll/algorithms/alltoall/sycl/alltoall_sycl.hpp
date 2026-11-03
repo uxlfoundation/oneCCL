@@ -21,17 +21,18 @@
 namespace ccl {
 namespace v1 {
 
-ccl::event alltoall_sycl_single_node(sycl::queue& q,
-                                     const void* send_buf,
-                                     void* recv_buf,
-                                     size_t count,
-                                     ccl::datatype dtype,
-                                     ccl_comm* comm,
-                                     bool is_numa_comm,
-                                     int numa_split,
-                                     ccl_stream* global_stream,
-                                     const vector_class<event>& deps,
-                                     bool& done);
+ccl::event alltoall_scaleup_sycl(sycl::queue& q,
+                                 const void* send_buf,
+                                 void* recv_buf,
+                                 size_t count,
+                                 ccl::datatype dtype,
+                                 ccl_comm* comm,
+                                 const std::shared_ptr<ccl_comm> p2p_comm,
+                                 bool is_numa_comm,
+                                 int numa_split,
+                                 ccl_stream* global_stream,
+                                 const vector_class<event>& deps,
+                                 bool& done);
 
 ccl::event alltoall_sycl(sycl::queue q,
                          const void* send_buf,
@@ -53,6 +54,7 @@ ccl::event alltoall_ll(const void* send_buf,
                        const ccl::vector_class<size_t>& offsets,
                        ccl::datatype dtype,
                        ccl_comm* comm,
+                       const std::shared_ptr<ccl_comm> p2p_comm,
                        ccl_stream* global_stream,
                        const ccl::vector_class<ccl::event>& deps,
                        bool& done);
@@ -63,6 +65,7 @@ ccl::event alltoall_large(const void* send_buf,
                           std::vector<size_t>& offsets,
                           ccl::datatype dtype,
                           ccl_comm* comm,
+                          const std::shared_ptr<ccl_comm> p2p_comm,
                           ccl_stream* global_stream,
                           const ccl::vector_class<ccl::event>& deps);
 
@@ -75,5 +78,26 @@ ccl::event alltoall_scaleout_sycl(sycl::queue& q,
                                   ccl_stream* global_stream,
                                   const ccl::vector_class<ccl::event>& deps,
                                   bool original_deps,
-                                  sycl_alltoall_tune_attr tune_attr,
+                                  sycl_scaleout_tune_attr tune_attr,
                                   bool& done);
+
+// with use_proxy, the scale-out exchange runs on the proxy thread instead of in a
+// host_task on the caller's queue
+ccl::event alltoall_sycl_numa_pairwise_rdma_oneshot(sycl::queue& q,
+                                                    const void* send_buf,
+                                                    void* recv_buf,
+                                                    size_t count,
+                                                    ccl::datatype dtype,
+                                                    ccl_comm* comm,
+                                                    std::shared_ptr<ccl_comm> p2p_comm,
+                                                    std::shared_ptr<ccl_comm> r2r_comm,
+                                                    ccl_stream* global_stream,
+                                                    const ccl::vector_class<ccl::event>& deps,
+                                                    bool batch_mode,
+                                                    bool use_proxy,
+                                                    bool& done);
+
+// Proxy-thread entry points declaration
+struct ccl_proxy_op;
+struct ccl_proxy_context;
+void proxy_alltoall_pairwise(const ccl_proxy_op& op, ccl_proxy_context& ctx);

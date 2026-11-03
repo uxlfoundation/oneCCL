@@ -39,6 +39,7 @@ CCL_API alltoall_attr default_alltoall_attr = ccl_empty_attr::create_empty<allto
 CCL_API alltoallv_attr default_alltoallv_attr = ccl_empty_attr::create_empty<alltoallv_attr>();
 CCL_API barrier_attr default_barrier_attr = ccl_empty_attr::create_empty<barrier_attr>();
 CCL_API broadcast_attr default_broadcast_attr = ccl_empty_attr::create_empty<broadcast_attr>();
+CCL_API gather_attr default_gather_attr = ccl_empty_attr::create_empty<gather_attr>();
 CCL_API pt2pt_attr default_pt2pt_attr = ccl_empty_attr::create_empty<pt2pt_attr>();
 CCL_API reduce_attr default_reduce_attr = ccl_empty_attr::create_empty<reduce_attr>();
 CCL_API reduce_scatter_attr default_reduce_scatter_attr =

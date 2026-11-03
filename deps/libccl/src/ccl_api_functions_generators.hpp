@@ -241,6 +241,23 @@ namespace v1 {
                                           const reduce_scatter_attr& attr, \
                                           const vector_class<event>& deps); \
 \
+    template event CCL_API gather(const BufferType* send_buf, \
+                                  BufferType* recv_buf, \
+                                  size_t count, \
+                                  int root, \
+                                  const communicator& comm, \
+                                  const stream& op_stream, \
+                                  const gather_attr& attr, \
+                                  const vector_class<event>& deps); \
+\
+    template event CCL_API gather(const BufferType* send_buf, \
+                                  BufferType* recv_buf, \
+                                  size_t count, \
+                                  int root, \
+                                  const communicator& comm, \
+                                  const gather_attr& attr, \
+                                  const vector_class<event>& deps); \
+\
     template event CCL_API scatter(const BufferType* send_buf, \
                                    BufferType* recv_buf, \
                                    size_t count, \
@@ -510,6 +527,23 @@ namespace v1 {
                                           const communicator& comm, \
                                           const reduce_scatter_attr& attr, \
                                           const vector_class<event>& deps); \
+\
+    template event CCL_API gather(const BufferObjectType& send_buf, \
+                                  BufferObjectType& recv_buf, \
+                                  size_t count, \
+                                  int root, \
+                                  const communicator& comm, \
+                                  const stream& op_stream, \
+                                  const gather_attr& attr, \
+                                  const vector_class<event>& deps); \
+\
+    template event CCL_API gather(const BufferObjectType& send_buf, \
+                                  BufferObjectType& recv_buf, \
+                                  size_t count, \
+                                  int root, \
+                                  const communicator& comm, \
+                                  const gather_attr& attr, \
+                                  const vector_class<event>& deps); \
 \
     template event CCL_API scatter(const BufferObjectType& send_buf, \
                                    BufferObjectType& recv_buf, \

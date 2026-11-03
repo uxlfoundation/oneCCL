@@ -272,6 +272,18 @@ bool topo_manager::has_all_vertices_connected() const {
     return are_all_vertices_connected;
 }
 
+void topo_manager::set_p2p_access(bool val) {
+    is_p2p_access_enabled = val;
+}
+
+void topo_manager::set_p2p_atomics(bool val) {
+    is_p2p_atomics_enabled = val;
+}
+
+void topo_manager::set_all_vertices_connected(bool val) {
+    are_all_vertices_connected = val;
+}
+
 std::vector<ze_device_uuid_t> topo_manager::copy_dev_uuids(const rank_info_vec_t& info_vec) const {
     CCL_THROW_IF_NOT(!ze_rank_info_vec.empty());
     CCL_THROW_IF_NOT(!info_vec.empty());
@@ -414,7 +426,10 @@ bool topo_manager::build_fabric_connectivity_matrix(
     }
 
     auto driver = global_data::get().ze_data->drivers[0];
-    ze_driver_properties_t driver_props;
+    ze_driver_properties_t driver_props = {
+        .stype = ZE_STRUCTURE_TYPE_DRIVER_PROPERTIES,
+        .pNext = nullptr
+    };
     ZE_CALL(zeDriverGetProperties, (driver, &driver_props));
 
     if (comm->get_rank() == 0) {

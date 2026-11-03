@@ -22,6 +22,7 @@
 #include "coll/algorithms/utils/sycl_ptrs.hpp"
 #include "coll/algorithms/utils/sycl_coll_base.hpp"
 #include "coll/algorithms/allgatherv/sycl/allgatherv_large_sycl_ring.hpp"
+#include "allgather_large_ce.hpp"       // for allgather_large_copy_engine
 
 // Kernel name templates for allgatherv_large
 template <typename T, int vec_size, int GPUS>
@@ -269,7 +270,7 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
     constexpr int pipeline_size = 2;
 
     const size_t chunk_size = get_tmp_buf_size_per_rank();
-    void* tmp_bufs[pipeline_size] = { get_tmp_buf(0, comm), get_tmp_buf(1, comm) };
+    void* tmp_bufs[pipeline_size] = { get_large_tmp_buf(0, comm), get_large_tmp_buf(1, comm) };
     const size_t pipeline_offset = (char*)tmp_bufs[1] - (char*)tmp_bufs[0];
 
     std::array<void*, MAX_GPUS> local_peer_even_ptrs, local_local_ptrs, local_peer_pair_ptrs;
@@ -281,7 +282,7 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
     const size_t num_chunks = send_count / chunk_count + (send_count % chunk_count != 0);
     const bool is_multi_tile = pair_comm_size > 1;
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     std::vector<sycl::event> work_events;
     sycl::event output_event;
@@ -341,7 +342,7 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
 
         // start the collective
         if (comm->is_multi_thread_instance() == true) {
-            pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+            pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
         }
         // if send_count is not a multiple of chunk_count, then last chunk will contain only remainder data
         const size_t data_count = (nc < send_count / chunk_count) ? chunk_count : send_count % chunk_count;
@@ -500,7 +501,7 @@ ccl::event allgatherv_large_impl_tmp(sycl::queue& q,
         }
     } // nc
     if (comm->is_multi_thread_instance() == true) {
-        pthread_barrier_wait(&ccl::global_data::get().shared_data->barrier_waits[comm->global_current_id]);
+        pthread_barrier_wait(ccl::global_data::get().shared_data->get_barrier(comm->global_current_id));
     }
     return ccl::event::create_from_native(output_event);
 }
@@ -514,6 +515,7 @@ ccl::event allgatherv_large_impl(sycl::queue& q,
                                  const ccl::vector_class<size_t>& offsets,
                                  ccl::datatype dtype,
                                  ccl_comm* comm,
+                                 std::shared_ptr<ccl_comm> p2p_comm,
                                  ccl_stream* global_stream,
                                  sycl_ptrs_type& sycl_ptrs,
                                  const ccl::vector_class<ccl::event>& deps,
@@ -527,8 +529,48 @@ ccl::event allgatherv_large_impl(sycl::queue& q,
     const bool is_tmp_used = use_tmp;
 
     ccl::event e;
+    // Check if we can use copy engine for large allgatherv. 
+    // using an environment variable to enable/disable it.
+    // Currently, the copy engine based allgatherv is only implemented for BMG on level zero backend,
+    // so we check if the device is an ARC card and if the backend is level zero.
+    // In the future, we may want to add more conditions to decide whether to use the copy engine, 
+    // such as checking the topology
+    
+    // enable flow only with env variable for now, 
+    // since we want to test the code before make it default for ARC cards
+    bool use_copy_engine = ccl::global_data::env().enable_ze_ce;
+    if(use_copy_engine)
+    {
+        // device must be ARC card, and the backend must be level zero.
+        // if tmp buffer is used, we dont use copy engine for now
+        const bool is_arc = is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()));
+        if(!is_arc || is_tmp_used || q.get_backend() != sycl::backend::ext_oneapi_level_zero)
+        {
+            LOG_ERROR("copy engine based allgatherv is only supported for ARC cards with level zero backend and without tmp buffer, disabling copy engine, fallback to default implementation");
+            use_copy_engine = false;
+        }
+        // allgather_large_copy_engine() is not P2P-domain aware: it derives its ring
+        // schedule and counter based events from comm->get_node_comm(), while the remote
+        // pointers in sycl_ptrs.node_ptrs_wr are exchanged over p2p_comm. The two only
+        // agree when the P2P domain spans the whole node, so restrict the copy engine
+        // to that case until p2p_comm is threaded through.
+        if(ccl::global_data::env().sycl_p2p_level != ccl_p2p_domain_level::p2p_node)
+        {
+            LOG_ERROR("copy engine based allgatherv requires CCL_SYCL_P2P_LEVEL=node, disabling copy engine, fallback to default implementation");
+            use_copy_engine = false;
+        }
+    }
 
-    if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+    if(use_copy_engine)
+    {
+        LOG_INFO("AllGather Large - using L0 copy engine");
+        e = allgather_large_copy_engine(
+            q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
+        LOG_DEBUG("allgatherv selects large copy engine kernel: count: ", 
+                    send_count, " datatype: ", dtype, " done");
+    } 
+    else if (is_arc_card(ccl::ze::get_device_family(global_stream->get_ze_device()))) {
+        LOG_INFO("AllGather Large - using L0 su ring kernel");
         sycl::event kernel_event;
         kernel_event = allgatherv_large_su_ring<T>(q,
                                                    send_buf,
@@ -538,6 +580,7 @@ ccl::event allgatherv_large_impl(sycl::queue& q,
                                                    offsets,
                                                    dtype,
                                                    comm,
+                                                   p2p_comm,
                                                    global_stream,
                                                    sycl_ptrs,
                                                    deps,
@@ -547,15 +590,18 @@ ccl::event allgatherv_large_impl(sycl::queue& q,
     }
 
     // TODO: copy engines currently does not support tmp buf
-    if (ccl::global_data::env().sycl_copy_engine) {
+    else if (ccl::global_data::env().sycl_copy_engine) {
+        LOG_INFO("AllGather Large - using IPC CE");
         e = allgatherv_large_impl_ipc_ce<T>(
             q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
     }
     else if (!is_tmp_used) {
+        LOG_INFO("AllGather Large - using IPC");
         e = allgatherv_large_impl_ipc<T, vec_size_use>(
             q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
     }
     else {
+        LOG_INFO("AllGather Large - using tmp buffer");
         e = allgatherv_large_impl_tmp<T, vec_size_use>(
             q, send_buf, send_count, recv_buf, recv_counts, offsets, dtype, comm, global_stream, sycl_ptrs, deps);
     }
@@ -575,6 +621,7 @@ ccl::event allgatherv_large_impl(sycl::queue& q,
                                                      const ccl::vector_class<size_t>& offsets, \
                                                      ccl::datatype dtype, \
                                                      ccl_comm* comm, \
+                                                     std::shared_ptr<ccl_comm> p2p_comm, \
                                                      ccl_stream* global_stream, \
                                                      sycl_ptrs_type& sycl_ptrs, \
                                                      const ccl::vector_class<ccl::event>& deps, \

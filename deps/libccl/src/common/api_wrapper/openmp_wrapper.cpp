@@ -17,7 +17,7 @@
 #include "common/api_wrapper/api_wrapper.hpp"
 #include "common/api_wrapper/openmp_wrapper.hpp"
 
-#if defined(CCL_ENABLE_MPI)
+#if defined(CCL_ENABLE_OMP)
 
 #include <dlfcn.h>
 
@@ -55,4 +55,4 @@ void openmp_api_fini() {}
 
 } // namespace ccl
 
-#endif //CCL_ENABLE_MPI
+#endif //CCL_ENABLE_OMP

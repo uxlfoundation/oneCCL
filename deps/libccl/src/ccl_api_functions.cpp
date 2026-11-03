@@ -20,7 +20,13 @@
 #include "comm/comm.hpp"
 #include "oneapi/ccl/exception.hpp"
 #include "coll/group/group.hpp"
+#include "comm/windows.hpp"
+#include "common/utils/device_handle_map.hpp"
 #include "common/window/window_impl.hpp"
+#include "oneapi/ccl/device_api/window_data.hpp"
+
+#include <type_traits>
+#include <vector>
 
 #if defined(CCL_ENABLE_ZE) || defined(CCL_ENABLE_SYCL)
 #include "comm/comm_interface.hpp"
@@ -204,27 +210,427 @@ void comm_deregister(const communicator& comm, void* handle) {
 
 /******************** WINDOW REGISTRATION CALLS ********************/
 
-window comm_window_register(const communicator& comm, void* buffer, size_t size, int win_flags) {
-    LOG_DEBUG("registering window, buffer: ", buffer, ", size: ", size);
+namespace {
 
-    impl_dispatch disp;
-    // Get the underlying comm implementation to access the ccl_comm
-    auto& comm_impl = disp(comm);
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
 
-    // Create the opaque window implementation
-    auto impl = std::make_shared<ccl_window_impl>(
-        static_cast<ccl_comm*>(comm_impl.get()), buffer, size, win_flags);
-
-    // Return the opaque wrapper (window class)
-    return window(std::move(impl));
+// device API only support ARC cards
+bool device_api_supported() {
+    const auto& ze_data = ccl::global_data::get().ze_data;
+    return ze_data && !ze_data->devices.empty() && ze::is_arc_card(ze_data->devices[0].family);
 }
 
-void comm_window_deregister(const communicator& comm, window& win) {
+/** Host state of a registered window; see utils::device_handle_map. */
+struct window_record {
+    /** Mirror of what was published to the device; every pointer in it is a device address. */
+    window_data host_copy{};
+    std::vector<void*> host_ptrs;          /**< peer base pointers, for the host resolves */
+    ccl_window* internal_window = nullptr; /**< host-only: IPC handle lifetime */
+};
+
+static_assert(std::is_trivially_copyable<window_data>::value,
+              "window_data is published to the device with a plain memcpy");
+
+utils::device_handle_map<window_record> window_records;
+
+#endif // defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+
+} // anonymous namespace
+
+window_t window_register_internal(ccl_comm* ccl_comm_ptr,
+                                  void* buffer,
+                                  size_t size,
+                                  int win_flags) {
+    LOG_DEBUG("registering window, buffer: ", buffer, ", size: ", size);
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    if (!device_api_supported()) {
+        LOG_WARN("Window registration is not supported on this device");
+        return nullptr;
+    }
+
+    sycl::device& dev = ccl_comm_ptr->get_device()->get_native();
+    sycl::context& ctx = ccl_comm_ptr->get_context()->get_native();
+    // The LSA team is the node communicator
+    auto node_comm = ccl_comm_ptr->get_node_comm();
+
+    // Fill the host record, then publish it to the device in one copy.
+    window_record record;
+    window_data& host_copy = record.host_copy;
+    host_copy.ptrs = nullptr;
+    host_copy.nranks = 0;
+    host_copy.size = size;
+    host_copy.world_rank = ccl_comm_ptr->rank();
+    host_copy.lsa_size = static_cast<int>(node_comm->size());
+    host_copy.lsa_rank = node_comm->rank();
+
+    if (win_flags == CCL_WIN_COLL_SYMMETRIC) {
+        // The get_*_pointer world->LSA conversion assumes this node's world ranks
+        // are consecutive (node rank i -> comm rank world_base + i). Checked before
+        // registering anything, so an unsupported layout fails loudly here rather
+        // than silently reading the wrong peer in a kernel.
+        int world_base = host_copy.world_rank - host_copy.lsa_rank;
+        for (int i = 0; i < host_copy.lsa_size; i++) {
+            int comm_peer = ccl_comm_ptr->get_rank_from_global(node_comm->get_global_rank(i));
+            CCL_THROW_IF_NOT(
+                comm_peer == world_base + i,
+                "window registration: node ranks are not contiguous in "
+                "communicator order (node rank ",
+                i,
+                " -> comm rank ",
+                comm_peer,
+                ", expected ",
+                world_base + i,
+                "); this rank layout is not supported by the device API");
+        }
+
+        record.internal_window = node_comm->window_register(buffer, size);
+        if (record.internal_window) {
+            record.host_ptrs = record.internal_window->get_ptrs(0);
+            host_copy.nranks = static_cast<int>(record.host_ptrs.size());
+        }
+    }
+    else {
+        LOG_WARN("Window registration is not support, CCL_WIN_COLL_SYMMETRIC ignored");
+    }
+
+    // The pointer array kernels index, and the window struct itself.
+    if (host_copy.nranks > 0) {
+        host_copy.ptrs = sycl::malloc_device<void*>(host_copy.nranks, dev, ctx);
+    }
+    window_data* dev_win = sycl::malloc_device<window_data>(1, dev, ctx);
+
+    sycl::queue q(ctx, dev);
+    if (host_copy.ptrs) {
+        q.memcpy(host_copy.ptrs, record.host_ptrs.data(), host_copy.nranks * sizeof(void*));
+    }
+    q.memcpy(dev_win, &host_copy, sizeof(window_data));
+    q.wait();
+
+    window_records.insert(dev_win, std::move(record));
+    return dev_win;
+#else
+    CCL_THROW("Window registration requires SYCL and Level Zero");
+    return nullptr;
+#endif
+}
+
+void window_deregister_internal(ccl_comm* ccl_comm_ptr, window_t& win) {
     LOG_DEBUG("deregistering window");
 
-    // Reset the window's internal implementation
-    // The destructor of ccl_window_impl will handle cleanup
+    if (!win) return;
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    // win addresses device memory — do not dereference it; the record has everything.
+    window_record record = window_records.remove("comm_window_deregister", win);
+
+    sycl::context& ctx = ccl_comm_ptr->get_context()->get_native();
+
+    // Deregister the internal window (closes IPC handles)
+    if (record.internal_window) {
+        auto node_comm = ccl_comm_ptr->get_node_comm();
+        node_comm->window_deregister(record.internal_window);
+    }
+
+    if (record.host_copy.ptrs) {
+        sycl::free(record.host_copy.ptrs, ctx);
+    }
+    sycl::free(win, ctx);
+#else
+    CCL_THROW("Window deregistration requires SYCL and Level Zero");
+#endif
+
+    win = nullptr;
+}
+
+namespace {
+
+ccl_comm* to_ccl_comm(const communicator& comm) {
+    impl_dispatch disp;
+    auto& comm_impl = disp(comm);
+    return static_cast<ccl_comm*>(comm_impl.get());
+}
+
+} // anonymous namespace
+
+/* device API */
+
+window_t CCL_API comm_window_register_v2(const communicator& comm,
+                                         void* buffer,
+                                         size_t size,
+                                         int win_flags) {
+    return window_register_internal(to_ccl_comm(comm), buffer, size, win_flags);
+}
+
+void CCL_API comm_window_deregister(const communicator& comm, window_t& win) {
+    window_deregister_internal(to_ccl_comm(comm), win);
+}
+
+/* v1 ABI: window is an RAII box around the same registration */
+
+window CCL_API comm_window_register(const communicator& comm,
+                                    void* buffer,
+                                    size_t size,
+                                    int win_flags) {
+    auto* ccl_comm_ptr = to_ccl_comm(comm);
+    // A null win still yields a live window, as in 2022.1.0.
+    window_t win = window_register_internal(ccl_comm_ptr, buffer, size, win_flags);
+    return window(std::make_shared<ccl_window_impl>(ccl_comm_ptr, win));
+}
+
+void CCL_API comm_window_deregister(const communicator& comm, window& win) {
+    // The release happens in ~ccl_window_impl; comm is unused, as in 2022.1.0.
+    (void)comm;
     win = window(window::impl_value_t(nullptr));
+}
+
+void get_peer_device_pointer(window_t win, size_t offset, int peer, void** out_ptr) {
+    if (!out_ptr) {
+        CCL_THROW("get_peer_device_pointer: out_ptr must not be null");
+    }
+    if (!win) {
+        *out_ptr = nullptr;
+        return;
+    }
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    const window_record* record = nullptr;
+    auto lock = window_records.at("get_peer_device_pointer", win, &record);
+    const std::vector<void*>& ptrs = record->host_ptrs;
+    // Convert the world rank to an LSA slot, ptrs[] being LSA-rank indexed
+    // (node ranks are contiguous in world order, enforced at registration).
+    int slot = record->host_copy.lsa_rank + (peer - record->host_copy.world_rank);
+    if (offset >= record->host_copy.size || slot < 0 ||
+        slot >= record->host_copy.lsa_size || slot >= static_cast<int>(ptrs.size()) ||
+        !ptrs[slot]) {
+        *out_ptr = nullptr;
+        return;
+    }
+    *out_ptr = static_cast<char*>(ptrs[slot]) + offset;
+    LOG_DEBUG("get_peer_device_pointer: peer=", peer,
+              " slot=", slot,
+              " base=", ptrs[slot],
+              " offset=", offset,
+              " result=", *out_ptr);
+#else
+    CCL_THROW("get_peer_device_pointer requires SYCL and Level Zero");
+#endif
+}
+
+void get_lsa_device_pointer(window_t win, size_t offset, int lsa_peer, void** out_ptr) {
+    if (!out_ptr) {
+        CCL_THROW("get_lsa_device_pointer: out_ptr must not be null");
+    }
+    if (!win) {
+        *out_ptr = nullptr;
+        return;
+    }
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    const window_record* record = nullptr;
+    auto lock = window_records.at("get_lsa_device_pointer", win, &record);
+    const std::vector<void*>& ptrs = record->host_ptrs;
+    // ptrs[] is LSA-rank indexed, so lsa_peer indexes it directly.
+    if (offset >= record->host_copy.size || lsa_peer < 0 ||
+        lsa_peer >= record->host_copy.lsa_size ||
+        lsa_peer >= static_cast<int>(ptrs.size()) || !ptrs[lsa_peer]) {
+        *out_ptr = nullptr;
+        return;
+    }
+    *out_ptr = static_cast<char*>(ptrs[lsa_peer]) + offset;
+    LOG_DEBUG("get_lsa_device_pointer: lsa_peer=", lsa_peer,
+              " base=", ptrs[lsa_peer],
+              " offset=", offset,
+              " result=", *out_ptr);
+#else
+    CCL_THROW("get_lsa_device_pointer requires SYCL and Level Zero");
+#endif
+}
+
+void get_local_device_pointer(window_t win, size_t offset, void** out_ptr) {
+    if (!out_ptr) {
+        CCL_THROW("get_local_device_pointer: out_ptr must not be null");
+    }
+    if (!win) {
+        *out_ptr = nullptr;
+        return;
+    }
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    const window_record* record = nullptr;
+    auto lock = window_records.at("get_local_device_pointer", win, &record);
+    const std::vector<void*>& ptrs = record->host_ptrs;
+    int slot = record->host_copy.lsa_rank;
+    if (offset >= record->host_copy.size || slot < 0 ||
+        slot >= record->host_copy.lsa_size || slot >= static_cast<int>(ptrs.size()) ||
+        !ptrs[slot]) {
+        *out_ptr = nullptr;
+        return;
+    }
+    *out_ptr = static_cast<char*>(ptrs[slot]) + offset;
+    LOG_DEBUG("get_local_device_pointer:"
+              " base=", ptrs[slot],
+              " offset=", offset,
+              " result=", *out_ptr);
+#else
+    CCL_THROW("get_local_device_pointer requires SYCL and Level Zero");
+#endif
+}
+
+/******************** DEVICE COMMUNICATOR ********************/
+
+} // namespace v1
+} // namespace ccl
+
+// Forward declaration (defined in simple_ipc.cpp at global scope)
+std::vector<std::vector<void*>> do_simple_ipc_exchange(ccl_comm* comm,
+                                                       const std::vector<void*>& ptrs,
+                                                       const std::vector<size_t>& sizes);
+
+namespace ccl {
+namespace v1 {
+
+namespace {
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+
+/**
+ * The communicator is a value the caller owns, so only the peer inbox pointers
+ * need a host record: teardown closes an IPC handle per peer. Keyed by the
+ * device array kernels index.
+ */
+struct dev_comm_record {
+    int rank = 0;                        /**< index of this rank's own inbox */
+    std::vector<uint32_t*> host_inboxes; /**< peer inbox bases, for IPC close at teardown */
+};
+
+utils::device_handle_map<dev_comm_record> dev_comm_records;
+
+#endif // defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+
+} // anonymous namespace
+
+void dev_comm_create(const communicator& comm,
+                     const dev_comm_requirements* reqs,
+                     dev_comm_t* out_dev_comm) {
+    LOG_DEBUG("creating device communicator, barrier_count: ", reqs->lsa_barrier_count);
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    if (!device_api_supported()) {
+        LOG_WARN("Device communicator is not supported on this device");
+        // Leave the caller holding an empty communicator: barrier_inboxes stays
+        // null, which is what dev_comm_destroy and the callers test for.
+        *out_dev_comm = dev_comm_t{};
+        return;
+    }
+
+    impl_dispatch disp;
+    auto& comm_impl = disp(comm);
+    auto* ccl_comm_ptr = static_cast<ccl_comm*>(comm_impl.get());
+    sycl::device& dev = ccl_comm_ptr->get_device()->get_native();
+    sycl::context& ctx = ccl_comm_ptr->get_context()->get_native();
+
+    int rank = ccl_comm_ptr->rank();
+    int nranks = ccl_comm_ptr->size();
+    int n_barriers = reqs->lsa_barrier_count;
+
+    // Local barrier inbox in device memory, written by peers over IPC:
+    // n_barriers * nranks slots, indexed [barrier_idx * nranks + sender_rank].
+    uint32_t* local_inbox = sycl::malloc_device<uint32_t>(n_barriers * nranks, dev, ctx);
+    sycl::queue q(ctx, dev);
+    q.memset(local_inbox, 0, n_barriers * nranks * sizeof(uint32_t)).wait();
+
+    // Exchange inbox pointers across all ranks via IPC
+    std::vector<void*> in_buffers = { static_cast<void*>(local_inbox) };
+    std::vector<size_t> in_sizes = { static_cast<size_t>(n_barriers * nranks) * sizeof(uint32_t) };
+
+    auto node_comm = ccl_comm_ptr->get_node_comm();
+    auto* node_comm_raw = node_comm.get();
+    std::vector<std::vector<void*>> ipc_ptrs =
+        ::do_simple_ipc_exchange(node_comm_raw, in_buffers, in_sizes);
+
+    // Fill the host record, then publish the inbox array to the device.
+    dev_comm_record record;
+    record.rank = rank;
+    record.host_inboxes.resize(nranks, nullptr);
+    for (int r = 0; r < nranks; r++) {
+        record.host_inboxes[r] =
+            (r == rank) ? local_inbox : static_cast<uint32_t*>(ipc_ptrs[r][0]);
+    }
+
+    // Fill in the caller's communicator; kernels capture it by value.
+    out_dev_comm->rank = rank;
+    out_dev_comm->nranks = nranks;
+    // A node's ranks, consecutive in world rank order and uniform across nodes
+    // (lsa_size = gcd of all node sizes).
+    out_dev_comm->lsa_size = static_cast<int>(node_comm_raw->size());
+    out_dev_comm->lsa_rank = rank % out_dev_comm->lsa_size;
+    out_dev_comm->n_barriers = n_barriers;
+
+    out_dev_comm->barrier_inboxes = sycl::malloc_device<uint32_t*>(nranks, dev, ctx);
+    out_dev_comm->barrier_epochs = sycl::malloc_device<uint32_t>(n_barriers, dev, ctx);
+
+    q.memcpy(out_dev_comm->barrier_inboxes, record.host_inboxes.data(),
+             nranks * sizeof(uint32_t*));
+    q.memset(out_dev_comm->barrier_epochs, 0, n_barriers * sizeof(uint32_t));
+    q.wait();
+
+    dev_comm_records.insert(out_dev_comm->barrier_inboxes, std::move(record));
+
+    LOG_DEBUG("device communicator created: rank=", rank, " nranks=", nranks,
+              " n_barriers=", n_barriers);
+#else
+    CCL_THROW("Device communicator requires SYCL and Level Zero");
+#endif
+}
+
+void dev_comm_destroy(const communicator& comm, const dev_comm_t* dev_comm) {
+    LOG_DEBUG("destroying device communicator");
+
+    // A zero-initialized communicator was never created: nothing to free.
+    if (!dev_comm || !dev_comm->barrier_inboxes) return;
+
+#if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
+    dev_comm_record record =
+        dev_comm_records.remove("dev_comm_destroy", dev_comm->barrier_inboxes);
+
+    impl_dispatch disp;
+    auto& comm_impl = disp(comm);
+    auto* ccl_comm_ptr = static_cast<ccl_comm*>(comm_impl.get());
+    sycl::context& ctx = ccl_comm_ptr->get_context()->get_native();
+
+    // From the record, not the caller's struct, which may have been overwritten.
+    int rank = record.rank;
+    int nranks = static_cast<int>(record.host_inboxes.size());
+    uint32_t* local_inbox = record.host_inboxes[rank];
+
+    // Close IPC handles for remote inboxes
+    ze_context_handle_t ze_ctx{};
+    ze_device_handle_t ze_dev{};
+    ze_memory_allocation_properties_t mem_props{};
+    if (local_inbox &&
+        ccl::ze::get_buffer_context_and_device(local_inbox, &ze_ctx, &ze_dev, &mem_props)) {
+        for (int r = 0; r < nranks; r++) {
+            if (r == rank) continue;
+            if (record.host_inboxes[r]) {
+                ZE_CALL(zeMemCloseIpcHandle, (ze_ctx, record.host_inboxes[r]));
+            }
+        }
+    }
+
+    // Free local inbox (device memory)
+    if (local_inbox) {
+        sycl::free(local_inbox, ctx);
+    }
+
+    // Free the inbox pointer array
+    sycl::free(dev_comm->barrier_inboxes, ctx);
+
+    // Free the barrier epoch array
+    if (dev_comm->barrier_epochs) {
+        sycl::free(dev_comm->barrier_epochs, ctx);
+    }
+    // Nothing to free for the communicator itself — it is the caller's value.
+#else
+    CCL_THROW("Device communicator requires SYCL and Level Zero");
+#endif
 }
 
 /******************** OPERATION ********************/
@@ -1243,6 +1649,79 @@ event reduce_scatter(const BufferObjectType& send_buf,
     impl_dispatch disp;
     return disp(comm)->reduce_scatter(
         send_buf, recv_buf, recv_count, reduction, disp(default_stream), attr, deps);
+}
+
+/* gather */
+event gather(const void* send_buf,
+             void* recv_buf,
+             size_t count,
+             datatype dtype,
+             int root,
+             const communicator& comm,
+             const stream& op_stream,
+             const gather_attr& attr,
+             const vector_class<event>& deps) {
+    impl_dispatch disp;
+    return disp(comm)->gather(send_buf, recv_buf, count, dtype, root, disp(op_stream), attr, deps);
+}
+
+event gather(const void* send_buf,
+             void* recv_buf,
+             size_t count,
+             datatype dtype,
+             int root,
+             const communicator& comm,
+             const gather_attr& attr,
+             const vector_class<event>& deps) {
+    return gather(send_buf, recv_buf, count, dtype, root, comm, default_stream, attr, deps);
+}
+
+template <class BufferType, typename T>
+event gather(const BufferType* send_buf,
+             BufferType* recv_buf,
+             size_t count,
+             int root,
+             const communicator& comm,
+             const stream& op_stream,
+             const gather_attr& attr,
+             const vector_class<event>& deps) {
+    impl_dispatch disp;
+    return disp(comm)->gather(send_buf, recv_buf, count, root, disp(op_stream), attr, deps);
+}
+
+template <class BufferType, typename T>
+event gather(const BufferType* send_buf,
+             BufferType* recv_buf,
+             size_t count,
+             int root,
+             const communicator& comm,
+             const gather_attr& attr,
+             const vector_class<event>& deps) {
+    return gather(send_buf, recv_buf, count, root, comm, default_stream, attr, deps);
+}
+
+template <class BufferObjectType, typename T>
+event gather(const BufferObjectType& send_buf,
+             BufferObjectType& recv_buf,
+             size_t count,
+             int root,
+             const communicator& comm,
+             const stream& op_stream,
+             const gather_attr& attr,
+             const vector_class<event>& deps) {
+    impl_dispatch disp;
+    return disp(comm)->gather(send_buf, recv_buf, count, root, disp(op_stream), attr, deps);
+}
+
+template <class BufferObjectType, typename T>
+event gather(const BufferObjectType& send_buf,
+             BufferObjectType& recv_buf,
+             size_t count,
+             int root,
+             const communicator& comm,
+             const gather_attr& attr,
+             const vector_class<event>& deps) {
+    return gather(send_buf, recv_buf, count, root, comm, default_stream, attr, deps);
 }
 
 /* scatter */

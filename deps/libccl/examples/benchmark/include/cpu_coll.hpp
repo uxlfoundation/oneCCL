@@ -21,6 +21,7 @@
 #endif // CCL_ENABLE_NUMA
 
 #include "coll.hpp"
+#include "coll_type.hpp"
 
 /* cpu-specific base implementation */
 template <class Dtype, class strategy>
@@ -42,21 +43,41 @@ struct cpu_base_coll : base_coll, protected strategy {
         size_t send_bytes = base_coll::get_allocation_count() * sizeof(Dtype) * send_multiplier;
         size_t recv_bytes = base_coll::get_allocation_count() * sizeof(Dtype) * recv_multiplier;
 
+        bool is_scatter = coll_strategy::class_id() == coll_type::scatter;
+        bool inplace = base_coll::get_inplace();
+        auto& comms = transport_data::instance().get_comms();
         for (size_t rank_idx = 0; rank_idx < base_coll::get_ranks_per_proc(); rank_idx++) {
             for (size_t idx = 0; idx < base_coll::get_buf_count(); idx++) {
                 void* send_buf = nullptr;
                 void* recv_buf = nullptr;
-                if (!base_coll::get_inplace()) {
+                if (is_scatter) {
+                    // Scatter is asymmetric: only the root reads the count*nranks
+                    // send buffer; every rank receives count elements. Allocate
+                    // per rank rather than giving every rank a full send buffer.
+                    // This diverges from the symmetric colls below on purpose.
+                    bool is_root = comms[rank_idx].rank() == COLL_ROOT;
+                    bool need_send = is_root;
+                    bool need_recv = !inplace || !is_root;
+
+                    if (need_send) {
+                        send_buf = alloc_buffer(send_bytes);
+                        send_allocations.push_back(send_buf);
+                    }
+                    if (need_recv) {
+                        recv_buf = alloc_buffer(recv_bytes);
+                        recv_allocations.push_back(recv_buf);
+                    }
+                }
+                else if (!inplace) {
                     send_buf = alloc_buffer(send_bytes);
                     recv_buf = alloc_buffer(recv_bytes);
                     send_allocations.push_back(send_buf);
                     recv_allocations.push_back(recv_buf);
                 }
                 else {
-                    bool is_allgatherv = strcmp(coll_strategy::class_name(), "allgatherv") == 0;
-                    bool is_allgather = strcmp(coll_strategy::class_name(), "allgather") == 0;
-                    bool is_reduce_scatter =
-                        strcmp(coll_strategy::class_name(), "reduce_scatter") == 0;
+                    bool is_allgatherv = coll_strategy::class_id() == coll_type::allgatherv;
+                    bool is_allgather = coll_strategy::class_id() == coll_type::allgather;
+                    bool is_reduce_scatter = coll_strategy::class_id() == coll_type::reduce_scatter;
                     if (is_allgatherv || is_allgather) {
                         // send_buf will be set when the count is known, since the offset is unknown at this point.
                         send_buf = nullptr;
@@ -157,8 +178,8 @@ struct cpu_base_coll : base_coll, protected strategy {
         auto fill_vector = get_initial_values<Dtype>(send_count, comm_rank);
 
         for (size_t b_idx = 0; b_idx < base_coll::get_buf_count(); b_idx++) {
-            if ((strcmp(coll_strategy::class_name(), "allgatherv") == 0 ||
-                 strcmp(coll_strategy::class_name(), "allgather") == 0) &&
+            if ((coll_strategy::class_id() == coll_type::allgatherv ||
+                 coll_strategy::class_id() == coll_type::allgather) &&
                 base_coll::get_inplace()) {
                 // for inplace allgatherv, the input data needs to be at an index comm_rank*send_count
                 // of the recv_buffer rather than at index 0 for the non-inplace case
