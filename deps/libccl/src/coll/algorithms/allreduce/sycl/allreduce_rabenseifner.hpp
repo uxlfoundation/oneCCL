@@ -596,7 +596,7 @@ inline sycl::event allreduce_scaleout_sycl_rabenseifner(sycl::queue &q,
                                                         sycl_scaleout_tune_attr tune_attr,
                                                         bool &done) {
     auto lambda = [&]<typename T>() {
-        if (ccl::global_data::env().enable_op_sync) {
+        if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
             return allreduce_sycl_rabenseifner_blocking<T>(
                 q, send_buf, recv_buf, count, dtype, reduction, comm, deps, done);
         }

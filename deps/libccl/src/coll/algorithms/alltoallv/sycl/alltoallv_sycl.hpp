@@ -139,7 +139,7 @@ inline sycl::event alltoallv_scaleout_sycl_direct(sycl::queue& q,
                                                   bool original_deps,
                                                   const alltoallv_ctx& options,
                                                   bool& done) {
-    if (ccl::global_data::env().enable_op_sync) {
+    if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
         return alltoallv_scaleout_sycl_simple_blocking(q,
                                                        send_buf,
                                                        send_counts,

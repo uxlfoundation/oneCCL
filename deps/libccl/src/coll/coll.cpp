@@ -1274,7 +1274,7 @@ ccl::event ccl_allgather(const void* send_buf,
                                                        (*op_deps),
                                                        done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -1385,7 +1385,7 @@ ccl::event ccl_allgatherv(const void* send_buf,
                                                        (*op_deps),
                                                        done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -1492,7 +1492,7 @@ ccl::event ccl_allreduce(const void* send_buf,
                                                   (*op_deps),
                                                   done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -1599,7 +1599,7 @@ ccl::event ccl_alltoall(const void* send_buf,
                                                       (*op_deps),
                                                       done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -1716,7 +1716,7 @@ ccl::event ccl_alltoallv(const void* send_buf,
                                                        (*op_deps),
                                                        done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -1811,7 +1811,7 @@ ccl::event ccl_barrier(ccl_comm* comm,
             ccl::event ccl_event =
                 ccl::barrier_sycl(q, comm, op_stream, dummy_unused_attr, (*op_deps), done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -1923,7 +1923,7 @@ ccl::event ccl_broadcast(void* buf,
             ccl::event ccl_event = ccl::broadcast_sycl(
                 q, buf, buf, count, dtype, root, comm, op_stream, dummy_unused_attr, (*op_deps), done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -2030,7 +2030,7 @@ ccl::event ccl_broadcast(void* send_buf,
                                                        (*op_deps),
                                                        done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -2142,7 +2142,7 @@ ccl::event ccl_reduce(const void* send_buf,
             LOG_DEBUG("reduce_sycl has exited - ", done);
 
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     LOG_DEBUG("about to ccl_event.wait();");
                     ccl_event.wait();
                     LOG_DEBUG("out of ccl_event.wait();");
@@ -2255,7 +2255,7 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
                                                        (*op_deps),
                                                        done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -2363,7 +2363,7 @@ ccl::event ccl_scatter(const void* send_buf,
                                                      (*op_deps),
                                                      done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -2538,7 +2538,7 @@ ccl::event ccl_recv(void* recv_buf,
                                              (*op_deps),
                                              done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;
@@ -2647,7 +2647,7 @@ ccl::event ccl_send(const void* send_buf,
                                              (*op_deps),
                                              done);
             if (done) {
-                if (ccl::global_data::env().enable_op_sync) {
+                if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
                     ccl_event.wait();
                 }
                 return ccl_event;

@@ -422,7 +422,7 @@ inline sycl::event reduce_scatter_ring(sycl::queue &q,
                                        sycl_scaleout_tune_attr &tune_attr,
                                        bool &done) {
     auto lambda = [&]<typename T>() {
-        if (ccl::global_data::env().enable_op_sync && transport_rdma_enabled()) {
+        if (ccl::global_data::env().enable_op_sync && transport_rdma_enabled() && !use_recording_path(q)) {
             return reduce_scatter_ring_blocking<T>(
                 q, send_buf, recv_buf, recv_count, dtype, reduction, comm, deps, done);
         }

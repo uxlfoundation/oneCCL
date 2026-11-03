@@ -186,7 +186,7 @@ inline sycl::event alltoall_scaleout_sycl_direct(sycl::queue& q,
                                                  bool& done,
                                                  bool copy_to_host,
                                                  bool is_cpu_buffers) {
-    if (ccl::global_data::env().enable_op_sync) {
+    if (ccl::global_data::env().enable_op_sync && !use_recording_path(q)) {
         return alltoall_scaleout_sycl_simple_blocking(q,
                                                       send_buf,
                                                       recv_buf,

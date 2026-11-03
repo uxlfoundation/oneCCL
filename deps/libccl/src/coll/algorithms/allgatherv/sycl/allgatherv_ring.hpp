@@ -259,7 +259,7 @@ inline sycl::event allgatherv_scaleout_sycl_ring(sycl::queue& q,
                                                  sycl_scaleout_tune_attr& tune_attr,
                                                  bool& done) {
     auto lambda = [&]<typename T>() {
-        if (ccl::global_data::env().enable_op_sync && transport_rdma_enabled()) {
+        if (ccl::global_data::env().enable_op_sync && transport_rdma_enabled() && !use_recording_path(q)) {
             return allgatherv_ring_blocking<T>(
                 q, send_buf, send_count, recv_buf, recv_counts, recv_offsets, dtype, comm, deps, done);
         }
