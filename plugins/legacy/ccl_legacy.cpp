@@ -221,6 +221,14 @@ onecclResult_t execute_collective(
             "queue(sycl::property::queue::in_order{});`).");
     }
 
+    // msync() also succeeds on the PROT_NONE CPU reservation that Level Zero
+    // virtual memory (zeVirtualMemReserve) can carry, so a device buffer may
+    // look like host memory. Ask SYCL in that case.
+    if (cpu_buffer && sycl::get_pointer_type(buf, queue->get_context()) ==
+                          sycl::usm::alloc::device) {
+        cpu_buffer = false;
+    }
+
     if (!cpu_buffer) {
         gpu_collective(comm_legacy, queue);
     } else {
