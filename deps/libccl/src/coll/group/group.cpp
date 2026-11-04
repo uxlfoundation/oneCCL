@@ -200,6 +200,7 @@ void group_impl::end() {
 #ifdef CCL_ENABLE_SYCL
     // one comm can use two queues, keep its pt2pt in the sorted order
     std::map<ccl_comm*, sycl::queue> last_pt2pt_queue;
+    bool pt2pt_queued = false;
 #endif // CCL_ENABLE_SYCL
     for (const auto& operation : operation_storage) {
 #ifdef CCL_ENABLE_SYCL
@@ -216,6 +217,18 @@ void group_impl::end() {
 #endif // CCL_ENABLE_SYCL
         event = operation.fn();
         first_group_op = false;
+#ifdef CCL_ENABLE_SYCL
+        // collectives of a group share comm tmp buffers and barrier state, so in
+        // eager mode let each one finish before the next starts. Send/recv are
+        // batched and posted only after the loop, so once one is queued a later
+        // collective may sit behind it and must not be waited on here.
+        if (operation.ctype == ccl_coll_send || operation.ctype == ccl_coll_recv) {
+            pt2pt_queued = true;
+        }
+        else if (!pt2pt_queued && operation.stream && !use_recording_path(operation.stream)) {
+            event.wait();
+        }
+#endif // CCL_ENABLE_SYCL
     }
     first_group_op = false; // needed in case operation_storage is empty
     // wait() is needed to avoid oneCCL destruction prior to device tasks completion

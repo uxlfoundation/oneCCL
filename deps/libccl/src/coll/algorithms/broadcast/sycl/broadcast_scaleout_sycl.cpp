@@ -76,16 +76,20 @@ ccl::event broadcast_scaleout_sycl_direct(sycl::queue& q,
         // return e;
     }
 
-    op_end = ccl_host_task(q, dep_events, [=]() {
-        // call ccl::wrapper for MPI/OFI.
-        int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
-        atl_req_t req;
-        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-        ATL_CALL_THROW_IF_ERROR(
-            atl_comm->bcast(ep_idx, scaleout_host_buf, count * ccl_dtype.size(), root, req));
-
-        atl_comm->check_wait_throw(ep_idx, req);
-    });
+    // call ccl::wrapper for MPI/OFI.
+    const int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+    const size_t bytes = count * ccl_dtype.size();
+    op_end = ccl_scaleout_ordered_task(
+        q,
+        dep_events,
+        use_recording_path(q),
+        [=](atl_req_t& req) {
+            ATL_CALL_THROW_IF_ERROR(
+                comm->get_atl_comm()->bcast(ep_idx, scaleout_host_buf, bytes, root, req));
+        },
+        [=](atl_req_t& req) {
+            comm->get_atl_comm()->check_wait_throw(ep_idx, req);
+        });
 
 
     // root copies if not inplace

@@ -100,21 +100,24 @@ ccl::event reduce_scatter_scaleout_sycl_simple(sycl::queue& q,
     ctimer.start(0);
 #endif // PRINT_TIMING
 
-    op_end = ccl_host_task(q, {op_end}, [=]() {
-        // call ccl::wrapper for MPI/OFI.
-        int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
-        atl_req_t req;
-        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-        ATL_CALL_THROW_IF_ERROR(atl_comm->reduce_scatter(ep_idx,
-                                                         scaleout_send_buf,
-                                                         scaleout_recv_buf,
-                                                         recv_count,
-                                                         ccl_dtype.atl_datatype(),
-                                                         static_cast<atl_reduction_t>(reduction),
-                                                         req));
-
-        atl_comm->check_wait_throw(ep_idx, req);
-    });
+    // call ccl::wrapper for MPI/OFI.
+    const int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+    op_end = ccl_scaleout_ordered_task(
+        q,
+        { op_end },
+        use_recording_path(q),
+        [=](atl_req_t& req) {
+            ATL_CALL_THROW_IF_ERROR(comm->get_atl_comm()->reduce_scatter(ep_idx,
+                                                                         scaleout_send_buf,
+                                                                         scaleout_recv_buf,
+                                                                         recv_count,
+                                                                         ccl_dtype.atl_datatype(),
+                                                                         static_cast<atl_reduction_t>(reduction),
+                                                                         req));
+        },
+        [=](atl_req_t& req) {
+            comm->get_atl_comm()->check_wait_throw(ep_idx, req);
+        });
 
 #ifdef PRINT_TIMING
     op_end.wait();

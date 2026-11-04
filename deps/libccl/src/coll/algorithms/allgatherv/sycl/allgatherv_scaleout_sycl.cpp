@@ -82,22 +82,25 @@ ccl::event allgatherv_scaleout_sycl_direct(sycl::queue& q,
         }
     }
 
-    auto op_end = ccl_host_task(q, sycl_deps, [=]() {
-        // call ccl::wrapper for MPI/OFI.
-        int ep_idx = 0;
-        atl_req_t req;
-        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-        ATL_CALL_THROW_IF_ERROR(
-            atl_comm->allgatherv(ep_idx,
-                                 scaleout_send_buf,
-                                 send_count * ccl_dtype.size(),
-                                 scaleout_recv_buf,
-                                 recv_scaleout_bytes.data(),
-                                 copy_to_host ? scaleout_offsets.data() : recv_offsets.data(),
-                                 req));
-
-        atl_comm->check_wait_throw(ep_idx, req);
-    });
+    // call ccl::wrapper for MPI/OFI.
+    const int ep_idx = 0;
+    auto op_end = ccl_scaleout_ordered_task(
+        q,
+        sycl_deps,
+        use_recording_path(q),
+        [=](atl_req_t& req) {
+            ATL_CALL_THROW_IF_ERROR(
+                comm->get_atl_comm()->allgatherv(ep_idx,
+                                                 scaleout_send_buf,
+                                                 send_count * ccl_dtype.size(),
+                                                 scaleout_recv_buf,
+                                                 recv_scaleout_bytes.data(),
+                                                 copy_to_host ? scaleout_offsets.data() : recv_offsets.data(),
+                                                 req));
+        },
+        [=](atl_req_t& req) {
+            comm->get_atl_comm()->check_wait_throw(ep_idx, req);
+        });
 
     if (copy_to_host && aux_buf == nullptr) {
         op_end = q.submit([=](sycl::handler& h) {

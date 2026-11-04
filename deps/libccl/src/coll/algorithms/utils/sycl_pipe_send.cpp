@@ -60,6 +60,14 @@ static void calculate_chunk_sizes(size_t total_send_size,
                recv_chunk_size <= max_pipeline_chunk_size);
 }
 
+// nchunks is based on the largest block, so a small block can end before its
+// last chunk: chunk_size is rounded up to the alignment and
+// chunk_size * (nchunks - 1) can exceed total_size. The chunks after the end
+// are empty, so every rank still posts nchunks sends and recvs.
+static size_t chunk_bytes(size_t total_size, size_t chunk_size, size_t idx) {
+    return std::min(chunk_size, total_size - std::min(idx * chunk_size, total_size));
+}
+
 // one-way RDMA (send side)
 sycl::event pipe_sendrecv_rdma_oneway_send(sycl::queue& q,
                                            const void* send_buf,
@@ -584,6 +592,60 @@ sycl::event pipe_sendrecv_plain(sycl::queue& q,
     return recv_copy_e;
 }
 
+// CCL_SYCL_SCALEOUT_SYNC: same chunked exchange as pipe_sendrecv_plain, with the
+// MPI calls and the staging copies on the calling thread
+static sycl::event pipe_sendrecv_sync(sycl::queue& q,
+                                      const void* send_buf,
+                                      size_t send_count,
+                                      int dest,
+                                      int sendtag,
+                                      void* recv_buf,
+                                      size_t recv_count,
+                                      int src,
+                                      int recvtag,
+                                      ccl::datatype dtype,
+                                      size_t nchunks,
+                                      ccl_comm* comm,
+                                      const ccl::vector_class<sycl::event>& deps) {
+    std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
+    auto ccl_dtype = ccl::global_data::get().dtypes->get(dtype);
+    const size_t total_send_size = send_count * ccl_dtype.size();
+    const size_t total_recv_size = recv_count * ccl_dtype.size();
+    size_t send_chunk_size, recv_chunk_size;
+    calculate_chunk_sizes(total_send_size,
+                          total_recv_size,
+                          ccl_dtype.size(),
+                          nchunks,
+                          send_chunk_size,
+                          recv_chunk_size);
+    void** send_pipe_chunks = comm->get_scaleout_send_pipeline_bufs(num_chunk_buffs);
+    void** recv_pipe_chunks = comm->get_scaleout_recv_pipeline_bufs(num_chunk_buffs);
+    const int ep_idx = 0;
+
+    sycl::event::wait(deps);
+    sycl::event e;
+    for (size_t idx = 0; idx < nchunks; idx++) {
+        const size_t send_size = chunk_bytes(total_send_size, send_chunk_size, idx);
+        const size_t recv_size = chunk_bytes(total_recv_size, recv_chunk_size, idx);
+        if (send_size) {
+            q.memcpy(send_pipe_chunks[0], (const char*)send_buf + idx * send_chunk_size, send_size)
+                .wait();
+        }
+        atl_req_t send_req, recv_req;
+        ATL_CALL_THROW_IF_ERROR(
+            atl_comm->recv(ep_idx, recv_pipe_chunks[0], recv_size, src, recvtag, recv_req));
+        ATL_CALL_THROW_IF_ERROR(
+            atl_comm->send(ep_idx, send_pipe_chunks[0], send_size, dest, sendtag, send_req));
+        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, send_req));
+        ATL_CALL_THROW_IF_ERROR(atl_comm->wait(ep_idx, recv_req));
+        if (recv_size) {
+            e = q.memcpy((char*)recv_buf + idx * recv_chunk_size, recv_pipe_chunks[0], recv_size);
+            e.wait();
+        }
+    }
+    return e;
+}
+
 sycl::event pipe_sendrecv(sycl::queue q,
                           const void* send_buf,
                           size_t send_count,
@@ -602,6 +664,21 @@ sycl::event pipe_sendrecv(sycl::queue q,
         sycl::get_native<sycl::backend::ext_oneapi_level_zero>(q.get_device());
     if (should_disable_rdma(ze_dev)) {
         use_rdma = false;
+    }
+    if (!use_rdma && ccl::global_data::env().sycl_scaleout_sync && !use_recording_path(q)) {
+        return pipe_sendrecv_sync(q,
+                                  send_buf,
+                                  send_count,
+                                  dest,
+                                  sendtag,
+                                  recv_buf,
+                                  recv_count,
+                                  src,
+                                  recvtag,
+                                  dtype,
+                                  nchunks,
+                                  comm,
+                                  deps);
     }
     if (!use_rdma) {
         return pipe_sendrecv_plain(q,
