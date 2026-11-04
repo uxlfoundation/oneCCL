@@ -142,9 +142,25 @@ inline sycl::event allreduce_scaleout_sycl_simple(sycl::queue& q,
     }
     else {
         // Use host_task path (direct execution)
-        op_end = ccl_host_task(q, dep_events, [=]() {
-            allreduce_direct_impl(comm, scaleout_send_buf, scaleout_recv_buf, count, dtype, reduction);
-        });
+        const int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+        const auto atl_dtype = ccl::global_data::get().dtypes->get(dtype).atl_datatype();
+        op_end = ccl_scaleout_ordered_task(
+            q,
+            dep_events,
+            use_recording_path(q),
+            [=](atl_req_t& req) {
+                ATL_CALL_THROW_IF_ERROR(
+                    comm->get_atl_comm()->allreduce(ep_idx,
+                                                    scaleout_send_buf,
+                                                    scaleout_recv_buf,
+                                                    count,
+                                                    atl_dtype,
+                                                    static_cast<atl_reduction_t>(reduction),
+                                                    req));
+            },
+            [=](atl_req_t& req) {
+                comm->get_atl_comm()->check_wait_throw(ep_idx, req);
+            });
     }
 
     if (copy_to_host) {

@@ -150,15 +150,18 @@ sycl::event alltoall_scaleout_sycl_simple_nonblocking(sycl::queue& q,
         }
     }
 
-    op_end = ccl_host_task(q, dep_events, [=]() {
-        int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
-        atl_req_t req;
-        std::shared_ptr<atl_base_comm> atl_comm = comm->get_atl_comm();
-        ATL_CALL_THROW_IF_ERROR(
-            atl_comm->alltoall(ep_idx, scaleout_send_buf, scaleout_recv_buf, size, req));
-
-        atl_comm->check_wait_throw(ep_idx, req);
-    });
+    const int ep_idx = 0; // TODO: instead of "0", use atl_ep->idx, or sched->bin->get_atl_ep()
+    op_end = ccl_scaleout_ordered_task(
+        q,
+        dep_events,
+        use_recording_path(q),
+        [=](atl_req_t& req) {
+            ATL_CALL_THROW_IF_ERROR(comm->get_atl_comm()->alltoall(
+                ep_idx, scaleout_send_buf, scaleout_recv_buf, size, req));
+        },
+        [=](atl_req_t& req) {
+            comm->get_atl_comm()->check_wait_throw(ep_idx, req);
+        });
 
     if (copy_to_host) {
         op_end = q.submit([=](sycl::handler& h) {

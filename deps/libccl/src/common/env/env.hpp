@@ -382,6 +382,7 @@ public:
     size_t sycl_kernels_line_size;
     size_t sycl_max_pipeline_chunk_size;
     ssize_t sycl_pipeline_chunk_size;
+    bool sycl_scaleout_sync;
     size_t sycl_numa_nodes;
     size_t sycl_numa_nodes_split;
     bool sycl_split_numa;

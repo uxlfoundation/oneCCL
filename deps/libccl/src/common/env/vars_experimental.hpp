@@ -874,6 +874,19 @@ constexpr const char* CCL_SYCL_PT2PT_SIMPLE_THRESHOLD = "CCL_SYCL_PT2PT_SIMPLE_T
 constexpr const char* CCL_SYCL_PT2PT_COPY_ENGINE = "CCL_SYCL_PT2PT_COPY_ENGINE";
 constexpr const char* CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE = "CCL_SYCL_MAX_PIPELINE_CHUNK_SIZE";
 constexpr const char* CCL_SYCL_PIPELINE_CHUNK_SIZE = "CCL_SYCL_PIPELINE_CHUNK_SIZE";
+/**
+ * @brief Run eager scale-out MPI calls on the calling thread
+ *
+ * @details Eager direct scale-out collectives and pipelined send/recv run their MPI calls
+ * on the calling thread, in program order, instead of in SYCL host tasks that the runtime
+ * may defer while a group end or another rank's collective blocks. Graph recording keeps
+ * the host-task path.
+ *
+ * "<value>" : "0", "1"
+ *
+ * By-default: "0"
+ */
+constexpr const char* CCL_SYCL_SCALEOUT_SYNC = "CCL_SYCL_SCALEOUT_SYNC";
 constexpr const char* CCL_SYCL_SIMPLE_SINGLE_KERNEL = "CCL_SYCL_SIMPLE_SINGLE_KERNEL";
 constexpr const char* CCL_SYCL_NUM_THREADS = "CCL_SYCL_NUM_THREADS";
 constexpr const char* CCL_SYCL_WORK_GROUP_SIZE = "CCL_SYCL_WORK_GROUP_SIZE";
