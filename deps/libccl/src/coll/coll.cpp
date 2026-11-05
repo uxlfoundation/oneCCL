@@ -99,6 +99,14 @@
     } while (0)
 #endif
 
+#if defined(CCL_ENABLE_SYCL)
+static void check_op_sync_not_recording(const sycl::queue& q) {
+    if (ccl::global_data::env().enable_op_sync && use_recording_path(q)) {
+        CCL_FATAL("CCL_OP_SYNC=1 is not supported with SYCL graph recording");
+    }
+}
+#endif // CCL_ENABLE_SYCL
+
 #if defined(CCL_ENABLE_SYCL) && defined(CCL_ENABLE_ZE)
 ccl_request* exec_single_rank_inplace_coll(const ccl_coll_param& param) {
     std::vector<sycl::event> events{};
@@ -1262,6 +1270,7 @@ ccl::event ccl_allgather(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             sycl::queue q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = ccl::allgather_sycl(q,
                                                        send_buf,
                                                        count,
@@ -1373,6 +1382,7 @@ ccl::event ccl_allgatherv(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = ccl::allgather_sycl(q,
                                                        send_buf,
                                                        send_count,
@@ -1480,6 +1490,7 @@ ccl::event ccl_allreduce(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = allreduce_sycl(q,
                                                   send_buf,
                                                   recv_buf,
@@ -1588,6 +1599,7 @@ ccl::event ccl_alltoall(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = ccl::alltoall_sycl(q,
                                                       send_buf,
                                                       recv_buf,
@@ -1704,6 +1716,7 @@ ccl::event ccl_alltoallv(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = ccl::alltoallv_sycl(q,
                                                        send_buf,
                                                        send_counts_vec,
@@ -1808,6 +1821,7 @@ ccl::event ccl_barrier(ccl_comm* comm,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event =
                 ccl::barrier_sycl(q, comm, op_stream, dummy_unused_attr, (*op_deps), done);
             if (done) {
@@ -1920,6 +1934,7 @@ ccl::event ccl_broadcast(void* buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = ccl::broadcast_sycl(
                 q, buf, buf, count, dtype, root, comm, op_stream, dummy_unused_attr, (*op_deps), done);
             if (done) {
@@ -2018,6 +2033,7 @@ ccl::event ccl_broadcast(void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = ccl::broadcast_sycl(q,
                                                        send_buf,
                                                        recv_buf,
@@ -2126,6 +2142,7 @@ ccl::event ccl_reduce(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = reduce_sycl(q,
                                                send_buf,
                                                recv_buf,
@@ -2243,6 +2260,7 @@ ccl::event ccl_reduce_scatter(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = reduce_scatter_sycl(q,
                                                        send_buf,
                                                        recv_buf,
@@ -2351,6 +2369,7 @@ ccl::event ccl_scatter(const void* send_buf,
         collective = [=]() -> ccl::event {
             bool done = false;
             auto q = op_stream->get_native_stream();
+            check_op_sync_not_recording(q);
             ccl::event ccl_event = ccl::scatter_sycl(q,
                                                      send_buf,
                                                      recv_buf,
@@ -2524,6 +2543,7 @@ ccl::event ccl_recv(void* recv_buf,
             "|CCL_SYCL| recv selects sycl-kernels recv_count: ", count, ", datatype: ", dtype);
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
+        check_op_sync_not_recording(q);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::pt2pt_attr>();
         recv_operation = [=]() -> ccl::event {
             bool done = false;
@@ -2633,6 +2653,7 @@ ccl::event ccl_send(const void* send_buf,
 
         ccl_stream* op_stream = const_cast<ccl_stream*>(stream);
         auto q = op_stream->get_native_stream();
+        check_op_sync_not_recording(q);
         auto dummy_unused_attr = ccl::create_operation_attr<ccl::pt2pt_attr>();
         send_operation = [=]() -> ccl::event {
             bool done = false;
