@@ -107,6 +107,7 @@ typedef struct ze_lib_ops {
     decltype(zesFabricPortGetState) *zesFabricPortGetState;
     decltype(zesDriverGet) *zesDriverGet;
     decltype(zesDeviceGet) *zesDeviceGet;
+    decltype(zesDeviceGetProperties) *zesDeviceGetProperties;
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     decltype(zeDevicePciGetPropertiesExt) *zeDevicePciGetPropertiesExt;
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
@@ -213,6 +214,7 @@ static std::vector<std::string> ze_fn_names = {
     "zesFabricPortGetState",
     "zesDriverGet",
     "zesDeviceGet",
+    "zesDeviceGetProperties",
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
     "zeDevicePciGetPropertiesExt",
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
@@ -326,6 +328,7 @@ extern ccl::ze_lib_ops_t ze_lib_ops;
 #define zesFabricPortGetState             ccl::ze_lib_ops.zesFabricPortGetState
 #define zesDriverGet                      ccl::ze_lib_ops.zesDriverGet
 #define zesDeviceGet                      ccl::ze_lib_ops.zesDeviceGet
+#define zesDeviceGetProperties            ccl::ze_lib_ops.zesDeviceGetProperties
 #ifdef ZE_PCI_PROPERTIES_EXT_NAME
 #define zeDevicePciGetPropertiesExt ccl::ze_lib_ops.zeDevicePciGetPropertiesExt
 #endif // ZE_PCI_PROPERTIES_EXT_NAME
